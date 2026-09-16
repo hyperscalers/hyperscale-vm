@@ -49,23 +49,17 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
         nodes: vec![
             GraphNode {
                 target: ALICE.into(),
-                method: "authorize".into(),
-                args: vec![],
-                evidence: [EvidenceRef::IntentSignature].into(),
-            },
-            GraphNode {
-                target: ALICE.into(),
                 method: "withdraw".into(),
                 args: vec![
                     GraphArg::Literal(Value::Address(usdc.address())),
                     GraphArg::Literal(Value::U128(100)),
                 ],
-                evidence: [EvidenceRef::Node(0)].into(),
+                evidence: [EvidenceRef::IntentSignature].into(),
             },
             GraphNode {
                 target: BOB.into(),
                 method: "deposit".into(),
-                args: vec![edge(1, 0)],
+                args: vec![edge(0, 0)],
                 evidence: BTreeSet::new(),
             },
         ],
@@ -115,29 +109,23 @@ fn swap_writes_both_reserves_and_reads_the_config() {
         nodes: vec![
             GraphNode {
                 target: ALICE.into(),
-                method: "authorize".into(),
-                args: vec![],
-                evidence: [EvidenceRef::IntentSignature].into(),
-            },
-            GraphNode {
-                target: ALICE.into(),
                 method: "withdraw".into(),
                 args: vec![
                     GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(500)),
                 ],
-                evidence: [EvidenceRef::Node(0)].into(),
+                evidence: [EvidenceRef::IntentSignature].into(),
             },
             GraphNode {
                 target: pool().into(),
                 method: "swap".into(),
-                args: vec![edge(1, 0), GraphArg::Literal(Value::U128(50))],
+                args: vec![edge(0, 0), GraphArg::Literal(Value::U128(50))],
                 evidence: BTreeSet::new(),
             },
             GraphNode {
                 target: ALICE.into(),
                 method: "deposit".into(),
-                args: vec![edge(2, 0)],
+                args: vec![edge(1, 0)],
                 evidence: BTreeSet::new(),
             },
         ],
@@ -199,23 +187,17 @@ fn order_book_place_inserts_at_a_computed_entry() {
         nodes: vec![
             GraphNode {
                 target: ALICE.into(),
-                method: "authorize".into(),
-                args: vec![],
-                evidence: [EvidenceRef::IntentSignature].into(),
-            },
-            GraphNode {
-                target: ALICE.into(),
                 method: "withdraw".into(),
                 args: vec![
                     GraphArg::Literal(Value::Address(BASE.address())),
                     GraphArg::Literal(Value::U128(10)),
                 ],
-                evidence: [EvidenceRef::Node(0)].into(),
+                evidence: [EvidenceRef::IntentSignature].into(),
             },
             GraphNode {
                 target: book().into(),
                 method: "place-ask".into(),
-                args: vec![GraphArg::Literal(Value::U64(105)), edge(1, 0)],
+                args: vec![GraphArg::Literal(Value::U64(105)), edge(0, 0)],
                 evidence: BTreeSet::new(),
             },
         ],
@@ -223,7 +205,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
     let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
     let routing = per_shard(&admitted, &resolver());
 
-    let seq = fresh_id(&TestHasher, admitted.identity(), 2, 0);
+    let seq = fresh_id(&TestHasher, admitted.identity(), 1, 0);
     // Grouped rather than listed per shard, because which shard an
     // address lands on is a fact about the address and two of them
     // sharing one is not a case this test is about.
@@ -268,18 +250,12 @@ fn order_book_fill_declares_a_capped_price_interval() {
         nodes: vec![
             GraphNode {
                 target: BOB.into(),
-                method: "authorize".into(),
-                args: vec![],
-                evidence: [EvidenceRef::IntentSignature].into(),
-            },
-            GraphNode {
-                target: BOB.into(),
                 method: "withdraw".into(),
                 args: vec![
                     GraphArg::Literal(Value::Address(QUOTE.address())),
                     GraphArg::Literal(Value::U128(1000)),
                 ],
-                evidence: [EvidenceRef::Node(0)].into(),
+                evidence: [EvidenceRef::IntentSignature].into(),
             },
             GraphNode {
                 target: book().into(),
@@ -287,7 +263,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
                 args: vec![
                     GraphArg::Literal(Value::U64(100)),
                     GraphArg::Literal(Value::U64(110)),
-                    edge(1, 0),
+                    edge(0, 0),
                 ],
                 evidence: BTreeSet::new(),
             },
@@ -296,13 +272,13 @@ fn order_book_fill_declares_a_capped_price_interval() {
             GraphNode {
                 target: BOB.into(),
                 method: "deposit".into(),
-                args: vec![edge(2, 0)],
+                args: vec![edge(1, 0)],
                 evidence: BTreeSet::new(),
             },
             GraphNode {
                 target: BOB.into(),
                 method: "deposit".into(),
-                args: vec![edge(2, 1)],
+                args: vec![edge(1, 1)],
                 evidence: BTreeSet::new(),
             },
         ],
@@ -442,29 +418,23 @@ fn a_presented_record_is_the_whole_of_instantiation() {
         nodes: vec![
             GraphNode {
                 target: ALICE.into(),
-                method: "authorize".into(),
-                args: vec![],
-                evidence: [EvidenceRef::IntentSignature].into(),
-            },
-            GraphNode {
-                target: ALICE.into(),
                 method: "withdraw".into(),
                 args: vec![
                     GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(500)),
                 ],
-                evidence: [EvidenceRef::Node(0)].into(),
+                evidence: [EvidenceRef::IntentSignature].into(),
             },
             GraphNode {
                 target: pool().into(),
                 method: "swap".into(),
-                args: vec![edge(1, 0), GraphArg::Literal(Value::U128(50))],
+                args: vec![edge(0, 0), GraphArg::Literal(Value::U128(50))],
                 evidence: BTreeSet::new(),
             },
             GraphNode {
                 target: ALICE.into(),
                 method: "deposit".into(),
-                args: vec![edge(2, 0)],
+                args: vec![edge(1, 0)],
                 evidence: BTreeSet::new(),
             },
         ],

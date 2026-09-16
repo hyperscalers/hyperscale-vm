@@ -9,7 +9,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_fixtures::payouts;
 use hyperscale_vm_manifest_builder::{BuildError, TypedBuilder, TypedError};
 use hyperscale_vm_stdlib::{account, staking};
-use hyperscale_vm_types::{CallTarget, ComponentAddr, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -101,15 +101,14 @@ fn a_typed_edge_asserts_its_own_resource() {
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     // Nothing here says the withdrawal produces `RES`; `withdraw`'s
     // declared output does, and the deposit carries the assertion.
-    let alice = b.call_proving(ALICE, "authorize", ()).unwrap();
     let funds = b
-        .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))
+        .call(ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
     b.call(BOB, "deposit", (funds,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
-    assert_eq!(asserted(&graph, 2), vec![Some(RES)]);
+    assert_eq!(asserted(&graph, 1), vec![Some(RES)]);
     admit(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
@@ -119,9 +118,8 @@ fn a_typed_edge_asserts_its_own_resource() {
 fn an_answer_from_a_method_that_answers_nothing_is_refused() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let alice = b.call_proving(ALICE, "authorize", ()).unwrap();
     let funds = b
-        .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))
+        .call(ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
@@ -136,9 +134,8 @@ fn an_answer_from_a_method_that_answers_nothing_is_refused() {
 fn a_split_of_a_typed_edge_is_two_typed_edges() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let alice = b.call_proving(ALICE, "authorize", ()).unwrap();
     let funds = b
-        .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))
+        .call(ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
@@ -159,10 +156,10 @@ fn a_split_of_a_typed_edge_is_two_typed_edges() {
     let graph = b.build().unwrap();
     // The derived assertion leads, and the author's bound follows it.
     assert_eq!(
-        graph.nodes[4].args,
+        graph.nodes[3].args,
         vec![GraphArg::Edge {
             edge: EdgeRef {
-                producer: 2,
+                producer: 1,
                 output: 1
             },
             constraints: vec![Constraint::ResourceIs(RES), Constraint::MinAmount(1)],
@@ -175,9 +172,8 @@ fn a_split_of_a_typed_edge_is_two_typed_edges() {
 fn a_pool_types_its_units_by_itself() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let alice = b.call_proving(ALICE, "authorize", ()).unwrap();
     let funds = b
-        .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))
+        .call(ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
@@ -187,7 +183,7 @@ fn a_pool_types_its_units_by_itself() {
     assert_eq!(units.resource(), Some(unit()));
     b.call(ALICE, "deposit", (units,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
-    assert_eq!(asserted(&graph, 3), vec![Some(unit())]);
+    assert_eq!(asserted(&graph, 2), vec![Some(unit())]);
     admit(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
@@ -198,11 +194,7 @@ fn an_edge_nothing_typed_stays_untyped() {
     // The untyped path mints an edge with no declared type behind it.
     // `take` types its outputs by that edge, so neither output can be
     // typed either — and the layer leaves them alone rather than guessing.
-    let sign_in = b.untyped().len();
-    let [] = b.untyped().call_signed(ALICE, "authorize", ());
-    let [funds] = b
-        .untyped()
-        .call_bearing(ALICE, "withdraw", (RES, 100u128), sign_in);
+    let [funds] = b.untyped().call_signed(ALICE, "withdraw", (RES, 100u128));
     let [taken, rest] = b
         .call(splitter(), "in-lots", (funds, 30u128))
         .unwrap()
@@ -213,7 +205,7 @@ fn an_edge_nothing_typed_stays_untyped() {
     b.call(BOB, "deposit", (taken,)).unwrap().none().unwrap();
     b.call(ALICE, "deposit", (rest,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
-    assert_eq!(asserted(&graph, 3), vec![None]);
+    assert_eq!(asserted(&graph, 2), vec![None]);
     // Untyped is not unadmitted: admission evaluates the same output
     // expressions against the graph it can see whole.
     admit(&graph, ALICE, &chain, &TestHasher).unwrap();
@@ -225,11 +217,7 @@ fn an_asserted_type_carries_through_the_untyped_path() {
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     // An author who types the edge by hand tells the layer as much as a
     // signature would, and the type propagates from the assertion.
-    let sign_in = b.untyped().len();
-    let [] = b.untyped().call_signed(ALICE, "authorize", ());
-    let [funds] = b
-        .untyped()
-        .call_bearing(ALICE, "withdraw", (RES, 100u128), sign_in);
+    let [funds] = b.untyped().call_signed(ALICE, "withdraw", (RES, 100u128));
     let [taken, rest] = b
         .call(splitter(), "in-lots", (funds.resource_is(RES), 30u128))
         .unwrap()
@@ -246,9 +234,8 @@ fn an_asserted_type_carries_through_the_untyped_path() {
 fn a_typed_edge_refuses_a_contradicting_assertion() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let alice = b.call_proving(ALICE, "authorize", ()).unwrap();
     let funds = b
-        .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))
+        .call(ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
@@ -291,14 +278,13 @@ fn a_call_is_typed_against_the_signature_it_names() {
         b.call(ALICE, "deposit", (100u128,)),
         Err(TypedError::LiteralForBucketParam { param: 0, .. })
     ));
-    let alice = b.call_proving(ALICE, "authorize", ()).unwrap();
     let one = b
-        .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))
+        .call(ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
     let two = b
-        .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))
+        .call(ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
@@ -312,9 +298,8 @@ fn a_call_is_typed_against_the_signature_it_names() {
 fn a_refused_call_appends_nothing() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let alice = b.call_proving(ALICE, "authorize", ()).unwrap();
     let funds = b
-        .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))
+        .call(ALICE, "withdraw", (RES, 100u128))
         .unwrap()
         .one()
         .unwrap();
@@ -326,7 +311,7 @@ fn a_refused_call_appends_nothing() {
     // still describes exactly the graph its accepted calls built.
     b.call(BOB, "deposit", (funds,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
-    assert_eq!(graph.nodes.len(), 3);
+    assert_eq!(graph.nodes.len(), 2);
     admit(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
@@ -350,10 +335,7 @@ fn outputs_unpack_only_into_the_arity_the_method_declares() {
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     // Naming a slot the producer does not have takes stating an arity,
     // and the signature is what an arity is checked against.
-    let alice = b.call_proving(ALICE, "authorize", ()).unwrap();
-    let outputs = b
-        .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))
-        .unwrap();
+    let outputs = b.call(ALICE, "withdraw", (RES, 100u128)).unwrap();
     assert_eq!(outputs.len(), 1);
     assert!(matches!(
         outputs.into_array::<2>(),
@@ -401,25 +383,26 @@ fn a_scope_presents_where_a_gate_wants_claims() {
 #[test]
 fn a_scope_is_invisible_to_a_call_wanting_nothing() {
     let chain = world();
-    let bare = TypedBuilder::compose(&chain, &TestHasher, ALICE, |b| {
-        let alice = b.call_proving(ALICE, "authorize", ())?;
-        let funds = b
-            .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))?
-            .one()?;
-        b.call(BOB, "deposit", (funds,))?.none()
-    })
-    .unwrap();
-    let scoped = TypedBuilder::compose(&chain, &TestHasher, ALICE, |b| {
-        let alice = b.call_proving(ALICE, "authorize", ())?;
-        b.presenting(alice, |b| {
-            let funds = b
-                .call_presenting(alice, ALICE, "withdraw", (RES, 100u128))?
-                .one()?;
-            b.call(BOB, "deposit", (funds,))?.none()
+    // The deposit is the call that wants nothing; the badge is presented
+    // either way, so the only difference between the two graphs is
+    // whether the scope was open over it.
+    let compose = |scoped: bool| {
+        TypedBuilder::compose(&chain, &TestHasher, ALICE, move |b| {
+            let held = b.call_proving(ALICE, "present-badge", (RES,))?;
+            let funds = b.call(ALICE, "withdraw", (RES, 100u128))?.one()?;
+            if scoped {
+                b.presenting(held, move |b| b.call(BOB, "deposit", (funds,))?.none())
+            } else {
+                b.call(BOB, "deposit", (funds,))?.none()
+            }
         })
-    })
-    .unwrap();
-    assert_eq!(bare, scoped, "the scope changed a call that wanted nothing");
+        .unwrap()
+    };
+    assert_eq!(
+        compose(false),
+        compose(true),
+        "the scope changed a call that wanted nothing"
+    );
 }
 
 /// Nested scopes union: a call inside both draws from both.
@@ -427,11 +410,11 @@ fn a_scope_is_invisible_to_a_call_wanting_nothing() {
 fn nested_scopes_present_together() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, OPERATOR);
-    let signed_in = b.call_proving(OPERATOR, "authorize", ()).unwrap();
+    let held = b.call_proving(OPERATOR, "present-badge", (RES,)).unwrap();
     let presented = b
         .call_proving(OPERATOR, "present-badge", (owner_badge(),))
         .unwrap();
-    b.presenting(signed_in, |b| {
+    b.presenting(held, |b| {
         b.presenting(presented, |b| {
             b.call(pool(), "deactivate-validator", (8u64,))?.none()
         })
@@ -453,11 +436,11 @@ fn nested_scopes_present_together() {
 fn explicit_evidence_stands_alone_inside_a_scope() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, OPERATOR);
-    let signed_in = b.call_proving(OPERATOR, "authorize", ()).unwrap();
+    let held = b.call_proving(OPERATOR, "present-badge", (RES,)).unwrap();
     let presented = b
         .call_proving(OPERATOR, "present-badge", (owner_badge(),))
         .unwrap();
-    b.presenting(signed_in, |b| {
+    b.presenting(held, |b| {
         b.call_presenting(presented, pool(), "deactivate-validator", (8u64,))?
             .none()
     })
@@ -473,36 +456,6 @@ fn explicit_evidence_stands_alone_inside_a_scope() {
 }
 
 /// A gate the signer cannot prove is answered by the scope that covers
-/// it: the pool's seal gates on its configured founder, the signer is
-/// somebody else, and the founder's sign-in rides the span.
-///
-/// Nothing is composed ahead of that sign-in. The signer's own claim is
-/// their signature's and needs no node, and it opens the founder's
-/// account only if the founder's own stored rule names it — which is the
-/// account's question, asked where the cell lives.
-#[test]
-fn a_scope_covers_a_gate_the_signer_cannot_prove() {
-    let chain = world();
-    let mut b = TypedBuilder::new(&chain, &TestHasher, BOB);
-    let (seal, _) = b.seal_of(pool()).unwrap();
-    let founder = b.call_proving(OPERATOR, "authorize", ()).unwrap();
-    b.presenting(founder, |b| {
-        let badge = b.call(pool(), &seal, ())?.one()?;
-        account::deposit_nf(b, OPERATOR, badge)
-    })
-    .unwrap();
-    let graph = b.build().unwrap();
-
-    assert_eq!(graph.nodes[0].target, CallTarget::from(OPERATOR));
-    let sealed = &graph.nodes[1];
-    assert_eq!(sealed.method, seal);
-    assert!(
-        sealed.evidence.contains(&EvidenceRef::Node(0)),
-        "the founder's sign-in rides the seal: {:?}",
-        sealed.evidence
-    );
-}
-
 /// A gate read whole that nothing in scope covers refuses at the call,
 /// naming the claim — before admission ever sees the graph.
 #[test]

@@ -14,7 +14,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_types::{Address, LegRole, LegShape, MAX_CROSSINGS_PER_TX, ValueEdge};
+use hyperscale_vm_types::{
+    Address, AddressClass, LegRole, LegShape, MAX_CROSSINGS_PER_TX, ValueEdge,
+};
 
 use crate::admission::{Admitted, NodeOrigin};
 use crate::claim::Claim;
@@ -370,6 +372,13 @@ pub fn star_at(
 /// which costs a replication; under-flagging would run a gate against a
 /// proof its prover never made.
 ///
+/// A principal subject is the one thing no node proved: an account's
+/// virtual badge is attested by its own shard and rides the signature of
+/// every gated call, so taking it to name every attesting node would
+/// pull the whole star into the core for a claim no node here produced.
+/// Skipped, and there is nothing to under-flag — no method yields a
+/// principal claim.
+///
 /// **The core must have a bearer.** A core with no node in it names no
 /// shard for a refusal, a departure or an absence to be taken against,
 /// so there is nothing for a reclaim to be admitted on. Where nothing
@@ -398,7 +407,8 @@ fn settle(legs: &[LegShape], homes: &[ShardId], payer_home: ShardId) -> Vec<LegR
         }
         let here = homes[index];
         let names_me = |subject: &Address| {
-            *subject == node.target || !legs.iter().any(|other| other.target == *subject)
+            subject.class() != AddressClass::Principal
+                && (*subject == node.target || !legs.iter().any(|other| other.target == *subject))
         };
         let stays_home = legs
             .iter()
@@ -741,7 +751,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use hyperscale_vm_types::{
-        AddressClass, CallTarget, IntentHash, MAX_CROSSINGS_PER_TX, Moves, ResourceAddr, ValueEdge,
+        AddressClass, CallTarget, IntentHash, MAX_CROSSINGS_PER_TX, Moves, PrincipalAddr,
+        ResourceAddr, ValueEdge,
     };
 
     use super::{Address, LegRole, LegShape, NodeOrigin, Star, assemble, classify_roles, star_at};
@@ -1489,6 +1500,32 @@ mod tests {
         // Presented beside the prover, it stays home.
         manifest.nodes[2].evidence = Vec::new();
         manifest.nodes[1].evidence = vec![Claim::of_subject(badge)];
+        let (star, _) = star_and_shape(&manifest, &chain);
+        assert_eq!(star.roles[0], LegRole::Attesting);
+    }
+
+    /// An account's virtual badge is attested by its own shard, so no
+    /// node here proved it and nothing co-locates around it.
+    ///
+    /// The claim a signature carries names a subject no node of the
+    /// manifest is, which is the same shape a badge has — so without the
+    /// principal arm it would send every attesting node to the core, and
+    /// it rides every gated call, which is every star.
+    #[test]
+    fn a_principal_claim_presented_elsewhere_leaves_its_star_where_it_was() {
+        let (chain, mut manifest) = signed_world_with_a_venue();
+        assert_eq!(
+            star_and_shape(&manifest, &chain).0.roles[0],
+            LegRole::Attesting,
+            "the fixture has to start as a leg, or the verdict below proves nothing",
+        );
+
+        let account: Address = PrincipalAddr::new([0xA1; 31]).into();
+        assert!(
+            !manifest.nodes.iter().any(|node| node.target == account),
+            "the account has to be nobody's target, or this repeats the badge case",
+        );
+        manifest.nodes[2].evidence = vec![Claim::of_subject(account)];
         let (star, _) = star_and_shape(&manifest, &chain);
         assert_eq!(star.roles[0], LegRole::Attesting);
     }

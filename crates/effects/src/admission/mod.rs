@@ -301,11 +301,16 @@ impl Admitted {
 /// Admit a graph: check well-formedness, linearity, and type agreement
 /// against package metadata, and lower it to the routing manifest.
 ///
-/// A bare graph is the degenerate envelope: one intent signed by
-/// `composer`, no parameters, no subintents, its own hash as the
-/// identity. Envelope trees go
-/// through [`crate::envelope::admit_tree`], which supplies the identity
-/// from the signed envelope.
+/// A bare graph is the degenerate envelope: one intent acting as
+/// `composer` and attested by the key that account derives, no
+/// parameters, no subintents, its own hash as the identity. Envelope
+/// trees go through [`crate::envelope::admit_tree`], which supplies the
+/// identity from the signed envelope and the attesting set from its
+/// signatures.
+///
+/// The attesting set is the premise rather than a fact, so a caller
+/// whose signatures name somebody else — a delegate's key on this
+/// account's intent — states it at [`admit_presenting`] instead.
 ///
 /// # Errors
 ///
@@ -317,7 +322,14 @@ pub fn admit(
     chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
 ) -> Result<Admitted, AdmissionError> {
-    admit_presenting(graph, composer, chain, PresentedGrants::none(), hasher)
+    admit_presenting(
+        graph,
+        composer,
+        &[composer],
+        chain,
+        PresentedGrants::none(),
+        hasher,
+    )
 }
 
 /// The same, over resource records the composer presents.
@@ -333,6 +345,7 @@ pub fn admit(
 pub fn admit_presenting(
     graph: &ManifestGraph,
     composer: PrincipalAddr,
+    attested_by: &[PrincipalAddr],
     chain: &dyn ChainRecords,
     grants: &PresentedGrants,
     hasher: &dyn Hasher,
@@ -345,7 +358,7 @@ pub fn admit_presenting(
             sockets: &[],
             bindings: &[],
             account: composer,
-            attested_by: std::slice::from_ref(&composer),
+            attested_by,
             // A bare graph is signed whole by its composer, so what its
             // signer signed is the graph itself.
             identity: IntentHash(identity.0),

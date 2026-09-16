@@ -783,24 +783,10 @@ impl Trace {
     /// a component's auth cell and no signature yields a claim on a
     /// derived address, so the one party that can vouch for a component
     /// is the component — and its body may decline, which is where the
-    /// condition lives. The account's sign-in is [`Trace::authorizing`],
-    /// which reads the stored rule instead.
+    /// condition lives. An account needs no such form: its virtual badge
+    /// is attested by its own shard, and the claim rides the signature
+    /// of the intent acting as it.
     pub fn proving(&mut self) {
-        self.emit(Clause::Proves {
-            guard: None,
-            claim: Expr::SelfAddr,
-        });
-    }
-
-    /// Record that naming this method requires satisfying the target's
-    /// own stored rule — read through the cell the last emitted clause
-    /// declared — and mints the target's identity.
-    pub fn authorizing(&mut self) {
-        let cell = self.last_point_target();
-        self.emit(Clause::Requires {
-            guard: None,
-            rule: governs(cell),
-        });
         self.emit(Clause::Proves {
             guard: None,
             claim: Expr::SelfAddr,
@@ -825,43 +811,46 @@ impl Trace {
         self.pending_governed = Some(slot);
     }
 
-    /// Record that naming this method requires the target's own rule and
-    /// its possession of some of the fungible badge `badge`, and mints
-    /// that badge's address.
+    /// Record that naming this method requires the holder's own claim
+    /// and its possession of some of the fungible badge `badge`, and
+    /// mints that badge's address.
     ///
-    /// The rule cell and the possession cell are the two reads the
-    /// caller just declared, in that order, so the conditions are keyed
-    /// by exactly the expressions the mint names.
+    /// The possession cell is the read the caller just declared, so the
+    /// condition is keyed by exactly the expression the mint names.
     pub fn custodial(&mut self, badge: &Sym<Addr>) {
         let badge = self.lower(badge.expr().clone());
-        self.custody(badge.clone());
+        self.custody();
         self.emit(Clause::Proves {
             guard: None,
             claim: badge,
         });
     }
 
-    /// Record that naming this method requires the target's own rule and
-    /// its possession of instance `id` of `badge`, and mints both that
-    /// instance and the badge it is an instance of.
+    /// Record that naming this method requires the holder's own claim
+    /// and its possession of instance `id` of `badge`, and mints both
+    /// that instance and the badge it is an instance of.
     pub fn custodial_instance(&mut self, badge: &Sym<Addr>, id: &Sym<U128>) {
         let badge = self.lower(badge.expr().clone());
         let id = self.lower(id.expr().clone());
-        self.custody(badge.clone());
+        self.custody();
         self.emit(Clause::Proves {
             guard: None,
             claim: Expr::Tuple(vec![badge, id]),
         });
     }
 
-    /// The custody conditions over the two reads just declared: the
-    /// stored primary at the rule cell, and possession at the cell the
-    /// last clause names.
-    fn custody(&mut self, _badge: Expr) {
-        let (rule_cell, possession) = self.last_two_targets();
+    /// The custody conditions: the holder acting as itself, and
+    /// possession at the cell the last clause names.
+    ///
+    /// The holder's own claim rather than a read of their stored rule —
+    /// the rule was judged when their shard attested the intent, so a
+    /// second reading of it here would be the same verdict at the cost
+    /// of a cell every participant provisions.
+    fn custody(&mut self) {
+        let possession = self.last_whole_target();
         self.emit(Clause::Requires {
             guard: None,
-            rule: governs(rule_cell),
+            rule: RuleExpr::Require(RuleLeaf::Claim(Expr::SelfAddr)),
         });
         self.emit(Clause::Requires {
             guard: None,
@@ -885,25 +874,16 @@ impl Trace {
         }
     }
 
-    /// The point expression and whole target of the last two emitted
-    /// top-level effect clauses, in emission order.
-    fn last_two_targets(&self) -> (Expr, TargetExpr) {
+    /// The whole target of the last emitted top-level effect clause.
+    fn last_whole_target(&self) -> TargetExpr {
         let scope = self.scopes.last().expect("the method scope stands");
-        let len = scope.len();
-        match (scope.get(len.wrapping_sub(2)), scope.get(len - 1)) {
-            (
-                Some(Clause::Effect {
-                    reach: None,
-                    target: TargetExpr::Point(cell),
-                    ..
-                }),
-                Some(Clause::Effect {
-                    reach: None,
-                    target,
-                    ..
-                }),
-            ) => (cell.clone(), target.clone()),
-            _ => panic!("a custody gate declares its rule read and its possession read first"),
+        match scope.last() {
+            Some(Clause::Effect {
+                reach: None,
+                target,
+                ..
+            }) => target.clone(),
+            _ => panic!("a custody gate declares its possession read first"),
         }
     }
 

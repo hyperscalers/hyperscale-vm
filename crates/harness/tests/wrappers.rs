@@ -25,7 +25,6 @@ use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
-const CAROL: PrincipalAddr = PrincipalAddr::new([0x30; 31]);
 const OPERATOR: PrincipalAddr = PrincipalAddr::new([0x30; 31]);
 const BASE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 const QUOTE: ResourceAddr = ResourceAddr::new([0xE2; 31]);
@@ -146,25 +145,19 @@ fn the_account_wrappers_match_their_signatures() {
     let graph = admits(|b| {
         let funds = account::withdraw(b, ALICE, BASE, 100)?;
         account::deposit(b, BOB, funds)?;
-        // Securify a third account: creating ALICE's stored authority in
-        // the same transaction that proposes against it would require the
-        // cell absent and present at once, which no execution satisfies.
-        let carol = account::authorize(b, CAROL)?;
-        b.presenting(carol, |b| {
-            account::securify_uniform(
-                b,
-                CAROL,
-                &StoredRule::claim(Claim::of_subject(BOB)),
-                86_400_000,
-            )
-        })?;
+        account::securify_uniform(
+            b,
+            ALICE,
+            &StoredRule::claim(Claim::of_subject(BOB)),
+            86_400_000,
+        )?;
         let rule = RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(BOB)))
             .expect("a rule within the vocabulary caps");
         account::propose(b, ALICE, rule.clone(), rule.clone(), rule, 86_400_000)?;
         account::cancel(b, ALICE)?;
         account::confirm(b, ALICE)
     });
-    assert_eq!(graph.nodes.len(), 7);
+    assert_eq!(graph.nodes.len(), 6);
 }
 
 /// A rule literal is judged by decoding it as the vocabulary — the same
@@ -218,10 +211,9 @@ fn the_empty_threshold_reaches_the_account() {
 #[test]
 fn a_scope_holding_two_proofs_carries_both_to_the_gate() {
     let graph = admits(|b| {
-        let bob = account::authorize(b, BOB)?;
-        let carol = account::authorize(b, CAROL)?;
-        let alice = b.presenting([bob, carol], |b| account::authorize(b, ALICE))?;
-        let funds = b.presenting(alice, |b| account::withdraw(b, ALICE, BASE, 100))?;
+        let base = account::present_badge(b, ALICE, BASE)?;
+        let quote = account::present_badge(b, ALICE, QUOTE)?;
+        let funds = b.presenting([base, quote], |b| account::withdraw(b, ALICE, BASE, 100))?;
         account::deposit(b, BOB, funds)
     });
     let gated = &graph.nodes[2].evidence;
@@ -278,10 +270,10 @@ fn a_badge_gate_without_a_proof_is_answered_from_the_signers_account() {
 fn misplaced_evidence_is_refused_at_the_call_site() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let alice = account::authorize(&mut b, ALICE).unwrap();
+    let held = account::present_badge(&mut b, ALICE, BASE).unwrap();
     let funds = account::withdraw(&mut b, ALICE, BASE, 100).unwrap();
     assert!(matches!(
-        b.call_presenting(alice, BOB, "deposit", (funds,)),
+        b.call_presenting(held, BOB, "deposit", (funds,)),
         Err(TypedError::UnexpectedEvidence { .. })
     ));
     assert!(matches!(
@@ -353,8 +345,7 @@ fn the_book_wrappers_match_their_signatures() {
     admits(|b| {
         let offered = account::withdraw(b, ALICE, BASE, 100)?;
         book.place_ask(b, 10, offered)?;
-        let bob = account::authorize(b, BOB)?;
-        let payment = b.presenting(bob, |b| account::withdraw(b, BOB, QUOTE, 50))?;
+        let payment = account::withdraw(b, ALICE, QUOTE, 50)?;
         let [bought, unspent] = book.fill_asks(b, 1, 20, payment)?;
         account::deposit(b, BOB, bought)?;
         account::deposit(b, BOB, unspent)

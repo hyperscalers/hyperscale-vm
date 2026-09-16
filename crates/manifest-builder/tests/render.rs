@@ -158,8 +158,7 @@ fn a_split_binds_both_halves_and_numbers_the_repeat() {
 fn a_graph_renders_without_any_metadata_at_all() {
     let chain = world();
     let mut b = GraphBuilder::new();
-    let [] = b.call_signed(ALICE, "authorize", ());
-    let [funds] = b.call_bearing(ALICE, "withdraw", (TOKEN, 100u128), 0);
+    let [funds] = b.call_signed(ALICE, "withdraw", (TOKEN, 100u128));
     let [] = b.call(BOB, "deposit", (funds.resource_is(TOKEN),));
     let graph = b.build().unwrap();
 
@@ -170,16 +169,14 @@ fn a_graph_renders_without_any_metadata_at_all() {
     let text = render(&graph, &Records::new(), &TestHasher, NETWORK, &vocabulary()).unwrap();
     assert_eq!(
         text,
-        "alice.authorize();\n\
-         let v1 = alice.withdraw(@token, 100);\n\
+        "let v1 = alice.withdraw(@token, 100);\n\
          bob.deposit(v1{is token});\n"
     );
     // The same graph against the real world types the binding instead,
     // and the assertion stops being worth printing twice.
     assert_eq!(
         render(&graph, &chain, &TestHasher, NETWORK, &vocabulary()).unwrap(),
-        "alice.authorize();\n\
-         let token = alice.withdraw(@token, 100);\n\
+        "let token = alice.withdraw(@token, 100);\n\
          bob.deposit(token);\n"
     );
 }

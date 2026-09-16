@@ -55,23 +55,18 @@ fn world() -> Records {
     chain
 }
 
-fn authorize(target: impl Into<CallTarget>) -> GraphNode {
-    GraphNode::signed(target, "authorize", vec![])
-}
-
 fn withdraw(
     target: impl Into<CallTarget>,
     resource: impl Into<Address>,
     amount: u128,
 ) -> GraphNode {
-    GraphNode::bearing(
+    GraphNode::signed(
         target,
         "withdraw",
         vec![
             GraphArg::Literal(Value::Address(resource.into())),
             GraphArg::Literal(Value::U128(amount)),
         ],
-        0,
     )
 }
 
@@ -87,11 +82,7 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
             decl: IntentDecl {
                 header: TEST_HEADER,
                 graph: ManifestGraph {
-                    nodes: vec![
-                        authorize(ALICE),
-                        withdraw(ALICE, RES_X, pay),
-                        deposit_param(ALICE, 0),
-                    ],
+                    nodes: vec![withdraw(ALICE, RES_X, pay), deposit_param(ALICE, 0)],
                 },
                 sockets: vec![Socket::Value {
                     resource: RES_Y,
@@ -102,7 +93,7 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
             bindings: vec![Binding::Value {
                 intent: 1,
                 edge: EdgeRef {
-                    producer: 1,
+                    producer: 0,
                     output: 0,
                 },
             }],
@@ -111,11 +102,7 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
             decl: IntentDecl {
                 header: TEST_HEADER,
                 graph: ManifestGraph {
-                    nodes: vec![
-                        authorize(BOB),
-                        withdraw(BOB, RES_Y, 10),
-                        deposit_param(BOB, 0),
-                    ],
+                    nodes: vec![withdraw(BOB, RES_Y, 10), deposit_param(BOB, 0)],
                 },
                 sockets: vec![Socket::Value {
                     resource: RES_X,
@@ -126,7 +113,7 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
             bindings: vec![Binding::Value {
                 intent: 0,
                 edge: EdgeRef {
-                    producer: 1,
+                    producer: 0,
                     output: 0,
                 },
             }],
@@ -213,10 +200,10 @@ fn admit_composed(tree: &EnvelopeTree) -> Result<AdmittedTree, AdmissionError> {
 /// must name it.
 #[test]
 fn a_tree_refusal_is_explained_at_the_interleaved_node() {
-    let broken_authorize = GraphNode::signed(
+    let broken_withdraw = GraphNode::signed(
         BOB,
-        "authorize",
-        // One argument to a method declaring none: an arity refusal at
+        "withdraw",
+        // One argument to a method declaring two: an arity refusal at
         // whatever flattened index this node is emitted at — which is 0,
         // since the root's node cannot go first.
         vec![GraphArg::Literal(Value::U64(7))],
@@ -237,7 +224,7 @@ fn a_tree_refusal_is_explained_at_the_interleaved_node() {
             bindings: vec![Binding::Value {
                 intent: 1,
                 edge: EdgeRef {
-                    producer: 1,
+                    producer: 0,
                     output: 0,
                 },
             }],
@@ -246,7 +233,7 @@ fn a_tree_refusal_is_explained_at_the_interleaved_node() {
             decl: IntentDecl {
                 header: TEST_HEADER,
                 graph: ManifestGraph {
-                    nodes: vec![broken_authorize, withdraw(BOB, RES_X, 5)],
+                    nodes: vec![broken_withdraw, deposit_param(BOB, 0)],
                 },
                 sockets: vec![],
             },
@@ -264,11 +251,10 @@ fn a_tree_refusal_is_explained_at_the_interleaved_node() {
         AdmissionError::ArityMismatch { node: 0, .. }
     ));
     let told = explain_admission_tree(&tree, &chain, &refusal);
-    // The call at flattened node 0 is the subintent's sign-in; the
+    // The call at flattened node 0 is the subintent's withdrawal; the
     // node at index 0 of the concatenation is the root's deposit, and
     // naming it would send the composer to the one call that is fine.
-    assert!(told.contains("authorize"), "{told}");
-    assert!(!told.contains("deposit"), "{told}");
+    assert!(told.contains("withdraw"), "{told}");
 }
 
 /// A socket filled from the other channel is refused as exactly that,
@@ -318,8 +304,8 @@ fn a_composed_tree_flattens_deterministically() {
     let manifest = admitted.admitted.manifest();
 
     // Root nodes lead where ready, sockets interleave the rest: each
-    // intent's sign-in and withdraw, then the two deposits consuming
-    // each other's yields.
+    // intent's withdraw, then the two deposits consuming each other's
+    // yields.
     let shape: Vec<(Address, &str)> = manifest
         .nodes
         .iter()
@@ -328,18 +314,16 @@ fn a_composed_tree_flattens_deterministically() {
     assert_eq!(
         shape,
         vec![
-            (ALICE.address(), "authorize"),
             (ALICE.address(), "withdraw"),
-            (BOB.address(), "authorize"),
             (BOB.address(), "withdraw"),
             (ALICE.address(), "deposit"),
             (BOB.address(), "deposit"),
         ]
     );
     assert_eq!(
-        manifest.nodes[4].inputs,
+        manifest.nodes[2].inputs,
         vec![NodeInput::Edge {
-            source: 3,
+            source: 1,
             output: 0,
             resource: RES_Y,
             content: EdgeContent::Fungible,
@@ -350,9 +334,9 @@ fn a_composed_tree_flattens_deterministically() {
         }]
     );
     assert_eq!(
-        manifest.nodes[5].inputs,
+        manifest.nodes[3].inputs,
         vec![NodeInput::Edge {
-            source: 1,
+            source: 0,
             output: 0,
             resource: RES_X,
             content: EdgeContent::Fungible,
@@ -489,17 +473,7 @@ fn an_origin_names_the_intent_its_node_signed() {
         .iter()
         .map(|origin| (origin.intent, origin.local))
         .collect();
-    assert_eq!(
-        origins,
-        vec![
-            (root, 0),
-            (root, 1),
-            (bob, 0),
-            (bob, 1),
-            (root, 2),
-            (bob, 2),
-        ],
-    );
+    assert_eq!(origins, vec![(root, 0), (bob, 0), (root, 1), (bob, 1)],);
     // And each carries its own intent's horizon: the window that
     // intent's signer signed plus the crossing grace, which outlives the
     // nullifier's by the span a successor needs to decide an inherited
@@ -559,7 +533,7 @@ fn an_escrow_key_is_fixed_by_the_intent_its_node_signed() {
             &TestHasher,
         )
         .expect("admits");
-        admitted.admitted.origins()[3]
+        admitted.admitted.origins()[1]
     };
     let (one, other) = (origin_of(&first), origin_of(&second));
     assert_eq!(one, other);
@@ -582,7 +556,7 @@ fn an_escrow_key_is_fixed_by_the_intent_its_node_signed() {
             &TestHasher,
         )
         .expect("admits");
-        admitted.admitted.origins()[1]
+        admitted.admitted.origins()[0]
     };
     assert_ne!(root_of(&first).expiry_ms, root_of(&second).expiry_ms);
 }
@@ -892,14 +866,13 @@ fn what_fills_a_socket_must_match_the_declared_resource() {
 /// The subintent's producer, yielding named instances instead of an
 /// amount.
 fn withdraw_nf(target: impl Into<CallTarget>, resource: impl Into<Address>, id: u64) -> GraphNode {
-    GraphNode::bearing(
+    GraphNode::signed(
         target,
         "withdraw-nf",
         vec![
             GraphArg::Literal(Value::Address(resource.into())),
             GraphArg::Literal(Value::List(vec![Value::U64(id)])),
         ],
-        0,
     )
 }
 
@@ -910,7 +883,7 @@ fn an_edge_filling_a_socket_is_judged_by_its_kind() {
             decl: IntentDecl {
                 header: TEST_HEADER,
                 graph: ManifestGraph {
-                    nodes: vec![authorize(ALICE), withdraw(ALICE, RES_X, 100), consumer],
+                    nodes: vec![withdraw(ALICE, RES_X, 100), consumer],
                 },
                 sockets: vec![Socket::Value {
                     resource: RES_Y,
@@ -921,7 +894,7 @@ fn an_edge_filling_a_socket_is_judged_by_its_kind() {
             bindings: vec![Binding::Value {
                 intent: 1,
                 edge: EdgeRef {
-                    producer: 1,
+                    producer: 0,
                     output: 0,
                 },
             }],
@@ -930,11 +903,7 @@ fn an_edge_filling_a_socket_is_judged_by_its_kind() {
             decl: IntentDecl {
                 header: TEST_HEADER,
                 graph: ManifestGraph {
-                    nodes: vec![
-                        authorize(BOB),
-                        withdraw_nf(BOB, RES_Y, 7),
-                        deposit_param(BOB, 0),
-                    ],
+                    nodes: vec![withdraw_nf(BOB, RES_Y, 7), deposit_param(BOB, 0)],
                 },
                 sockets: vec![Socket::Value {
                     resource: RES_X,
@@ -945,7 +914,7 @@ fn an_edge_filling_a_socket_is_judged_by_its_kind() {
             bindings: vec![Binding::Value {
                 intent: 0,
                 edge: EdgeRef {
-                    producer: 1,
+                    producer: 0,
                     output: 0,
                 },
             }],
@@ -976,7 +945,7 @@ fn an_edge_filling_a_socket_is_judged_by_its_kind() {
 
     // And a fungible yield into `deposit-nf` refuses the other way.
     let mut crossed = composed_tree(100);
-    crossed.intents[0].decl.graph.nodes[2] =
+    crossed.intents[0].decl.graph.nodes[1] =
         GraphNode::new(ALICE, "deposit-nf", vec![GraphArg::Socket(0)]);
     assert!(matches!(
         admit_composed(&crossed),
@@ -990,7 +959,7 @@ fn an_edge_filling_a_socket_is_judged_by_its_kind() {
 #[test]
 fn param_consumption_is_exactly_once() {
     let mut unused = composed_tree(100);
-    unused.intents[1].decl.graph.nodes[2] = withdraw(BOB, RES_Y, 1);
+    unused.intents[1].decl.graph.nodes[1] = withdraw(BOB, RES_Y, 1);
     assert_eq!(
         admit_composed(&unused),
         Err(AdmissionError::UnconsumedSocket {
@@ -1052,8 +1021,8 @@ fn two_bindings_cannot_consume_one_output() {
     let mut tree = composed_tree(100);
     let mut second = tree.intents[1].clone();
     second.account = second_signer;
-    second.decl.graph.nodes[0] = authorize(second_signer);
-    second.decl.graph.nodes[1] = withdraw(second_signer, RES_Y, 11);
+    second.decl.graph.nodes[0] = withdraw(second_signer, RES_Y, 10);
+    second.decl.graph.nodes[1] = deposit_param(second_signer, 0);
     tree.intents.push(second);
     let identity = tree.hash(&TestHasher);
     let result = admit_tree(
@@ -1066,7 +1035,7 @@ fn two_bindings_cannot_consume_one_output() {
     assert_eq!(
         result,
         Err(AdmissionError::DoubleConsumption {
-            producer: 1,
+            producer: 0,
             output: 0,
         })
     );
@@ -1134,15 +1103,14 @@ fn a_socket_cannot_fill_a_value_parameter() {
     // its parameters from a socket is a parameter defect — not the edge
     // defect the shared arity check would otherwise report.
     let mut tree = composed_tree(100);
-    tree.intents[1].decl.graph.nodes[2] = GraphNode::bearing(
+    tree.intents[1].decl.graph.nodes[1] = GraphNode::signed(
         BOB,
         "withdraw",
         vec![GraphArg::Socket(0), GraphArg::Literal(Value::U128(1))],
-        0,
     );
     assert_eq!(
         admit_composed(&tree),
-        Err(AdmissionError::SocketForValueParam { node: 5, param: 0 })
+        Err(AdmissionError::SocketForValueParam { node: 3, param: 0 })
     );
 }
 
@@ -1165,7 +1133,7 @@ fn an_authority_socket_is_presented_not_passed() {
     assert_eq!(
         admit_composed(&tree),
         Err(AdmissionError::AuthoritySocketAsArgument {
-            node: 3,
+            node: 2,
             param: 0,
             socket: 0,
         })

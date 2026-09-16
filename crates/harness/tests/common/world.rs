@@ -603,12 +603,14 @@ pub enum TxResult {
 /// in the graph.
 pub const CORPUS_ACCOUNT: PrincipalAddr = ALICE;
 
-/// What one corpus transaction runs under: its hash, its intent signer,
-/// and the transaction clock its block would have committed.
+/// What one corpus transaction runs under: its hash, the account its
+/// intent acts as, the keys attesting it, and the transaction clock its
+/// block would have committed.
 #[derive(Clone, Copy)]
 pub struct Signing {
     tx: TxHash,
-    signer: PrincipalAddr,
+    account: PrincipalAddr,
+    attested_by: PrincipalAddr,
     clock_ms: u64,
 }
 
@@ -630,10 +632,11 @@ pub fn execute_manifest(
 ) -> Result<(TxResult, MemoryStore)> {
     let Signing {
         tx,
-        signer,
+        account,
+        attested_by,
         clock_ms,
     } = under;
-    let admitted = match admit_here(graph, signer, world) {
+    let admitted = match admit_here_attested(graph, account, &[attested_by], world) {
         Ok(admitted) => admitted,
         // A verdict on what a node presented is admission's, and a lane
         // reports it rather than failing: nothing about it is a defect
@@ -743,12 +746,24 @@ pub fn shard_of(address: impl Into<Address>) -> ShardId {
 /// every path into admission here does with it.
 pub fn admit_here(
     graph: &ManifestGraph,
-    signer: PrincipalAddr,
+    account: PrincipalAddr,
+    world: &Records,
+) -> Result<Admitted, AdmissionError> {
+    admit_here_attested(graph, account, &[account], world)
+}
+
+/// As [`admit_here`], for an intent acting as `account` and attested by
+/// keys of its own: what a delegate's signature on somebody else's
+/// intent reaches admission as.
+pub fn admit_here_attested(
+    graph: &ManifestGraph,
+    account: PrincipalAddr,
+    attested_by: &[PrincipalAddr],
     world: &Records,
 ) -> Result<Admitted, AdmissionError> {
     let records = graph_records(graph, world, &TestHasher);
     let grants = PresentedGrants::from_presented(&TestHasher, &records);
-    admit_presenting(graph, signer, world, &grants, &TestHasher)
+    admit_presenting(graph, account, attested_by, world, &grants, &TestHasher)
 }
 
 pub fn sharded_routing(world: &Records, graph: &ManifestGraph) -> Admitted {
@@ -947,14 +962,32 @@ pub fn run_both_each_at(
     transactions: &[(&ManifestGraph, TxHash, PrincipalAddr)],
     clock_ms: u64,
 ) -> (Vec<TxResult>, MemoryStore) {
+    let attested: Vec<_> = transactions
+        .iter()
+        .map(|(graph, tx, account)| (*graph, *tx, *account, *account))
+        .collect();
+    run_both_attested_at(world, store, &attested, clock_ms)
+}
+
+/// As [`run_both_each_at`], with each intent's attesting key named
+/// beside the account it acts as — how a test runs a delegate's key on
+/// somebody else's intent, which is the one shape that reaches a stored
+/// rule the account's own key no longer opens.
+pub fn run_both_attested_at(
+    world: &Records,
+    store: &MemoryStore,
+    transactions: &[(&ManifestGraph, TxHash, PrincipalAddr, PrincipalAddr)],
+    clock_ms: u64,
+) -> (Vec<TxResult>, MemoryStore) {
     let mut lanes = Vec::new();
     for backend in LANES.engine_backends() {
         let mut results = Vec::new();
         let mut threaded = store.clone();
-        for (graph, tx, signer) in transactions {
+        for (graph, tx, account, attested_by) in transactions {
             let under = Signing {
                 tx: *tx,
-                signer: *signer,
+                account: *account,
+                attested_by: *attested_by,
                 clock_ms,
             };
             let (result, next) =
@@ -1026,28 +1059,6 @@ pub fn graph_signed(
 pub fn transfer_graph() -> ManifestGraph {
     graph(|b| {
         let funds = account::withdraw(b, ALICE, RES_X, 100)?;
-        account::deposit(b, BOB, funds)
-    })
-}
-
-/// The same transfer through an explicit sign-in: authorize mints
-/// Alice's identity and the withdrawal presents that proof rather than
-/// the intent's signature, which is what lets a graph composed for her
-/// by somebody else reach a block and refuse inside it.
-pub fn authorized_transfer_graph() -> ManifestGraph {
-    authorized_transfer_by(ALICE)
-}
-
-/// As [`authorized_transfer_graph`], composed by `signer`. Alice's
-/// sign-in is the first node whoever composes it: the intent's signature
-/// names its own account, and Alice's gate judges that claim — so a
-/// stranger's graph is admissible and her account refuses it.
-pub fn authorized_transfer_by(signer: PrincipalAddr) -> ManifestGraph {
-    graph_signed(signer, |b| {
-        let proof = account::authorize(b, ALICE)?;
-        let funds = b
-            .call_presenting(proof, ALICE, "withdraw", (RES_X, 100u128))?
-            .one()?;
         account::deposit(b, BOB, funds)
     })
 }

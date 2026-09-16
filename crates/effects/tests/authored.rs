@@ -5,7 +5,6 @@
 //! has to stand where it can see them all — which is outside the crate
 //! defining the rules.
 
-use hyperscale_vm_effects::vocabulary::AUTH;
 use hyperscale_vm_effects::{
     Clause, Expr, GrantsExpr, PACKAGE_SLOT_BASE, PackageMetadata, ResourceKind, RuleExpr, RuleLeaf,
     SlotId, SlotRef, TargetExpr, Value, check_abi, check_declarations,
@@ -65,11 +64,6 @@ fn every_authored_signature_is_well_formed() {
 /// point.
 #[allow(clippy::too_many_lines)] // one row per method, and the exhaustiveness is the point
 fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<Expr>)> {
-    let auth_cell = || Expr::ChildKey {
-        owner: Box::new(Expr::SelfAddr),
-        slot: SlotRef::Fixed(AUTH),
-        material: vec![],
-    };
     // The rule that governs a cell, built here from the protocol's own
     // types rather than from the tracer's — so agreement is between two
     // derivations rather than one restated.
@@ -115,12 +109,6 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         // take none, because what may happen there is the resource's
         // answer rather than this package's.
         ("account", "accept", this(), vec![]),
-        (
-            "account",
-            "authorize",
-            governs(auth_cell()),
-            vec![Expr::SelfAddr],
-        ),
         ("account", "burn", open(), vec![]),
         ("account", "burn-nf", open(), vec![]),
         ("account", "cancel", governs(own_cell(2)), vec![]),
@@ -128,16 +116,11 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         ("account", "deposit", open(), vec![]),
         ("account", "deposit-nf", open(), vec![]),
         ("account", "freeze", governs(own_cell(2)), vec![]),
-        (
-            "account",
-            "present-badge",
-            governs(auth_cell()),
-            vec![Expr::Arg(0)],
-        ),
+        ("account", "present-badge", this(), vec![Expr::Arg(0)]),
         (
             "account",
             "present-instance",
-            governs(auth_cell()),
+            this(),
             vec![Expr::Tuple(vec![Expr::Arg(0), Expr::Arg(1)])],
         ),
         ("account", "promote", governs(own_cell(2)), vec![]),

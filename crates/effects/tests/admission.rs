@@ -88,17 +88,11 @@ fn setup() -> Records {
     chain
 }
 
-/// Sign in, withdraw 100, split off 30, deposit the taken part to Bob
-/// and the rest back to Alice — the rest-edge shape, fully consumed.
+/// Withdraw 100, split off 30, deposit the taken part to Bob and the
+/// rest back to Alice — the rest-edge shape, fully consumed.
 fn valid_graph() -> ManifestGraph {
     ManifestGraph {
         nodes: vec![
-            GraphNode {
-                target: ALICE.into(),
-                method: "authorize".into(),
-                args: vec![],
-                evidence: [EvidenceRef::IntentSignature].into(),
-            },
             GraphNode {
                 target: ALICE.into(),
                 method: "withdraw".into(),
@@ -106,7 +100,7 @@ fn valid_graph() -> ManifestGraph {
                     GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(100)),
                 ],
-                evidence: [EvidenceRef::Node(0)].into(),
+                evidence: [EvidenceRef::IntentSignature].into(),
             },
             GraphNode {
                 target: splitter().into(),
@@ -114,7 +108,7 @@ fn valid_graph() -> ManifestGraph {
                 args: vec![
                     GraphArg::Edge {
                         edge: EdgeRef {
-                            producer: 1,
+                            producer: 0,
                             output: 0,
                         },
                         constraints: vec![Constraint::ResourceIs(RES_X)],
@@ -128,7 +122,7 @@ fn valid_graph() -> ManifestGraph {
                 method: "deposit".into(),
                 args: vec![GraphArg::Edge {
                     edge: EdgeRef {
-                        producer: 2,
+                        producer: 1,
                         output: 0,
                     },
                     constraints: vec![Constraint::MinAmount(30), Constraint::MaxAmount(30)],
@@ -140,7 +134,7 @@ fn valid_graph() -> ManifestGraph {
                 method: "deposit".into(),
                 args: vec![GraphArg::Edge {
                     edge: EdgeRef {
-                        producer: 2,
+                        producer: 1,
                         output: 1,
                     },
                     constraints: vec![],
@@ -181,7 +175,7 @@ fn a_well_formed_graph_lowers_and_routes() {
 fn constraint_changes_reach_lowering_and_the_fresh_id_root() {
     let chain = setup();
     let mut loosened = valid_graph();
-    let GraphArg::Edge { constraints, .. } = &mut loosened.nodes[3].args[0] else {
+    let GraphArg::Edge { constraints, .. } = &mut loosened.nodes[2].args[0] else {
         panic!("edge arg");
     };
     constraints[0] = Constraint::MinAmount(29);
@@ -207,32 +201,26 @@ fn constraint_changes_reach_lowering_and_the_fresh_id_root() {
 fn evidence_is_presented_exactly_where_it_is_required() {
     let chain = setup();
     let mut extra = valid_graph();
-    extra.nodes[2].evidence = [EvidenceRef::IntentSignature].into();
+    extra.nodes[1].evidence = [EvidenceRef::IntentSignature].into();
     assert_eq!(
         admit(&extra, ALICE, &chain, &TestHasher),
-        Err(AdmissionError::UnexpectedEvidence { node: 2 })
+        Err(AdmissionError::UnexpectedEvidence { node: 1 })
     );
 
     // The mirror: a guarded call presenting nothing.
     let mut missing = valid_graph();
-    missing.nodes[1].evidence.clear();
+    missing.nodes[0].evidence.clear();
     assert_eq!(
         admit(&missing, ALICE, &chain, &TestHasher),
-        Err(AdmissionError::MissingEvidence { node: 1 })
+        Err(AdmissionError::MissingEvidence { node: 0 })
     );
 }
 
-/// Authorize Alice, withdraw on her proof rather than on the signature,
-/// deposit to Bob — the proven-claim shape, fully consumed.
+/// Withdraw on Alice's own signature and deposit to Bob — the
+/// signed-gate shape, fully consumed.
 fn proof_graph() -> ManifestGraph {
     ManifestGraph {
         nodes: vec![
-            GraphNode {
-                target: ALICE.into(),
-                method: "authorize".into(),
-                args: vec![],
-                evidence: [EvidenceRef::IntentSignature].into(),
-            },
             GraphNode {
                 target: ALICE.into(),
                 method: "withdraw".into(),
@@ -240,14 +228,14 @@ fn proof_graph() -> ManifestGraph {
                     GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(100)),
                 ],
-                evidence: [EvidenceRef::Node(0)].into(),
+                evidence: [EvidenceRef::IntentSignature].into(),
             },
             GraphNode {
                 target: BOB.into(),
                 method: "deposit".into(),
                 args: vec![GraphArg::Edge {
                     edge: EdgeRef {
-                        producer: 1,
+                        producer: 0,
                         output: 0,
                     },
                     constraints: vec![],
@@ -258,49 +246,21 @@ fn proof_graph() -> ManifestGraph {
     }
 }
 
-/// A proven claim resolves at admission to its producer's target,
-/// reached through the authorizing node — which itself presents no
-/// claim: the signature it carries is the sign-in, kept beside the
-/// proven set rather than in it.
+/// The account's own gate is a claim its signature answers, resolved at
+/// admission and reading no cell.
+///
+/// The rule the cell holds is judged elsewhere — the injected sign-in,
+/// on the account's own shard — so what stands at the node is the pure
+/// identity match and nothing more.
 #[test]
-fn a_proven_claim_resolves_to_its_producers_target() {
+fn an_accounts_own_gate_is_answered_by_its_signature() {
     let chain = setup();
     let admitted = admit(&proof_graph(), ALICE, &chain, &TestHasher).expect("admits");
 
-    // The authorizing gate is the rule that governs the cell the
-    // method's own declared read names: what is stored there, or — while
-    // nothing is — the identity that address itself derives. The guarded
-    // withdrawal keeps the pure identity match.
-    assert_eq!(
-        admitted.calls()[0].evidence,
-        vec![Claim::of_subject(ALICE)],
-        "the signature presents the account itself",
-    );
-    let cell = child_key(&TestHasher, ALICE, AUTH, &[]);
-    assert_eq!(
-        admitted.calls()[0].requires,
-        vec![Rule::CountOf {
-            count: 1,
-            rules: vec![
-                Rule::Require(JudgedLeaf::Stored { cell }),
-                Rule::CountOf {
-                    count: 2,
-                    rules: vec![
-                        Rule::Require(JudgedLeaf::Presence {
-                            target: EffectTarget::Point(cell),
-                            expect: Presence::Absent,
-                        }),
-                        Rule::Require(JudgedLeaf::Claim(Claim::of_subject(ALICE))),
-                    ],
-                },
-            ],
-        }]
-    );
-
-    let withdraw = &admitted.manifest().nodes[1];
+    let withdraw = &admitted.manifest().nodes[0];
     assert_eq!(withdraw.evidence, vec![Claim::of_subject(ALICE)]);
     assert_eq!(
-        admitted.calls()[1].requires,
+        admitted.calls()[0].requires,
         vec![Rule::Require(JudgedLeaf::Claim(Claim::of_subject(ALICE)))]
     );
 
@@ -413,29 +373,22 @@ fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, Com
     (chain, custodian)
 }
 
-/// Alice signs in, presents at the custodian on her proof — its stored
-/// rule is the custodian's, which no signature reaches — and operates on
-/// what the custodian minted.
+/// Present at the custodian — its stored rule is the custodian's, which
+/// no signature reaches — and operate on what the custodian minted.
 fn custodian_graph(custodian: ComponentAddr) -> ManifestGraph {
     ManifestGraph {
         nodes: vec![
             GraphNode {
-                target: ALICE.into(),
-                method: "authorize".into(),
+                target: custodian.into(),
+                method: "present".into(),
                 args: vec![],
                 evidence: [EvidenceRef::IntentSignature].into(),
             },
             GraphNode {
                 target: custodian.into(),
-                method: "present".into(),
-                args: vec![],
-                evidence: [EvidenceRef::Node(0)].into(),
-            },
-            GraphNode {
-                target: custodian.into(),
                 method: "operate".into(),
                 args: vec![],
-                evidence: [EvidenceRef::Node(1)].into(),
+                evidence: [EvidenceRef::Node(0)].into(),
             },
         ],
     }
@@ -454,7 +407,7 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     );
     let admitted = admit(&custodian_graph(custodian), ALICE, &chain, &TestHasher).expect("admits");
     assert_eq!(
-        admitted.calls()[1].requires,
+        admitted.calls()[0].requires,
         vec![Rule::Require(JudgedLeaf::Stored {
             cell: child_key(&TestHasher, custodian, AUTH, &[]),
         })],
@@ -473,14 +426,14 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
             })),
         "the badge-keyed vault's possession joins the union declaration"
     );
-    let operate = &admitted.manifest().nodes[2];
+    let operate = &admitted.manifest().nodes[1];
     assert_eq!(
         operate.evidence,
         vec![Claim::of_subject(badge)],
         "the proof presents the badge, not the producer's address"
     );
     assert_eq!(
-        admitted.calls()[2].requires,
+        admitted.calls()[1].requires,
         vec![Rule::Require(JudgedLeaf::Claim(Claim::of_subject(badge)))],
         "a gate naming a resource address wants the badge, by the class alone"
     );
@@ -492,7 +445,7 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
         custodian_world(&Presenting::Identity, vec![Value::Address(badge.address())]);
     let admitted = admit(&custodian_graph(custodian), ALICE, &chain, &TestHasher).expect("admits");
     assert_eq!(
-        admitted.manifest().nodes[2].evidence,
+        admitted.manifest().nodes[1].evidence,
         vec![Claim::of_subject(custodian)]
     );
     // A badge that is not a resource address has nothing possessable
@@ -505,7 +458,7 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     );
     let admitted = admit(&custodian_graph(custodian), ALICE, &chain, &TestHasher).expect("admits");
     assert_eq!(
-        admitted.manifest().nodes[2].evidence,
+        admitted.manifest().nodes[1].evidence,
         vec![Claim::of_instance(badge, 7), Claim::of_subject(badge),],
         "one instance held is the badge held, where possession was verified"
     );
@@ -530,25 +483,25 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
 
     // Its own node: not earlier.
     let mut own = proof_graph();
-    own.nodes[1].evidence = [EvidenceRef::Node(1)].into();
+    own.nodes[0].evidence = [EvidenceRef::Node(0)].into();
     assert_eq!(
         admit(&own, ALICE, &chain, &TestHasher),
         Err(AdmissionError::ForwardProof {
             intent: 0,
-            node: 1,
-            producer: 1
+            node: 0,
+            producer: 0
         })
     );
 
     // A later node, which is also every out-of-range index.
     let mut later = proof_graph();
-    later.nodes[1].evidence = [EvidenceRef::Node(2)].into();
+    later.nodes[0].evidence = [EvidenceRef::Node(1)].into();
     assert_eq!(
         admit(&later, ALICE, &chain, &TestHasher),
         Err(AdmissionError::ForwardProof {
             intent: 0,
-            node: 1,
-            producer: 2
+            node: 0,
+            producer: 1
         })
     );
 
@@ -564,18 +517,18 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
             GraphArg::Literal(Value::Address(RES_X.address())),
             GraphArg::Literal(Value::U128(1)),
         ],
-        evidence: [EvidenceRef::Node(2)].into(),
+        evidence: [EvidenceRef::Node(1)].into(),
     });
     assert_eq!(
         admit(&unminting, ALICE, &chain, &TestHasher),
         Err(AdmissionError::ProvesNothing {
             intent: 0,
-            node: 3,
-            producer: 2
+            node: 2,
+            producer: 1
         })
     );
 
-    // The authorizing node's own gate takes evidence like any other.
+    // A guarded node with nothing presented at all.
     let mut unsigned = proof_graph();
     unsigned.nodes[0].evidence.clear();
     assert_eq!(
@@ -598,7 +551,7 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
 fn a_refusal_reads_back_into_the_graph_that_earned_it() {
     let chain = world();
     let mut wrong_kind = valid_graph();
-    wrong_kind.nodes[1].args[1] = GraphArg::Literal(Value::U64(100));
+    wrong_kind.nodes[0].args[1] = GraphArg::Literal(Value::U64(100));
     let refusal = admit(&wrong_kind, ALICE, &chain, &TestHasher)
         .expect_err("a u64 does not fill a u128 parameter");
 
@@ -607,7 +560,7 @@ fn a_refusal_reads_back_into_the_graph_that_earned_it() {
     assert!(told.contains("expected u128"), "{told}");
     // The call the index names, and the method — neither in the verdict.
     assert!(
-        told.contains(&wrong_kind.nodes[1].method),
+        told.contains(&wrong_kind.nodes[0].method),
         "the method: {told}"
     );
     // And the argument as the composer wrote it.
@@ -671,7 +624,7 @@ fn an_unsatisfied_gate_reads_back_leaf_by_leaf() {
     chain.instances.create(&TestHasher, meta);
 
     let mut graph = custodian_graph(custodian);
-    graph.nodes[2].target = gatekeeper.into();
+    graph.nodes[1].target = gatekeeper.into();
     let refusal = admit(&graph, ALICE, &chain, &TestHasher)
         .expect_err("one badge does not meet a threshold of two");
     assert!(matches!(
@@ -702,16 +655,16 @@ fn every_malformed_mutation_rejects() {
     assert_eq!(
         admit_it(&dangling),
         Err(AdmissionError::UnconsumedOutput {
-            producer: 2,
+            producer: 1,
             output: 1,
         })
     );
 
     // Double consumption: the last node consumes the taken part again.
     let mut double = valid_graph();
-    double.nodes[4].args[0] = GraphArg::Edge {
+    double.nodes[3].args[0] = GraphArg::Edge {
         edge: EdgeRef {
-            producer: 2,
+            producer: 1,
             output: 0,
         },
         constraints: vec![],
@@ -719,16 +672,16 @@ fn every_malformed_mutation_rejects() {
     assert_eq!(
         admit_it(&double),
         Err(AdmissionError::DoubleConsumption {
-            producer: 2,
+            producer: 1,
             output: 0,
         })
     );
 
     // The cycle shape: a producer at or after its consumer cannot parse.
     let mut cyclic = valid_graph();
-    cyclic.nodes[2].args[0] = GraphArg::Edge {
+    cyclic.nodes[1].args[0] = GraphArg::Edge {
         edge: EdgeRef {
-            producer: 3,
+            producer: 2,
             output: 0,
         },
         constraints: vec![],
@@ -737,14 +690,14 @@ fn every_malformed_mutation_rejects() {
         admit_it(&cyclic),
         Err(AdmissionError::ForwardEdge {
             intent: 0,
-            node: 2,
-            producer: 3,
+            node: 1,
+            producer: 2,
         })
     );
     let mut self_edge = valid_graph();
-    self_edge.nodes[2].args[0] = GraphArg::Edge {
+    self_edge.nodes[1].args[0] = GraphArg::Edge {
         edge: EdgeRef {
-            producer: 2,
+            producer: 1,
             output: 0,
         },
         constraints: vec![],
@@ -753,19 +706,19 @@ fn every_malformed_mutation_rejects() {
         admit_it(&self_edge),
         Err(AdmissionError::ForwardEdge {
             intent: 0,
-            node: 2,
-            producer: 2,
+            node: 1,
+            producer: 1,
         })
     );
 
     // Type mismatches: a literal of the wrong kind, a literal where a
     // bucket is due, an edge into a value parameter, a phantom output.
     let mut wrong_kind = valid_graph();
-    wrong_kind.nodes[1].args[1] = GraphArg::Literal(Value::U64(100));
+    wrong_kind.nodes[0].args[1] = GraphArg::Literal(Value::U64(100));
     assert_eq!(
         admit_it(&wrong_kind),
         Err(AdmissionError::ParamKind {
-            node: 1,
+            node: 0,
             param: 1,
             expected: "u128",
             found: "u64",
@@ -774,36 +727,36 @@ fn every_malformed_mutation_rejects() {
     // An address literal outside the classes the parameter declares: the
     // account's withdraw names a denomination, and a component is not one.
     let mut wrong_class = valid_graph();
-    wrong_class.nodes[1].args[0] = GraphArg::Literal(Value::Address(Address::new(
+    wrong_class.nodes[0].args[0] = GraphArg::Literal(Value::Address(Address::new(
         [0x77; 31],
         AddressClass::Component,
     )));
     assert_eq!(
         admit_it(&wrong_class),
         Err(AdmissionError::ParamKind {
-            node: 1,
+            node: 0,
             param: 0,
             expected: "resource-address",
             found: "address",
         })
     );
     let mut literal_bucket = valid_graph();
-    literal_bucket.nodes[3].args[0] = GraphArg::Literal(Value::U128(30));
+    literal_bucket.nodes[2].args[0] = GraphArg::Literal(Value::U128(30));
     assert_eq!(
         admit_it(&literal_bucket),
-        Err(AdmissionError::LiteralForBucketParam { node: 3, param: 0 })
+        Err(AdmissionError::LiteralForBucketParam { node: 2, param: 0 })
     );
     let mut edge_value = valid_graph();
-    edge_value.nodes[2].args[1] = GraphArg::Edge {
+    edge_value.nodes[1].args[1] = GraphArg::Edge {
         edge: EdgeRef {
-            producer: 1,
+            producer: 0,
             output: 0,
         },
         constraints: vec![],
     };
     assert_eq!(
         admit_it(&edge_value),
-        Err(AdmissionError::EdgeForValueParam { node: 2, param: 1 })
+        Err(AdmissionError::EdgeForValueParam { node: 1, param: 1 })
     );
     // An edge of one kind into a parameter declaring the other. The
     // producer's projection says what crosses and the callee's signature
@@ -811,20 +764,20 @@ fn every_malformed_mutation_rejects() {
     // sign rather than a cell whose framing a guest decodes its way out
     // of.
     let mut wrong_edge_kind = valid_graph();
-    wrong_edge_kind.nodes[3].method = "deposit-nf".into();
+    wrong_edge_kind.nodes[2].method = "deposit-nf".into();
     assert_eq!(
         admit_it(&wrong_edge_kind),
         Err(AdmissionError::ResourceKindMismatch {
-            node: 3,
+            node: 2,
             param: 0,
             expected: "nf-bucket",
             found: ResourceKind::Fungible,
         })
     );
     let mut phantom = valid_graph();
-    phantom.nodes[3].args[0] = GraphArg::Edge {
+    phantom.nodes[2].args[0] = GraphArg::Edge {
         edge: EdgeRef {
-            producer: 1,
+            producer: 0,
             output: 5,
         },
         constraints: vec![],
@@ -832,18 +785,18 @@ fn every_malformed_mutation_rejects() {
     assert_eq!(
         admit_it(&phantom),
         Err(AdmissionError::NoSuchOutput {
-            producer: 1,
+            producer: 0,
             output: 5,
         })
     );
 
     // Arity.
     let mut arity = valid_graph();
-    arity.nodes[1].args.pop();
+    arity.nodes[0].args.pop();
     assert_eq!(
         admit_it(&arity),
         Err(AdmissionError::ArityMismatch {
-            node: 1,
+            node: 0,
             expected: 2,
             found: 1,
         })
@@ -851,28 +804,28 @@ fn every_malformed_mutation_rejects() {
 
     // Constraints: a contradicted resource, an empty amount window.
     let mut wrong_resource = valid_graph();
-    wrong_resource.nodes[2].args[0] = GraphArg::Edge {
+    wrong_resource.nodes[1].args[0] = GraphArg::Edge {
         edge: EdgeRef {
-            producer: 1,
+            producer: 0,
             output: 0,
         },
         constraints: vec![Constraint::ResourceIs(common::RES_Y)],
     };
     assert_eq!(
         admit_it(&wrong_resource),
-        Err(AdmissionError::ResourceMismatch { node: 2, param: 0 })
+        Err(AdmissionError::ResourceMismatch { node: 1, param: 0 })
     );
     let mut empty_window = valid_graph();
-    empty_window.nodes[3].args[0] = GraphArg::Edge {
+    empty_window.nodes[2].args[0] = GraphArg::Edge {
         edge: EdgeRef {
-            producer: 2,
+            producer: 1,
             output: 0,
         },
         constraints: vec![Constraint::MinAmount(31), Constraint::MaxAmount(30)],
     };
     assert_eq!(
         admit_it(&empty_window),
-        Err(AdmissionError::UnsatisfiableConstraint { node: 3, param: 0 })
+        Err(AdmissionError::UnsatisfiableConstraint { node: 2, param: 0 })
     );
 }
 
@@ -888,15 +841,15 @@ fn a_literal_nested_past_the_bound_rejects_ahead_of_the_hash() {
     };
 
     let mut graph = valid_graph();
-    graph.nodes[1].args[0] = GraphArg::Literal(nest(MAX_VALUE_DEPTH));
+    graph.nodes[0].args[0] = GraphArg::Literal(nest(MAX_VALUE_DEPTH));
     assert_eq!(
         admit(&graph, ALICE, &chain, &TestHasher),
-        Err(AdmissionError::ValueTooDeep { node: 1, param: 0 })
+        Err(AdmissionError::ValueTooDeep { node: 0, param: 0 })
     );
 
     // One level shallower the depth check passes and ordinary typing
     // takes over, so the bound is exactly where it says it is.
-    graph.nodes[1].args[0] = GraphArg::Literal(nest(MAX_VALUE_DEPTH - 1));
+    graph.nodes[0].args[0] = GraphArg::Literal(nest(MAX_VALUE_DEPTH - 1));
     assert!(matches!(
         admit(&graph, ALICE, &chain, &TestHasher),
         Err(AdmissionError::ParamKind { .. })
@@ -913,9 +866,9 @@ fn repeated_amount_bounds_fold_to_their_conjunction() {
     // Under last-wins the first of these admits and then cannot be
     // satisfied by anything.
     let mut unsatisfiable = valid_graph();
-    unsatisfiable.nodes[3].args[0] = GraphArg::Edge {
+    unsatisfiable.nodes[2].args[0] = GraphArg::Edge {
         edge: EdgeRef {
-            producer: 2,
+            producer: 1,
             output: 0,
         },
         constraints: vec![
@@ -926,14 +879,14 @@ fn repeated_amount_bounds_fold_to_their_conjunction() {
     };
     assert_eq!(
         admit_it(&unsatisfiable),
-        Err(AdmissionError::UnsatisfiableConstraint { node: 3, param: 0 })
+        Err(AdmissionError::UnsatisfiableConstraint { node: 2, param: 0 })
     );
 
     // A satisfiable conjunction still admits, however it is spelled.
     let mut satisfiable = valid_graph();
-    satisfiable.nodes[3].args[0] = GraphArg::Edge {
+    satisfiable.nodes[2].args[0] = GraphArg::Edge {
         edge: EdgeRef {
-            producer: 2,
+            producer: 1,
             output: 0,
         },
         constraints: vec![
@@ -963,14 +916,13 @@ fn a_denomination_reads_a_parameter_bound_after_the_one_it_constrains() {
     let sorted = |resource: ResourceAddr| ManifestGraph {
         nodes: vec![
             valid_graph().nodes[0].clone(),
-            valid_graph().nodes[1].clone(),
             GraphNode {
                 target: sorter().into(),
                 method: "sort".into(),
                 args: vec![
                     GraphArg::Edge {
                         edge: EdgeRef {
-                            producer: 1,
+                            producer: 0,
                             output: 0,
                         },
                         constraints: vec![],
@@ -991,7 +943,7 @@ fn a_denomination_reads_a_parameter_bound_after_the_one_it_constrains() {
     assert!(matches!(
         admit(&sorted(common::RES_Y), ALICE, &chain, &TestHasher),
         Err(AdmissionError::WrongDenomination {
-            node: 2,
+            node: 1,
             param: 0,
             ..
         })
@@ -1231,25 +1183,19 @@ fn a_halted_non_fungible_class_fences_the_interval_movement() {
         nodes: vec![
             GraphNode {
                 target: ALICE.into(),
-                method: "authorize".into(),
-                args: vec![],
-                evidence: [EvidenceRef::IntentSignature].into(),
-            },
-            GraphNode {
-                target: ALICE.into(),
                 method: "withdraw-nf".into(),
                 args: vec![
                     GraphArg::Literal(Value::Address(seat.address())),
                     GraphArg::Literal(Value::List(vec![Value::U64(7)])),
                 ],
-                evidence: [EvidenceRef::Node(0)].into(),
+                evidence: [EvidenceRef::IntentSignature].into(),
             },
             GraphNode {
                 target: BOB.into(),
                 method: "deposit-nf".into(),
                 args: vec![GraphArg::Edge {
                     edge: EdgeRef {
-                        producer: 1,
+                        producer: 0,
                         output: 0,
                     },
                     constraints: vec![],
@@ -1259,7 +1205,7 @@ fn a_halted_non_fungible_class_fences_the_interval_movement() {
         ],
     };
     let admitted =
-        admit_presenting(&graph, ALICE, &chain, &presented, &TestHasher).expect("admits");
+        admit_presenting(&graph, ALICE, &[ALICE], &chain, &presented, &TestHasher).expect("admits");
     let halted = EffectTarget::Point(child_key(
         &TestHasher,
         ALICE,
@@ -1332,7 +1278,7 @@ fn a_double_destruction_asks_the_burn_question_once() {
             GraphArg::Literal(Value::Address(shreddable.address())),
             GraphArg::Literal(Value::U128(amount)),
         ],
-        evidence: [EvidenceRef::Node(0)].into(),
+        evidence: [EvidenceRef::IntentSignature].into(),
     };
     let edge = |producer: u32| GraphArg::Edge {
         edge: EdgeRef {
@@ -1343,25 +1289,19 @@ fn a_double_destruction_asks_the_burn_question_once() {
     };
     let graph = ManifestGraph {
         nodes: vec![
-            GraphNode {
-                target: ALICE.into(),
-                method: "authorize".into(),
-                args: vec![],
-                evidence: [EvidenceRef::IntentSignature].into(),
-            },
             withdraw(5),
             withdraw(7),
             GraphNode {
                 target: shredder.into(),
                 method: "shred".into(),
-                args: vec![edge(1), edge(2)],
-                evidence: [EvidenceRef::Node(0)].into(),
+                args: vec![edge(0), edge(1)],
+                evidence: [EvidenceRef::IntentSignature].into(),
             },
         ],
     };
     let admitted =
-        admit_presenting(&graph, ALICE, &chain, &presented, &TestHasher).expect("admits");
-    let burns = admitted.injected()[3]
+        admit_presenting(&graph, ALICE, &[ALICE], &chain, &presented, &TestHasher).expect("admits");
+    let burns = admitted.injected()[2]
         .iter()
         .filter(|entry| entry.behaviour == GrantedBehaviour::Burn)
         .count();
@@ -1464,7 +1404,7 @@ fn the_injection_dedup_scan_is_charged_work() {
             evidence: BTreeSet::new(),
         }],
     };
-    let refused = admit_presenting(&graph, ALICE, &chain, &presented, &TestHasher)
+    let refused = admit_presenting(&graph, ALICE, &[ALICE], &chain, &presented, &TestHasher)
         .expect_err("the scan is charged, and this shape exhausts the envelope");
     assert!(matches!(
         refused,
@@ -1488,8 +1428,8 @@ proptest! {
         let mut constraints: Vec<Constraint> =
             mins.iter().copied().map(Constraint::MinAmount).collect();
         constraints.extend(maxes.iter().copied().map(Constraint::MaxAmount));
-        graph.nodes[3].args[0] = GraphArg::Edge {
-            edge: EdgeRef { producer: 2, output: 0 },
+        graph.nodes[2].args[0] = GraphArg::Edge {
+            edge: EdgeRef { producer: 1, output: 0 },
             constraints,
         };
         let verdict = admit(&graph, ALICE, &chain, &TestHasher);
@@ -1498,7 +1438,7 @@ proptest! {
         if lower > upper {
             assert_eq!(
                 verdict,
-                Err(AdmissionError::UnsatisfiableConstraint { node: 3, param: 0 })
+                Err(AdmissionError::UnsatisfiableConstraint { node: 2, param: 0 })
             );
         } else {
             assert!(verdict.is_ok());
@@ -1510,7 +1450,7 @@ proptest! {
     /// panics and never mistypes an edge.
     #[test]
     fn arbitrary_edge_rewires_never_break_admission(
-        node in 1usize..5,
+        node in 0usize..4,
         arg in 0usize..2,
         producer in any::<u32>(),
         output in any::<u32>(),
@@ -1533,15 +1473,15 @@ proptest! {
     fn amount_windows_admit_iff_satisfiable(min in any::<u128>(), max in any::<u128>()) {
         let chain = setup();
         let mut graph = valid_graph();
-        graph.nodes[3].args[0] = GraphArg::Edge {
-            edge: EdgeRef { producer: 2, output: 0 },
+        graph.nodes[2].args[0] = GraphArg::Edge {
+            edge: EdgeRef { producer: 1, output: 0 },
             constraints: vec![Constraint::MinAmount(min), Constraint::MaxAmount(max)],
         };
         let verdict = admit(&graph, ALICE, &chain, &TestHasher);
         if min > max {
             assert_eq!(
                 verdict,
-                Err(AdmissionError::UnsatisfiableConstraint { node: 3, param: 0 })
+                Err(AdmissionError::UnsatisfiableConstraint { node: 2, param: 0 })
             );
         } else {
             assert!(verdict.is_ok());
@@ -1639,27 +1579,16 @@ fn a_signature_presents_the_account_to_any_rule_naming_it() {
     );
 
     let proven = ManifestGraph {
-        nodes: vec![
-            GraphNode {
-                target: ALICE.into(),
-                method: "authorize".into(),
-                args: vec![],
-                evidence: [EvidenceRef::IntentSignature].into(),
-            },
-            GraphNode {
-                target: target.into(),
-                method: "act".into(),
-                args: vec![],
-                evidence: [EvidenceRef::Node(0)].into(),
-            },
-        ],
+        nodes: vec![GraphNode {
+            target: target.into(),
+            method: "act".into(),
+            args: vec![],
+            evidence: [EvidenceRef::IntentSignature].into(),
+        }],
     };
     let admitted = admit(&proven, ALICE, &chain, &TestHasher).expect("admits");
-    // Both calls present the account: the one naming the signature
-    // resolves it to the account itself, and the one presenting the
-    // first's proof carries what that node proved.
+    // The call naming the signature resolves it to the account itself.
     assert_eq!(admitted.calls()[0].evidence, vec![Claim::of_subject(ALICE)]);
-    assert_eq!(admitted.calls()[1].evidence, vec![Claim::of_subject(ALICE)]);
 }
 
 /// A `Requires` clause rides admission's single walk: the evaluated
@@ -1674,20 +1603,12 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
     let target = conditional_component(&mut chain);
 
     let graph = ManifestGraph {
-        nodes: vec![
-            GraphNode {
-                target: ALICE.into(),
-                method: "authorize".into(),
-                args: vec![],
-                evidence: [EvidenceRef::IntentSignature].into(),
-            },
-            GraphNode {
-                target: target.into(),
-                method: "act".into(),
-                args: vec![],
-                evidence: [EvidenceRef::Node(0)].into(),
-            },
-        ],
+        nodes: vec![GraphNode {
+            target: target.into(),
+            method: "act".into(),
+            args: vec![],
+            evidence: [EvidenceRef::IntentSignature].into(),
+        }],
     };
     let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
 
@@ -1700,7 +1621,7 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
         .declaration()
         .conditions
         .iter()
-        .filter(|condition| condition.node == Some(1))
+        .filter(|condition| condition.node == Some(0))
         .collect();
     assert_eq!(
         conditions,
@@ -1710,19 +1631,19 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
                     target: EffectTarget::Point(key),
                     expect: Presence::Present,
                 }),
-                node: Some(1),
+                node: Some(0),
             },
             &Condition {
                 rule: Rule::Require(JudgedLeaf::Presence {
                     target: EffectTarget::Point(child_key(&TestHasher, target, CONFIG, &[])),
                     expect: Presence::Present,
                 }),
-                node: Some(1),
+                node: Some(0),
             },
         ]
     );
     assert_eq!(
-        admitted.calls()[1].requires,
+        admitted.calls()[0].requires,
         vec![Rule::CountOf {
             count: 1,
             rules: vec![
@@ -1779,27 +1700,19 @@ fn evidence_follows_the_conditions_this_call_evaluated() {
     // Alice's sign-in ahead of the settler, whose stored rule is its
     // own and takes a proof.
     let call = |guarded: bool, evidence: BTreeSet<EvidenceRef>| ManifestGraph {
-        nodes: vec![
-            GraphNode {
-                target: ALICE.into(),
-                method: "authorize".into(),
-                args: vec![],
-                evidence: [EvidenceRef::IntentSignature].into(),
-            },
-            GraphNode {
-                target: settler.into(),
-                method: "settle".into(),
-                args: vec![GraphArg::Literal(Value::U64(u64::from(guarded)))],
-                evidence,
-            },
-        ],
+        nodes: vec![GraphNode {
+            target: settler.into(),
+            method: "settle".into(),
+            args: vec![GraphArg::Literal(Value::U64(u64::from(guarded)))],
+            evidence,
+        }],
     };
 
-    // The guard fires: the condition is there, so a proof is required and
-    // the sign-in's proof answers for it.
+    // The guard fires: the condition is there, so a claim is required
+    // and the intent's own signature answers for it.
     assert!(
         admit(
-            &call(true, [EvidenceRef::Node(0)].into()),
+            &call(true, [EvidenceRef::IntentSignature].into()),
             ALICE,
             &chain,
             &TestHasher
@@ -1808,7 +1721,7 @@ fn evidence_follows_the_conditions_this_call_evaluated() {
     );
     assert_eq!(
         admit(&call(true, BTreeSet::new()), ALICE, &chain, &TestHasher),
-        Err(AdmissionError::MissingEvidence { node: 1 })
+        Err(AdmissionError::MissingEvidence { node: 0 })
     );
 
     // The guard does not fire: the frame carries no condition, so the
@@ -1817,12 +1730,12 @@ fn evidence_follows_the_conditions_this_call_evaluated() {
     assert!(admit(&call(false, BTreeSet::new()), ALICE, &chain, &TestHasher).is_ok());
     assert_eq!(
         admit(
-            &call(false, [EvidenceRef::Node(0)].into()),
+            &call(false, [EvidenceRef::IntentSignature].into()),
             ALICE,
             &chain,
             &TestHasher
         ),
-        Err(AdmissionError::UnexpectedEvidence { node: 1 })
+        Err(AdmissionError::UnexpectedEvidence { node: 0 })
     );
 }
 
@@ -1902,12 +1815,6 @@ fn a_reach_may_not_name_the_prefix_of_the_reaching_instance() {
     let reaching = |owner: Address| ManifestGraph {
         nodes: vec![
             GraphNode {
-                target: ALICE.into(),
-                method: "authorize".into(),
-                args: vec![],
-                evidence: [EvidenceRef::IntentSignature].into(),
-            },
-            GraphNode {
                 target: issuer.into(),
                 method: "seize".into(),
                 args: vec![
@@ -1915,14 +1822,14 @@ fn a_reach_may_not_name_the_prefix_of_the_reaching_instance() {
                     GraphArg::Literal(Value::U64(u64::from(VAULT.0))),
                     GraphArg::Literal(Value::Address(seized.address())),
                 ],
-                evidence: [EvidenceRef::Node(0)].into(),
+                evidence: [EvidenceRef::IntentSignature].into(),
             },
             GraphNode {
                 target: ALICE.into(),
                 method: "deposit".into(),
                 args: vec![GraphArg::Edge {
                     edge: EdgeRef {
-                        producer: 1,
+                        producer: 0,
                         output: 0,
                     },
                     constraints: Vec::new(),
@@ -1937,6 +1844,7 @@ fn a_reach_may_not_name_the_prefix_of_the_reaching_instance() {
         admit_presenting(
             &reaching(BOB.address()),
             ALICE,
+            &[ALICE],
             &chain,
             &presented,
             &TestHasher
@@ -1949,11 +1857,12 @@ fn a_reach_may_not_name_the_prefix_of_the_reaching_instance() {
         admit_presenting(
             &reaching(issuer.address()),
             ALICE,
+            &[ALICE],
             &chain,
             &presented,
             &TestHasher
         ),
-        Err(AdmissionError::ReachesItself { node: 1, clause: 0 }),
+        Err(AdmissionError::ReachesItself { node: 0, clause: 0 }),
     );
 }
 
@@ -1964,12 +1873,6 @@ fn a_reach_is_admitted_by_the_reached_resource_and_by_nothing_else() {
     let (chain, issuer) = bailiff_world();
     let graph = |evidence: BTreeSet<EvidenceRef>| ManifestGraph {
         nodes: vec![
-            GraphNode {
-                target: ALICE.into(),
-                method: "authorize".into(),
-                args: vec![],
-                evidence: [EvidenceRef::IntentSignature].into(),
-            },
             GraphNode {
                 target: issuer.into(),
                 method: "seize".into(),
@@ -1985,7 +1888,7 @@ fn a_reach_is_admitted_by_the_reached_resource_and_by_nothing_else() {
                 method: "deposit".into(),
                 args: vec![GraphArg::Edge {
                     edge: EdgeRef {
-                        producer: 1,
+                        producer: 0,
                         output: 0,
                     },
                     constraints: Vec::new(),
@@ -1995,15 +1898,22 @@ fn a_reach_is_admitted_by_the_reached_resource_and_by_nothing_else() {
         ],
     };
     let presented = PresentedGrants::from_presented(&TestHasher, std::slice::from_ref(&record));
-    let reaching = [EvidenceRef::Node(0)].into();
+    let reaching = [EvidenceRef::IntentSignature].into();
 
     // The record's entry names Alice, and her claim is what the frame
     // demands — injected, never declared, so the package says nothing
     // about it and cannot say otherwise.
-    let admitted = admit_presenting(&graph(reaching), ALICE, &chain, &presented, &TestHasher)
-        .expect("the reach admits the party the entry names");
+    let admitted = admit_presenting(
+        &graph(reaching),
+        ALICE,
+        &[ALICE],
+        &chain,
+        &presented,
+        &TestHasher,
+    )
+    .expect("the reach admits the party the entry names");
     assert_eq!(
-        admitted.calls()[1].requires,
+        admitted.calls()[0].requires,
         vec![Rule::Require(JudgedLeaf::Claim(Claim::of_subject(ALICE)))],
         "the entry is the frame's condition, and the only one",
     );
@@ -2012,14 +1922,15 @@ fn a_reach_is_admitted_by_the_reached_resource_and_by_nothing_else() {
     // absent authority withholds.
     assert_eq!(
         admit_presenting(
-            &graph([EvidenceRef::Node(0)].into()),
+            &graph([EvidenceRef::IntentSignature].into()),
             ALICE,
+            &[ALICE],
             &chain,
             PresentedGrants::none(),
             &TestHasher
         ),
         Err(AdmissionError::Unadmitted {
-            node: 1,
+            node: 0,
             resource: seized,
             behaviour: GrantedBehaviour::Recall,
         }),
@@ -2063,15 +1974,12 @@ fn bytes_at_the_wrong_width_are_refused_naming_the_width() {
         .publish_unchecked(pkg("keeper"), keeper_metadata());
     chain.instances.create(&TestHasher, keeper_meta());
     let filed = |bytes: Vec<u8>| ManifestGraph {
-        nodes: vec![
-            valid_graph().nodes[0].clone(),
-            GraphNode {
-                target: keeper_meta().address(&TestHasher).into(),
-                method: "file".into(),
-                args: vec![GraphArg::Literal(Value::Bytes(bytes))],
-                evidence: BTreeSet::new(),
-            },
-        ],
+        nodes: vec![GraphNode {
+            target: keeper_meta().address(&TestHasher).into(),
+            method: "file".into(),
+            args: vec![GraphArg::Literal(Value::Bytes(bytes))],
+            evidence: BTreeSet::new(),
+        }],
     };
     assert_eq!(
         admit(&filed(vec![7; 4]), ALICE, &chain, &TestHasher).map(|_| ()),
@@ -2080,7 +1988,7 @@ fn bytes_at_the_wrong_width_are_refused_naming_the_width() {
     assert_eq!(
         admit(&filed(vec![7; 3]), ALICE, &chain, &TestHasher).map(|_| ()),
         Err(AdmissionError::ParamWidth {
-            node: 1,
+            node: 0,
             param: 0,
             expected: 4,
             found: 3,

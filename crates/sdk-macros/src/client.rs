@@ -60,7 +60,7 @@ impl Shape {
         match gate {
             Gate::Public => Self::Public,
             Gate::Guarded { .. } => Self::Guarded,
-            Gate::Authorizing(_) => Self::Authorizing,
+            Gate::Authorizing => Self::Authorizing,
             Gate::Governed(_) => Self::Governed,
             Gate::Custodial { .. } => Self::Custodial,
         }

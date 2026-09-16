@@ -503,13 +503,12 @@ fn approval_request(approver: Claim) -> IntentDecl {
         .expect("the request reaches its own socket")
 }
 
-/// The composition that fills it: the registrar signs in and offers the
-/// claim their own node mints.
+/// The composition that fills it: the registrar grants the account its
+/// own intent acts as.
 fn approved_composition(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeError> {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, REGISTRAR, TEST_HEADER);
-    let registrar = account::authorize(&mut root, REGISTRAR)?;
-    let offered = root.offer(registrar).expect("the root's own proof offers");
+    let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, REGISTRAR, TEST_HEADER);
+    let offered = root.grant();
     let wants = env
         .adopt(ALICE, request)?
         .one()

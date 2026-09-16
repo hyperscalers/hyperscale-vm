@@ -1366,7 +1366,7 @@ fn lower_method(
         ));
     }
 
-    let gate = parse_gate(method, declared, &params)?;
+    let gate = parse_gate(method, declared, &params, serves)?;
     // Presentation is the principals blueprint's: a badge in an account
     // is a credential, and a badge handed to a component is an asset —
     // authority must not travel with custody. A component acts as
@@ -1415,11 +1415,8 @@ fn lower_method(
     }
     // A component's self-proof is conditional or it is no gate at all:
     // only this package's code can mint its address's claim, so a body
-    // that cannot decline vouches for whoever calls it first. The
-    // account's stored rule is judged by the kernel before its export
-    // runs, which is why principals prove with an empty body.
-    if matches!(gate, Gate::Authorizing(_))
-        && matches!(serves, client::Serves::Instances)
+    // that cannot decline vouches for whoever calls it first.
+    if matches!(gate, Gate::Authorizing)
         && declining.is_none()
         && let Some((attr, _)) = own_attr(&method.attrs, &["proves"])
     {
@@ -1460,7 +1457,7 @@ fn lower_method(
     let emits = emits_attr(method)?;
     let closure = emit::declaration(
         &lowered,
-        &gate_calls(&gate, &lowered, serves),
+        &gate_calls(&gate, &lowered),
         declining.is_some(),
         total,
         &emits,

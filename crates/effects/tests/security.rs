@@ -141,25 +141,19 @@ fn transfer_to(resource: ResourceAddr, recipient: PrincipalAddr) -> EnvelopeTree
                     nodes: vec![
                         GraphNode {
                             target: ALICE.into(),
-                            method: "authorize".into(),
-                            args: Vec::new(),
-                            evidence: BTreeSet::from([EvidenceRef::IntentSignature]),
-                        },
-                        GraphNode {
-                            target: ALICE.into(),
                             method: "withdraw".into(),
                             args: vec![
                                 GraphArg::Literal(Value::Address(resource.address())),
                                 GraphArg::Literal(Value::U128(40)),
                             ],
-                            evidence: BTreeSet::from([EvidenceRef::Node(0)]),
+                            evidence: BTreeSet::from([EvidenceRef::IntentSignature]),
                         },
                         GraphNode {
                             target: recipient.into(),
                             method: "deposit".into(),
                             args: vec![GraphArg::Edge {
                                 edge: EdgeRef {
-                                    producer: 1,
+                                    producer: 0,
                                     output: 0,
                                 },
                                 constraints: Vec::new(),

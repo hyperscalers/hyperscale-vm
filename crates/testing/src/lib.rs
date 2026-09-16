@@ -738,6 +738,7 @@ impl Chain {
         let admitted = admit_presenting(
             &graph,
             signer,
+            &[signer],
             &self.records,
             &PresentedGrants::from_presented(&TestHasher, &records),
             &TestHasher,

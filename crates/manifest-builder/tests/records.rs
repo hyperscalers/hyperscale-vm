@@ -104,6 +104,7 @@ fn a_composer_finds_the_record_its_own_transfer_is_judged_against() {
         admit_presenting(
             &graph,
             ALICE,
+            &[ALICE],
             &chain,
             &PresentedGrants::from_presented(&TestHasher, &found),
             &TestHasher
@@ -112,7 +113,15 @@ fn a_composer_finds_the_record_its_own_transfer_is_judged_against() {
         "what the composer found is what admission resolves the entries against",
     );
     assert!(
-        admit_presenting(&graph, ALICE, &chain, PresentedGrants::none(), &TestHasher).is_err(),
+        admit_presenting(
+            &graph,
+            ALICE,
+            &[ALICE],
+            &chain,
+            PresentedGrants::none(),
+            &TestHasher
+        )
+        .is_err(),
         "and withholding it withholds the movement",
     );
 }

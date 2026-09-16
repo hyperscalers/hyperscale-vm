@@ -7,11 +7,14 @@
 //! asked for one, because nothing about a deposit is theirs to refuse.
 //!
 //! Every address has one governing rule, in the cell the protocol keeps
-//! for it, and while nothing is stored there the address governs itself —
-//! which is the rule's own second branch rather than anything the kernel
-//! supplies. Everything past that is this package's policy and lives in
-//! this package's cells: the two further rules a recovery surface needs,
-//! the replacement waiting on a delay, and what it takes to enact one.
+//! for it, and while nothing is stored there the address governs itself.
+//! No method here reads it: the account's shard judges the attesting keys
+//! of every intent against that cell before any body runs, so a method
+//! naming `self` is naming a sign-in already made. Everything past that
+//! is this package's policy and lives in this package's cells: the two
+//! further rules a recovery surface needs, the replacement waiting on a
+//! delay, and what it takes to enact one — each read by the gate that
+//! needs it and judged against the claims the call presents.
 //!
 //! Rule bytes stay opaque here. The kernel decodes them where it judges a
 //! call against them, and a body that stores what it was handed converts
@@ -210,12 +213,6 @@ pub mod account {
             destroy_nf(instances);
         }
 
-        /// Nothing but its own gate: the kernel judges the stored rule
-        /// before the export runs, so the body has nothing to say and
-        /// the read the gate performs is the gate's to declare.
-        #[proves(self)]
-        pub fn authorize(&self) {}
-
         /// File the instances the edge carries as holdings entries.
         ///
         /// The filing is the kernel's: each instance lands at the order
@@ -237,9 +234,10 @@ pub mod account {
             self.holdings(resource).whole().take(ids)
         }
 
-        /// Nothing but its own gate, like `authorize`: the kernel judges
-        /// the holder's rule and the badge-keyed vault before the export
-        /// runs, and what the call proves is the badge's address.
+        /// Nothing but its own gate: the holder names itself, which
+        /// their intent's signature answers, and the kernel judges the
+        /// badge-keyed vault before the export runs. What the call
+        /// proves is the badge's address.
         ///
         /// For a fungible badge, where holding any of it is the whole
         /// claim. One instance of a non-fungible one is `present-instance`.
@@ -247,9 +245,8 @@ pub mod account {
         pub fn present_badge(&self, badge: Address) {}
 
         /// The same gate over one instance: the kernel judges the
-        /// holder's rule and the holdings entry at `id` before the
-        /// export runs, and the call proves that instance and the badge
-        /// it is an instance of.
+        /// holdings entry at `id` before the export runs, and the call
+        /// proves that instance and the badge it is an instance of.
         ///
         /// Both, because a holder of an instance holds the badge — so a
         /// rule naming the resource admits any holder, and one naming

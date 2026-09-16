@@ -164,7 +164,7 @@ fn a_composition_grants_the_account_it_acts_as() {
 #[test]
 fn a_grant_does_not_fill_a_value_socket() {
     let chain = world();
-    let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
+    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     let granted = root.grant();
     let wants = env
         .adopt(BOB, payment_request(100))
@@ -181,6 +181,13 @@ fn a_grant_does_not_fill_a_value_socket() {
             socket: 0
         }
     );
+    // Both handles came back: route the right half through the same
+    // socket and the composition completes.
+    let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
+    let paid = root.export(funds);
+    env.bind(refusal.socket, paid).unwrap();
+    env.seal(root).unwrap().none().unwrap();
+    env.build().expect("the recovered socket was still open");
 }
 
 #[test]
@@ -313,36 +320,6 @@ fn sockets_unpacked_at_the_wrong_arity_are_refused() {
             claimed: 0
         })
     );
-}
-
-#[test]
-fn a_proof_offered_to_a_value_socket_is_refused() {
-    let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
-    let alice_proof = account::authorize(&mut root, ALICE).unwrap();
-    let offered = root
-        .offer(alice_proof)
-        .expect("the root's own proof offers");
-    let wants = env.adopt(BOB, payment_request(100)).unwrap().one().unwrap();
-    // The socket asks for funds; authority is not funds, however the
-    // composer wired it.
-    let refused = env
-        .bind(wants, offered)
-        .expect_err("a proof does not fill a value socket");
-    assert_eq!(
-        refused.cause,
-        EnvelopeError::ProofForValueSocket {
-            intent: 1,
-            socket: 0
-        }
-    );
-    // Both handles came back: route the right half through the same
-    // socket and the composition completes.
-    let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
-    let paid = root.export(funds);
-    env.bind(refused.socket, paid).unwrap();
-    env.seal(root).unwrap().none().unwrap();
-    env.build().expect("the recovered socket was still open");
 }
 
 #[test]
@@ -504,10 +481,10 @@ fn an_intent_filling_its_own_socket_is_refused_at_the_wiring() {
 fn a_proof_proved_by_another_intent_cannot_be_offered() {
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
-    let alice_proof = account::authorize(&mut root, ALICE).unwrap();
+    let held = account::present_badge(&mut root, ALICE, RES_X).unwrap();
     let sub = env.subintent(BOB, TEST_HEADER);
     assert_eq!(
-        sub.offer(alice_proof).expect_err("a foreign proof"),
+        sub.offer(held).expect_err("a foreign proof"),
         EnvelopeError::ForeignProof,
     );
 }
@@ -602,11 +579,13 @@ fn note_request(approver: Claim) -> IntentDecl {
     let note = note_meta().address(&TestHasher);
     let mut decl = IntentBuilder::declaration(&chain, &TestHasher, BOB, TEST_HEADER);
     let approval = decl.declare_proof(approver);
-    let bob = account::authorize(&mut decl, BOB).unwrap();
-    // Two proofs at one node: the holder's own gate takes theirs, and
-    // the note's injected entry takes the desk's.
+    // A scope rather than a presented list: the holder's own gate is
+    // answered by the signature their intent carries, and naming
+    // evidence at the call would replace it rather than join it. The
+    // socket is there for the note's injected entry, whose claim is the
+    // desk's.
     let funds = decl
-        .call_presenting([bob, approval], BOB, "withdraw", (note, 40u128))
+        .presenting(approval, |b| b.call(BOB, "withdraw", (note, 40u128)))
         .unwrap()
         .one()
         .unwrap();
@@ -615,13 +594,12 @@ fn note_request(approver: Claim) -> IntentDecl {
         .expect("the request presents its own socket")
 }
 
-/// The composition that fills it: the desk signs in and offers the claim
-/// its own node mints.
+/// The composition that fills it: the desk grants the account its own
+/// intent acts as.
 fn approved(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeError> {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
-    let desk = account::authorize(&mut root, DESK)?;
-    let offered = root.offer(desk)?;
+    let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
+    let offered = root.grant();
     let wants = env.adopt(BOB, request)?.one()?;
     env.seal(root)?.none()?;
     env.bind(wants, offered)?;
@@ -671,19 +649,14 @@ fn a_declared_hole_carries_a_proof_across_an_intent_boundary() {
     assert!(withdrawing.evidence.contains(&Claim::of_subject(BOB)));
 }
 
-/// And a composition that binds a node minting some other claim is
-/// refused, rather than quietly presenting it.
+/// And a composition granting some other claim is refused, rather than
+/// quietly presenting it.
 ///
 /// The declaration is what makes the socket worth signing: the holder
 /// asked for the desk's approval, so a claim on anybody else is not the
 /// authority they undertook to accept — however the composer wired it.
-///
-/// The one case in the corpus where the two numberings differ, so it is
-/// what says the coordinates are the composer's. A socket belongs to the
-/// intent that declared it; naming the node in the flattened manifest
-/// beside it — node 2, socket 0 — put two numberings in one sentence and
-/// read as correct, because for a bare graph they coincide. Intent 1's
-/// node 1 is what the composer wrote.
+/// The socket's coordinates are the composer's, and a socket belongs to
+/// the intent that declared it: intent 1's socket 0 is what they wrote.
 #[test]
 fn a_hole_bound_to_the_wrong_claim_is_refused() {
     let request = note_request(Claim::of_subject(ALICE));
@@ -697,9 +670,8 @@ fn a_hole_bound_to_the_wrong_claim_is_refused() {
             &chain,
             &TestHasher
         ),
-        Err(AdmissionError::SocketClaimMismatch {
+        Err(AdmissionError::GrantClaimMismatch {
             intent: 1,
-            node: 1,
             socket: 0
         }),
     );

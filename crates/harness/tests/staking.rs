@@ -670,7 +670,7 @@ fn bring_up_graph() -> ManifestGraph {
     graph_as(OPERATOR, |b| instantiate(b, OPERATOR, pool().into(), ()))
 }
 
-/// The same bring-up, written out — the sign-in, the seal, the deposit.
+/// The same bring-up, written out — the seal and the deposit.
 ///
 /// What the composed one is held to: it reads which of those nodes exist
 /// off the package's own declaration, and this says what the answer is
@@ -679,10 +679,7 @@ fn bring_up_graph() -> ManifestGraph {
 /// point is what a caller composing it by hand would have to write.
 fn hand_written_bring_up() -> ManifestGraph {
     graph_as(OPERATOR, |b| {
-        let founder = account::authorize(b, OPERATOR)?;
-        let badge = b
-            .call_presenting(founder, pool(), "instantiate", ())?
-            .one()?;
+        let badge = b.call(pool(), "instantiate", ())?.one()?;
         account::deposit_nf(b, OPERATOR, badge)
     })
 }

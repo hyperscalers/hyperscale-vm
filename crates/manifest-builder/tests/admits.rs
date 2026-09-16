@@ -68,13 +68,16 @@ fn world() -> Records {
     chain
 }
 
-/// One transfer's shape: who pays whom how much, optionally split on the
+/// One transfer's shape: who is paid how much, optionally split on the
 /// way, optionally bounded by the consumer. Bounds are generated
 /// satisfiable — `min <= amount <= max` — because admission's
 /// unsatisfiable-constraint check is not what this property is about.
+///
+/// Every withdrawal is the acting account's, because an intent speaks
+/// for the one account it acts as; what varies across shards is who
+/// gets paid, which is what these properties are about.
 #[derive(Clone, Debug)]
 struct Transfer {
-    from: usize,
     to: usize,
     amount: u128,
     split: Option<u128>,
@@ -84,13 +87,11 @@ struct Transfer {
 fn transfer() -> impl Strategy<Value = Transfer> {
     (
         0..ACCOUNTS.len(),
-        0..ACCOUNTS.len(),
         100..1000u128,
         prop::option::of(1..100u128),
         prop::option::of((0..100u128, 1000..2000u128)),
     )
-        .prop_map(|(from, to, amount, split, bounds)| Transfer {
-            from,
+        .prop_map(|(to, amount, split, bounds)| Transfer {
             to,
             amount,
             split,
@@ -103,14 +104,8 @@ proptest! {
     fn built_graphs_admit(transfers in prop::collection::vec(transfer(), 1..12)) {
         let chain = world();
         let mut b = GraphBuilder::new();
-        // One signature, one sign-in: every other account's is opened
-        // on the proof it minted, as a chained sign-in.
-        let signed_in = b.len();
-        let [] = b.call_signed(ACCOUNTS[0], "authorize", ());
         for t in &transfers {
-            let sign_in = b.len();
-            let [] = b.call_bearing(ACCOUNTS[t.from], "authorize", (), signed_in);
-            let [funds] = b.call_bearing(ACCOUNTS[t.from], "withdraw", (RES, t.amount), sign_in);
+            let [funds] = b.call_signed(ACCOUNTS[0], "withdraw", (RES, t.amount));
             let mut funds = funds.resource_is(RES);
             if let Some((min, max)) = t.bounds {
                 funds = funds.min(min).max(max);
@@ -118,7 +113,7 @@ proptest! {
             if let Some(taken) = t.split {
                 let [taken, rest] = b.call(splitter(), "in-lots", (funds, taken));
                 let [] = b.call(ACCOUNTS[t.to], "deposit", (taken,));
-                let [] = b.call(ACCOUNTS[t.from], "deposit", (rest,));
+                let [] = b.call(ACCOUNTS[0], "deposit", (rest,));
             } else {
                 let [] = b.call(ACCOUNTS[t.to], "deposit", (funds,));
             }
@@ -144,15 +139,14 @@ proptest! {
             // No `resource_is` anywhere below: `withdraw` declares its
             // output's type and `take` carries it, so the assertions are
             // the signatures' rather than the author's.
-            let proof = b.call_proving(ACCOUNTS[t.from], "authorize", ()).unwrap();
-            let mut funds = b.call_presenting(proof, ACCOUNTS[t.from], "withdraw", (RES, t.amount)).unwrap().one().unwrap();
+            let mut funds = b.call(ACCOUNTS[0], "withdraw", (RES, t.amount)).unwrap().one().unwrap();
             if let Some((min, max)) = t.bounds {
                 funds = funds.min(min).max(max);
             }
             if let Some(taken) = t.split {
                 let [taken, rest] = b.call(splitter(), "in-lots", (funds, taken)).unwrap().into_array().unwrap();
                 b.call(ACCOUNTS[t.to], "deposit", (taken,)).unwrap().none().unwrap();
-                b.call(ACCOUNTS[t.from], "deposit", (rest,)).unwrap().none().unwrap();
+                b.call(ACCOUNTS[0], "deposit", (rest,)).unwrap().none().unwrap();
             } else {
                 b.call(ACCOUNTS[t.to], "deposit", (funds,)).unwrap().none().unwrap();
             }
@@ -178,10 +172,9 @@ proptest! {
 fn the_walkthrough_transfer_admits() {
     let chain = world();
     let mut b = GraphBuilder::new();
-    let [] = b.call_signed(ACCOUNTS[0], "authorize", ());
-    let [funds] = b.call_bearing(ACCOUNTS[0], "withdraw", (RES, 100u128), 0);
+    let [funds] = b.call_signed(ACCOUNTS[0], "withdraw", (RES, 100u128));
     let [] = b.call(ACCOUNTS[1], "deposit", (funds.resource_is(RES),));
     let graph = b.build().unwrap();
     let admitted = admit(&graph, ACCOUNTS[0], &chain, &TestHasher).unwrap();
-    assert_eq!(admitted.manifest().nodes.len(), 3);
+    assert_eq!(admitted.manifest().nodes.len(), 2);
 }

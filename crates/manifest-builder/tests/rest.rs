@@ -156,14 +156,13 @@ fn the_untyped_builder_routes_by_class_alone() {
     // the strength of the sink's class.
     let mut b = GraphBuilder::new();
     b.rest_to(ALICE);
-    let [] = b.call_signed(ALICE, "authorize", ());
-    let [_funds] = b.call_bearing(ALICE, "withdraw", (RES, 100u128), 0);
+    let [_funds] = b.call_signed(ALICE, "withdraw", (RES, 100u128));
     let graph = b.build().unwrap();
-    assert_eq!(graph.nodes.len(), 3);
-    assert_eq!(graph.nodes[2].target, CallTarget::Principal(ALICE));
+    assert_eq!(graph.nodes.len(), 2);
+    assert_eq!(graph.nodes[1].target, CallTarget::Principal(ALICE));
     // Untyped means untyped: nothing typed the slot, so the appended
     // argument asserts nothing either.
-    let GraphArg::Edge { constraints, .. } = &graph.nodes[2].args[0] else {
+    let GraphArg::Edge { constraints, .. } = &graph.nodes[1].args[0] else {
         panic!("a rest edge binds an edge");
     };
     assert!(constraints.is_empty());

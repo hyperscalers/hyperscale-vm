@@ -1,0 +1,5 @@
+error: an account is attested by its shard; nothing proves it — an account method names its holder with `#[requires(self)]`
+  --> tests/refusals/proves_self_on_a_principal.rs:12:18
+   |
+12 |         #[proves(self)]
+   |                  ^^^^

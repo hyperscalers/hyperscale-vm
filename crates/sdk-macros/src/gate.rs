@@ -26,16 +26,15 @@ pub enum Gate {
         /// The rule, as a tracer call answering a `Requirement`.
         rule: TokenStream2,
     },
-    /// The target's own stored rule, read at the named field's cell.
-    Authorizing(u16),
+    /// The component's own body, which is the only thing that can vouch
+    /// for a component's address.
+    Authorizing,
     /// The rule stored at a declared cell, or — while nothing is stored
     /// there — the identity that address itself derives.
     Governed(u16),
-    /// The target's rule and its possession of the badge a parameter
-    /// names: the field the rule is stored at, and the parameter's index.
+    /// The holder's own claim and its possession of the badge a
+    /// parameter names.
     Custodial {
-        /// The slot of the state field holding the target's stored rule.
-        rule: u16,
         /// The parameter naming the badge.
         badge: u32,
         /// The parameter naming which instance of it, where the badge is
@@ -284,23 +283,8 @@ pub fn parse_gate(
     method: &syn::ImplItemFn,
     declared: &Declared<'_>,
     params: &[(String, syn::Type)],
+    serves: Serves,
 ) -> syn::Result<Gate> {
-    // A gate names the cell its rule lives in the way a body would, and a
-    // body reaches the protocol's own cells by accessor.
-    let cell = |name: &syn::Ident| {
-        declared
-            .fields
-            .get(&name.to_string())
-            .or_else(|| declared.accessors.get(&name.to_string()))
-            .map(|f| f.slot)
-            .ok_or_else(|| {
-                syn::Error::new(
-                    name.span(),
-                    "not a cell of the component's state — name a declared field or one of \
-                     the protocol's own cells",
-                )
-            })
-    };
     // Collected before any is read, because a method's gate is one gate:
     // reading the first and stopping would take a second attribute's word
     // for nothing while `strip` removed it, and a declaration that is
@@ -328,16 +312,20 @@ pub fn parse_gate(
         return parse_requires(attr, declared, params);
     }
     let claim: syn::Expr = attr.parse_args()?;
-    // `proves(self)`: satisfying one's own stored rule, proving
-    // one's own identity.
+    // `proves(self)`: a component vouching for its own address, on its
+    // own body's judgment.
     if let syn::Expr::Path(path) = &claim
         && path.path.is_ident("self")
     {
-        let auth = syn::Ident::new("auth", claim.span());
-        return Ok(Gate::Authorizing(cell(&auth)?));
+        if matches!(serves, Serves::Principals) {
+            return Err(syn::Error::new(
+                claim.span(),
+                "an account is attested by its shard; nothing proves it — an account \
+                 method names its holder with `#[requires(self)]`",
+            ));
+        }
+        return Ok(Gate::Authorizing);
     }
-    let auth = syn::Ident::new("auth", claim.span());
-    let rule = cell(&auth)?;
     let position = |named: &syn::Ident, admits: fn(&syn::Type) -> bool, expected: &str| {
         parameter_position(params, named, admits, expected)
     };
@@ -349,7 +337,6 @@ pub fn parse_gate(
         syn::Expr::Path(badge) => {
             let badge = badge.path.require_ident()?;
             Ok(Gate::Custodial {
-                rule,
                 badge: badge_position(badge)?,
                 id: None,
             })
@@ -365,7 +352,6 @@ pub fn parse_gate(
                 ));
             };
             Ok(Gate::Custodial {
-                rule,
                 badge: badge_position(badge.path.require_ident()?)?,
                 id: Some(position(
                     id.path.require_ident()?,
@@ -384,28 +370,21 @@ pub fn parse_gate(
 /// The tracer calls a gate becomes.
 ///
 /// A gate's clauses are its own, declared beside whatever the body
-/// declares: the kernel reads an authorizing method's stored rule
-/// before the export runs, so the read is declared here and no handle
-/// is bound for it.
-pub fn gate_calls(gate: &Gate, lowered: &lower::Lowered, serves: Serves) -> TokenStream2 {
+/// declares: the kernel reads a governing or custodial method's cells
+/// before the export runs, so those reads are declared here and no
+/// handle is bound for them.
+pub fn gate_calls(gate: &Gate, lowered: &lower::Lowered) -> TokenStream2 {
     match gate {
         Gate::Public => quote!(),
         Gate::Guarded { rule, .. } => quote!({
             let __rule = #rule;
             __t.guarded_by(__rule);
         }),
-        // A principal's sign-in reads the stored rule; a component has
-        // no rule anyone can store and no signature yields a claim on a
-        // derived address, so its identity is its code — the claim is
-        // declared bare and the body is the gate.
-        Gate::Authorizing(_) if matches!(serves, Serves::Instances) => quote!({
+        // A component has no rule anyone can store and no signature
+        // yields a claim on a derived address, so its identity is its
+        // code — the claim is declared bare and the body is the gate.
+        Gate::Authorizing => quote!({
             __t.proving();
-        }),
-        Gate::Authorizing(slot) => quote!({
-            let __owner = __t.self_addr();
-            let __key = __owner.child(::hyperscale_vm_sdk::SlotId(#slot), &[]);
-            __t.point(&__key).read();
-            __t.authorizing();
         }),
         // A governing gate declares its own read — unless the body
         // already reaches the cell, in which case the gate rides the
@@ -423,31 +402,24 @@ pub fn gate_calls(gate: &Gate, lowered: &lower::Lowered, serves: Serves) -> Toke
                 })
             }
         }
-        // A custody gate is two reads and neither is the body's: the
-        // kernel judges the holder's stored rule and their possession of
-        // the badge before the export runs, so what the clauses do is
-        // provision the cells it reads. The possession read is pinned to
-        // the protocol's own slot, keyed by exactly the expressions the
-        // mint names — which is what ties what is minted to what is
-        // held. It says what it holds too: a vault is a value cell in
-        // every mode it is reached in, and a read that said nothing
-        // would be a read of bytes.
-        Gate::Custodial {
-            rule,
-            badge,
-            id: None,
-        } => quote!({
+        // A custody gate is the holder's own claim and one read that is
+        // not the body's: the holder's authority is the sign-in their
+        // intent already carries, and what the clause provisions is the
+        // possession the kernel judges before the export runs. The read
+        // is pinned to the protocol's own slot, keyed by exactly the
+        // expressions the mint names — which is what ties what is minted
+        // to what is held. It says what it holds too: a vault is a value
+        // cell in every mode it is reached in, and a read that said
+        // nothing would be a read of bytes.
+        Gate::Custodial { badge, id: None } => quote!({
             let __owner = __t.self_addr();
             let __badge = __t.arg::<::hyperscale_vm_sdk::Addr>(#badge);
             let __material = [__badge.clone().cast::<::hyperscale_vm_sdk::Opaque>()];
-            let __rule = __owner.child(::hyperscale_vm_sdk::SlotId(#rule), &[]);
-            __t.point(&__rule).read();
             let __vault = __owner.child(::hyperscale_vm_sdk::VAULT, &__material);
             __t.point(&__vault).holding(&__badge).read();
             __t.custodial(&__badge);
         }),
         Gate::Custodial {
-            rule,
             badge,
             id: Some(id),
         } => quote!({
@@ -457,8 +429,6 @@ pub fn gate_calls(gate: &Gate, lowered: &lower::Lowered, serves: Serves) -> Toke
                 .arg::<::hyperscale_vm_sdk::U64>(#id)
                 .cast::<::hyperscale_vm_sdk::U128>();
             let __material = [__badge.clone().cast::<::hyperscale_vm_sdk::Opaque>()];
-            let __rule = __owner.child(::hyperscale_vm_sdk::SlotId(#rule), &[]);
-            __t.point(&__rule).read();
             // The entry at the instance's own id: holding that one, not
             // holding any.
             __t.entry(
@@ -500,7 +470,7 @@ pub fn check_gate_shape(
         // composer reads a proving node as evidence, never as value
         // flow. Both live in the return type, which is what the error
         // underlines.
-        Gate::Authorizing(_) => {
+        Gate::Authorizing => {
             if !lowered.outputs.is_empty() {
                 Err(syn::Error::new(
                     method.sig.output.span(),
@@ -525,10 +495,10 @@ pub fn check_gate_shape(
                 // The body is the offender, so the body is the span.
                 Err(syn::Error::new(
                     method.block.span(),
-                    "a custodial method declares two reads — its rule cell, and the \
-                     badge-keyed vault or holdings entry its claim names — and the \
-                     kernel makes both before the export runs. The body has nothing \
-                     left to say, so it must be empty",
+                    "a custodial method declares one read — the badge-keyed vault or \
+                     holdings entry its claim names — and the kernel makes it before \
+                     the export runs. The body has nothing left to say, so it must be \
+                     empty",
                 ))
             }
         }

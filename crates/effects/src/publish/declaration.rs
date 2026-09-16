@@ -1335,11 +1335,10 @@ fn check_conditions(flat: &[&Clause]) -> Result<(), DeclarationError> {
 }
 
 /// The mint pass: a mint is justified by a condition the same
-/// declaration carries. Minting one's own identity takes satisfying
-/// one's own stored rule; minting a badge takes that plus holding it,
-/// the possession read keyed by the same expressions the mint names —
-/// so the claim minted and the thing held are one resource because one
-/// expression writes both.
+/// declaration carries. Minting a badge takes the holder acting as
+/// itself and holding it, the possession read keyed by the same
+/// expressions the mint names — so the claim minted and the thing held
+/// are one resource because one expression writes both.
 fn check_mints(flat: &[&Clause]) -> Result<(), DeclarationError> {
     for (index, clause) in flat.iter().enumerate() {
         let Clause::Proves { guard, claim } = clause else {
@@ -1350,21 +1349,25 @@ fn check_mints(flat: &[&Clause]) -> Result<(), DeclarationError> {
         // The target's own identity needs no condition beside it: only
         // the package's own declaration can mint its address's claim,
         // so the claim is the package vouching — a component's identity
-        // is its code, and its body may decline. What the account's
-        // sign-in reads beside it is that package's own design.
+        // is its code, and its body may decline.
         if matches!(claim, Expr::SelfAddr) {
             continue;
         }
+        // A badge is the holder's to present, so the holder has to be
+        // named: their own claim, which their intent's signature answers
+        // and their shard attested, or a rule they store. Either says
+        // the call speaks for the holder; without one, a package would
+        // mint a badge for whoever asked.
         let justified = flat.iter().any(|beside| {
             matches!(
                 beside,
                 Clause::Requires {
                     guard: condition_guard,
                     rule,
-                } if rule
-                    .leaves()
-                    .any(|leaf| matches!(leaf, RuleLeaf::Stored { .. }))
-                    && (condition_guard.is_none() || condition_guard.as_deref() == under)
+                } if rule.leaves().any(|leaf| matches!(
+                    leaf,
+                    RuleLeaf::Stored { .. } | RuleLeaf::Claim(Expr::SelfAddr)
+                )) && (condition_guard.is_none() || condition_guard.as_deref() == under)
             )
         });
         if !justified {

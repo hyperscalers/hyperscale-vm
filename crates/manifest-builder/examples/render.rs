@@ -134,10 +134,15 @@ fn vocabulary() -> Names {
 
 fn main() {
     let chain = world();
-    let build = |write: &dyn Fn(&mut TypedBuilder<'_>) -> Result<(), TypedError>| -> ManifestGraph {
-        let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
+    let build_as = |signer: PrincipalAddr,
+                    write: &dyn Fn(&mut TypedBuilder<'_>) -> Result<(), TypedError>|
+     -> ManifestGraph {
+        let mut b = TypedBuilder::new(&chain, &TestHasher, signer);
         write(&mut b).expect("every call types against its signature");
         b.build().expect("every output is consumed")
+    };
+    let build = |write: &dyn Fn(&mut TypedBuilder<'_>) -> Result<(), TypedError>| -> ManifestGraph {
+        build_as(ALICE, write)
     };
 
     let graphs: Vec<(&str, ManifestGraph)> = vec![
@@ -167,17 +172,20 @@ fn main() {
             }),
         ),
         (
-            "a delegation, and the operator surface beside it",
+            "a delegation",
             build(&|b| {
                 let funds = account::withdraw(b, ALICE, TOKEN, 1_000)?;
                 let position = stake_pool().stake(b, funds)?;
-                account::deposit(b, ALICE, position)?;
-                // The operator surface is the configured operator's, so
-                // it acts under the operator's own sign-in beside
-                // Alice's.
-                let operator = account::authorize(b, OPERATOR)?;
-                b.presenting(operator, |b| stake_pool().unjail(b, 42))
+                account::deposit(b, ALICE, position)
             }),
+        ),
+        (
+            "the operator surface, composed by the operator",
+            // Its own composition, because the gate names the configured
+            // operator and an intent speaks for the account it acts as:
+            // Alice's transaction could reach it only through a claim
+            // the operator's own intent granted downward.
+            build_as(OPERATOR, &|b| stake_pool().unjail(b, 42)),
         ),
     ];
 

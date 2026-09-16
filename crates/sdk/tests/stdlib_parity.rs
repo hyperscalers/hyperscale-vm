@@ -121,14 +121,6 @@ fn account() -> Blueprint {
             t.point(&quarantine).holding(&resource).credit();
             t.point(&vault).holding(&resource).credit();
         })
-        // The sign-in's whole body is its gate's read: the cell the
-        // account's stored rule lives in.
-        .method("authorize", &[], |t: &mut Trace| {
-            let holder = t.self_addr();
-            let cell = holder.child(AUTH, &[]);
-            t.point(&cell).read();
-            t.authorizing();
-        })
         // Securify writes the governing rule onto an absent cell, which is
         // the one-way door: the branch admitting the address's own key is
         // the one the cell's absence meets, and once a rule is stored

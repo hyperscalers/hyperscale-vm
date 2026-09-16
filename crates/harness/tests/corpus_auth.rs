@@ -3,8 +3,8 @@
 //! gates badges open.
 
 use hyperscale_vm_effects::{
-    Claim, EvidenceRef, GraphNode, Hash32, InstanceMeta, ManifestGraph, Records, RuleBytes,
-    StoredRule, TestHasher, Value, holdings_collection, never,
+    Claim, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta, ManifestGraph, Records,
+    RuleBytes, StoredRule, TestHasher, Value, holdings_collection, never,
 };
 use hyperscale_vm_fixtures::nf;
 use hyperscale_vm_harness::driver::{amount_of, vault};
@@ -19,29 +19,35 @@ mod common;
 #[allow(clippy::wildcard_imports)] // the shared world is the binary's prelude
 use common::world::*;
 
+/// A refused sign-in takes the whole transaction with it, and nothing
+/// the transaction would have done happens.
+///
+/// The condition lands at materialization, before any body runs, so the
+/// withdrawal that would have spent on Alice's authority never runs —
+/// which is what makes the claim riding her signature sound with nothing
+/// checking it later.
 #[test]
-fn a_refused_authorization_takes_its_consumers_with_it() {
+fn a_refused_sign_in_takes_its_transaction_with_it() {
     let world = world();
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
+    // Her cell admits her own key and nothing else, and Bob's is what
+    // attests the intent.
+    store.write(auth(ALICE), stored_rule(ALICE).in_cell());
 
-    // Bob's own sign-in ahead of Alice's: admission passes — the
-    // evidence is present, and whether Bob's proof satisfies Alice's
-    // rule is her account's question — and the authorizing node's own
-    // gate refuses at execution, taking the whole transaction with it.
-    // This is what makes the minted proof sound with nothing checking
-    // it later: the withdrawal that would have spent on it never runs.
-    let graph = authorized_transfer_by(BOB);
-    let (results, final_store) = run_both_signed(
+    let graph = transfer_graph();
+    let (results, final_store) = run_both_attested_at(
         &world,
         &store,
-        &[(&graph, TxHash(Hash32([0x0B; 32])))],
-        Some(BOB),
+        &[(&graph, TxHash(Hash32([0x0B; 32])), ALICE, BOB)],
+        env().clock_ms,
     );
     assert_eq!(
         results,
         vec![TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 0 },
+            condition: UnmetCondition::SignedIn {
+                account: ALICE.address(),
+            },
         })]
     );
     assert_eq!(amount_of(&final_store, vault(ALICE, RES_X)), 150);
@@ -80,7 +86,7 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
     // The old key still derives Alice's address, and that identity is
     // exactly what her rule no longer admits: her own sign-in refuses,
     // and everything behind it is unreachable.
-    let transfer = authorized_transfer_graph();
+    let transfer = transfer_graph();
     let (results, store) = run_both(&world, &store, &[(&transfer, TxHash(Hash32([0x52; 32])))]);
     assert_eq!(
         results,
@@ -92,13 +98,14 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
         "the retired key must not open the account"
     );
 
-    // Bob signs in at his own account, the stored rule admits the proof
-    // that minted, and Alice's sign-in opens her guarded methods.
-    let (results, store) = run_both_signed(
+    // Bob's key attests an intent acting as Alice, her shard judges it
+    // against the rule she stored, and her claim rides its signature
+    // into her guarded methods — with no node anywhere in it.
+    let (results, store) = run_both_attested_at(
         &world,
         &store,
-        &[(&authorized_transfer_by(BOB), TxHash(Hash32([0x53; 32])))],
-        Some(BOB),
+        &[(&transfer_graph(), TxHash(Hash32([0x53; 32])), ALICE, BOB)],
+        env().clock_ms,
     );
     assert!(
         matches!(&results[0], TxResult::Completed(_)),
@@ -112,17 +119,14 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
     // than the guest's: `securify` declares a write requiring the cell
     // to be absent, so the shard holding it judges the door against
     // committed state and the body never runs.
-    let again = graph_signed(BOB, |b| {
-        let alice = account::authorize(b, ALICE)?;
-        b.presenting(alice, |b| {
-            account::securify_uniform(b, ALICE, &StoredRule::claim(Claim::of_subject(BOB)), DAY_MS)
-        })
+    let again = graph(|b| {
+        account::securify_uniform(b, ALICE, &StoredRule::claim(Claim::of_subject(BOB)), DAY_MS)
     });
-    let (results, _) = run_both_signed(
+    let (results, _) = run_both_attested_at(
         &world,
         &store,
-        &[(&again, TxHash(Hash32([0x54; 32])))],
-        Some(BOB),
+        &[(&again, TxHash(Hash32([0x54; 32])), ALICE, BOB)],
+        env().clock_ms,
     );
     assert_eq!(
         results,
@@ -130,8 +134,7 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
             condition: UnmetCondition::Holds {
                 target: EffectTarget::Point(auth(ALICE)),
                 required: Presence::Absent,
-                // The securify, not the sign-in that precedes it.
-                node: Some(1),
+                node: Some(0),
             },
         })],
         "a one-way door is a declared precondition, not a guest panic — and \
@@ -139,10 +142,9 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
     );
 }
 
-/// A store where entry to one account chains through another: Alice's
-/// rule names Bob's key, and the maker's rule names Alice's account —
-/// so the maker's funds move only through a proof minted inside the
-/// same transaction.
+/// A store where Alice's rule names Bob's key and the maker's names
+/// Alice's, so an intent acting as the maker is attested by whichever
+/// key the maker's own cell admits and by no other.
 fn chained_store() -> MemoryStore {
     let mut store = sealed_store();
     store.write(vault(MAKER, RES_X), encode_amount(150).to_vec());
@@ -151,82 +153,77 @@ fn chained_store() -> MemoryStore {
     store
 }
 
-/// Two stored rules deep, on both runtimes: Bob's signature opens
-/// Alice's sign-in, and the proof it mints opens the maker's — an entry
-/// no signature reaches directly, since the maker's rule names an
-/// account rather than a key the intent could carry.
+/// An `auth` cell names keys, so delegation through one is one level
+/// deep and never two.
+///
+/// Bob's key opens Alice's account and Alice's opens the maker's, and
+/// that is not a chain: what the maker's cell names is the key Alice's
+/// address derives, so Bob's key attests nothing there however far his
+/// authority reaches elsewhere. Reaching the maker on Alice's *account*
+/// is the socket's job, not the cell's.
 #[test]
-fn a_chained_sign_in_acts_two_rules_deep() {
+fn an_auth_cell_names_a_key_and_delegates_one_level() {
     let world = world();
     let store = chained_store();
 
-    // The direct route refuses: Bob's own sign-in mints Bob's identity,
-    // and the maker's rule admits only Alice's.
-    let direct = graph_signed(BOB, |b| {
-        let bob = account::authorize(b, BOB)?;
-        let maker = b.presenting(bob, |b| account::authorize(b, MAKER))?;
-        let funds = b.presenting(maker, |b| account::withdraw(b, MAKER, RES_X, 100))?;
+    // Bob's key on an intent acting as the maker: admissible, and the
+    // maker's own shard refuses it before any body runs.
+    let transfer = graph_signed(MAKER, |b| {
+        let funds = account::withdraw(b, MAKER, RES_X, 100)?;
         account::deposit(b, BOB, funds)
     });
-    let (results, store) = run_both_signed(
+    let (results, store) = run_both_attested_at(
         &world,
         &store,
-        &[(&direct, TxHash(Hash32([0x61; 32])))],
-        Some(BOB),
+        &[(&transfer, TxHash(Hash32([0x61; 32])), MAKER, BOB)],
+        env().clock_ms,
     );
     assert_eq!(
         results,
         vec![TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 1 },
+            condition: UnmetCondition::SignedIn {
+                account: MAKER.address(),
+            },
         })],
-        "the maker's rule names Alice's account, not Bob's"
+        "the maker's cell names Alice's key, and Bob's opening Alice's is not that"
     );
 
-    let transfer = graph_signed(BOB, |b| {
-        let alice = account::authorize(b, ALICE)?;
-        let maker = b.presenting(alice, |b| account::authorize(b, MAKER))?;
-        let funds = b.presenting(maker, |b| account::withdraw(b, MAKER, RES_X, 100))?;
-        account::deposit(b, BOB, funds)
-    });
-    let (results, store) = run_both_signed(
+    // Alice's key is what it names, and her own account having moved to
+    // Bob's is no part of the question.
+    let (results, store) = run_both_attested_at(
         &world,
         &store,
-        &[(&transfer, TxHash(Hash32([0x62; 32])))],
-        Some(BOB),
+        &[(&transfer, TxHash(Hash32([0x62; 32])), MAKER, ALICE)],
+        env().clock_ms,
     );
     assert!(
         matches!(&results[0], TxResult::Completed(_)),
-        "the chain must open the maker's account; got {:?}",
+        "the key the cell names must open the maker's account; got {:?}",
         results[0]
     );
     assert_eq!(amount_of(&store, vault(MAKER, RES_X)), 50);
     assert_eq!(amount_of(&store, vault(BOB, RES_X)), 100);
 }
 
-/// A retired key opens nothing anywhere. Alice's rule names Bob and the
-/// maker's names Alice: Alice's own key is refused at her sign-in, the
-/// one place a signature is judged, and handing that signature straight
-/// to the maker's stored rule is inadmissible however the rule reads,
-/// since a rule under anyone else's prefix takes a proof.
+/// A key retired at its own account is refused there and nowhere else.
+///
+/// Alice's rule names Bob and the maker's names Alice. Her own key no
+/// longer attests an intent acting as her, which her shard says at her
+/// cell; the maker's cell names that key rather than her account, so her
+/// rotation is no part of what it admits. Two cells, two questions, and
+/// the retirement answers only the first.
 #[test]
-fn a_retired_key_is_refused_at_its_own_sign_in_and_reaches_no_other() {
+fn a_retired_key_is_refused_at_its_own_account_and_nowhere_else() {
     let world = world();
     let store = chained_store();
 
-    // Composed: the maker's sign-in is answered by the intent's own
-    // signature, which names Alice's account — the one her key no
-    // longer opens.
-    let composed = graph(|b| {
-        let maker = account::authorize(b, MAKER)?;
-        let funds = b.presenting(maker, |b| account::withdraw(b, MAKER, RES_X, 100))?;
+    // Her own account: the cell she wrote names Bob, and her key is not
+    // Bob's.
+    let hers = graph(|b| {
+        let funds = account::withdraw(b, ALICE, RES_X, 100)?;
         account::deposit(b, BOB, funds)
     });
-    assert_eq!(
-        composed.nodes[0].target,
-        MAKER.address(),
-        "nothing is composed ahead of the maker's: an account's own claim is its signature's"
-    );
-    let (results, store) = run_both(&world, &store, &[(&composed, TxHash(Hash32([0x65; 32])))]);
+    let (results, store) = run_both(&world, &store, &[(&hers, TxHash(Hash32([0x65; 32])))]);
     assert_eq!(
         results,
         vec![TxResult::Refused(Outcome::ConditionUnmet {
@@ -234,56 +231,52 @@ fn a_retired_key_is_refused_at_its_own_sign_in_and_reaches_no_other() {
                 account: ALICE.address(),
             },
         })],
-        "the retired key is refused where a signature is judged, and nowhere later"
+        "the retired key is refused where a signature is judged"
     );
 
-    // Direct: presented straight at the maker's rule, the signature
-    // resolves to Alice's account — and Alice's own shard judges her
-    // sign-in from her `auth` cell before any node runs, so the retired
-    // key is stopped there rather than at the rule it reached for.
-    let direct = ManifestGraph {
-        nodes: vec![GraphNode {
-            target: MAKER.into(),
-            method: "authorize".into(),
-            args: vec![],
-            evidence: [EvidenceRef::IntentSignature].into(),
-        }],
-    };
-    let (results, _) = run_both_signed(
+    // The maker's: the same key, admitted, because what the cell names
+    // is the key and not the account it belongs to.
+    let theirs = graph_signed(MAKER, |b| {
+        let funds = account::withdraw(b, MAKER, RES_X, 100)?;
+        account::deposit(b, BOB, funds)
+    });
+    let (results, _) = run_both_attested_at(
         &world,
         &store,
-        &[(&direct, TxHash(Hash32([0x66; 32])))],
-        Some(ALICE),
+        &[(&theirs, TxHash(Hash32([0x66; 32])), MAKER, ALICE)],
+        env().clock_ms,
     );
-    assert_eq!(
-        results,
-        vec![TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::SignedIn {
-                account: ALICE.address(),
-            },
-        })],
-        "the retired key is refused at its own sign-in, whatever it reached for"
+    assert!(
+        matches!(&results[0], TxResult::Completed(_)),
+        "a key retired at one account still opens another that names it; got {:?}",
+        results[0]
     );
 }
 
-/// A minted proof opens only its own account: presented at another's
-/// guarded method it refuses at that node's gate, however valid the
-/// sign-in that minted it.
+/// A signature opens only the account its intent acts as: aimed at
+/// another's guarded method it is inadmissible, so it never reaches a
+/// block at all.
+///
+/// Written by hand, because no builder composes it: the claim Alice's
+/// intent carries is her own, and a gate naming Bob is one it cannot
+/// answer.
 #[test]
-fn a_proof_opens_only_the_account_that_minted_it() {
+fn a_signature_opens_only_the_account_its_intent_acts_as() {
     let world = world();
     let mut store = sealed_store();
     store.write(vault(BOB, RES_X), encode_amount(150).to_vec());
 
-    // Alice signs in as herself, then aims her proof at Bob's vault —
-    // composable and admissible, and dead at Bob's gate.
-    let theft = graph(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let funds = b
-            .call_presenting(alice, BOB, "withdraw", (RES_X, 100_u128))?
-            .one()?;
-        account::deposit(b, ALICE, funds)
-    });
+    let theft = ManifestGraph {
+        nodes: vec![GraphNode {
+            target: BOB.into(),
+            method: "withdraw".into(),
+            args: vec![
+                GraphArg::Literal(Value::Address(RES_X.address())),
+                GraphArg::Literal(Value::U128(100)),
+            ],
+            evidence: [EvidenceRef::IntentSignature].into(),
+        }],
+    };
     let (results, _) = run_both_signed(
         &world,
         &store,
@@ -292,8 +285,8 @@ fn a_proof_opens_only_the_account_that_minted_it() {
     );
     assert_eq!(
         results,
-        vec![TxResult::Inadmissible(1)],
-        "a proof is its own account's identity and no other's"
+        vec![TxResult::Inadmissible(0)],
+        "a signature is its own account's identity and no other's"
     );
 }
 
@@ -377,11 +370,13 @@ fn promote_by(signer: PrincipalAddr) -> ManifestGraph {
     graph_signed(signer, |b| account::promote(b, ALICE))
 }
 
-/// Whether `signer` opens Alice's sign-in at `clock_ms`: the whole
-/// authorized transfer completes, or refuses. Alice's own key refuses at
-/// her sign-in, which her shard judges from her `auth` cell before any
-/// node runs; anyone else's own sign-in passes at their own cell and the
-/// refusal lands on the node reaching Alice's rule.
+/// Whether `signer`'s key opens Alice's sign-in at `clock_ms`: her whole
+/// transfer completes, or refuses.
+///
+/// One judgment wherever the answer lands. Her shard reads her `auth`
+/// cell against the keys attesting the intent, before any node runs, so
+/// every key the rule turns away is turned away in the same place and
+/// with the same verdict.
 fn assert_acts(
     world: &Records,
     store: &MemoryStore,
@@ -390,12 +385,11 @@ fn assert_acts(
     admits: bool,
     tag: u8,
 ) {
-    let transfer = authorized_transfer_by(signer);
-    let (results, _) = run_both_at(
+    let transfer = transfer_graph();
+    let (results, _) = run_both_attested_at(
         world,
         store,
-        &[(&transfer, TxHash(Hash32([tag; 32])))],
-        Some(signer),
+        &[(&transfer, TxHash(Hash32([tag; 32])), ALICE, signer)],
         clock_ms,
     );
     if admits {
@@ -405,17 +399,12 @@ fn assert_acts(
             results[0]
         );
     } else {
-        let refusal = if signer == ALICE {
-            UnmetCondition::SignedIn {
-                account: ALICE.address(),
-            }
-        } else {
-            UnmetCondition::Satisfies { node: 0 }
-        };
         assert_eq!(
             results,
             vec![TxResult::Refused(Outcome::ConditionUnmet {
-                condition: refusal
+                condition: UnmetCondition::SignedIn {
+                    account: ALICE.address(),
+                },
             })],
             "the rule must refuse this signer at {clock_ms}"
         );
@@ -1213,14 +1202,14 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
     let id = held(&store)[0];
 
     // The holder operates; a non-holder's own custody refuses on
-    // possession; and the holder's custody presented by somebody else
-    // refuses on the rule — holding is the holder's to present.
-    let (results, store) = run_both(
+    // possession; and the holder's custody presented by somebody else is
+    // inadmissible — holding is the holder's to present.
+    let (results, store) = run_both_each(
         &world,
         &store,
         &[
-            (&operate_as(ALICE, id), TxHash(Hash32([0x72; 32]))),
-            (&operate_as(BOB, id), TxHash(Hash32([0x73; 32]))),
+            (&operate_as(ALICE, id), TxHash(Hash32([0x72; 32])), ALICE),
+            (&operate_as(BOB, id), TxHash(Hash32([0x73; 32])), BOB),
         ],
     );
     assert!(matches!(results[0], TxResult::Completed(_)));
@@ -1240,22 +1229,27 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
             },
         })
     );
-    let presented_by_bob = graph_signed(BOB, |b| {
-        let held = account::present_instance(b, ALICE, badge, id)?;
-        nf::operate(b, gated, held)
-    });
+    // And the holder's custody presented by somebody else does not
+    // compose at all: a custody gate names the holder, and Bob's intent
+    // speaks for Bob. Written by hand, because the builder refuses it.
+    let presented_by_bob = ManifestGraph {
+        nodes: vec![GraphNode {
+            target: ALICE.into(),
+            method: "present-instance".into(),
+            args: vec![
+                GraphArg::Literal(Value::Address(badge.address())),
+                GraphArg::Literal(Value::U64(id)),
+            ],
+            evidence: [EvidenceRef::IntentSignature].into(),
+        }],
+    };
     let (results, store) = run_both_signed(
         &world,
         &store,
         &[(&presented_by_bob, TxHash(Hash32([0x74; 32])))],
         Some(BOB),
     );
-    assert_eq!(
-        results[0],
-        TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 0 },
-        })
-    );
+    assert_eq!(results[0], TxResult::Inadmissible(0));
 
     // The badge moves to Bob: operatorship moves with it, and the
     // seller's custody opens nothing.
@@ -1357,12 +1351,20 @@ fn distinct_instances_of_one_badge_are_distinct_authorities() {
 
     // The instance the gate names opens it; the sibling instance does
     // not, though it is the same resource and its holder holds it.
-    let (results, _) = run_both(
+    let (results, _) = run_both_each(
         &world,
         &store,
         &[
-            (&operate_instance(ALICE, alices), TxHash(Hash32([0x82; 32]))),
-            (&operate_instance(BOB, bobs), TxHash(Hash32([0x83; 32]))),
+            (
+                &operate_instance(ALICE, alices),
+                TxHash(Hash32([0x82; 32])),
+                ALICE,
+            ),
+            (
+                &operate_instance(BOB, bobs),
+                TxHash(Hash32([0x83; 32])),
+                BOB,
+            ),
         ],
     );
     assert!(
@@ -1513,12 +1515,12 @@ fn a_fungible_badge_is_custody_while_the_vault_is_funded() {
             nf::operate(b, gated, held)
         })
     };
-    let (results, _) = run_both(
+    let (results, _) = run_both_each(
         &world,
         &store,
         &[
-            (&operate_as(ALICE), TxHash(Hash32([0x78; 32]))),
-            (&operate_as(BOB), TxHash(Hash32([0x79; 32]))),
+            (&operate_as(ALICE), TxHash(Hash32([0x78; 32])), ALICE),
+            (&operate_as(BOB), TxHash(Hash32([0x79; 32])), BOB),
         ],
     );
     assert!(matches!(results[0], TxResult::Completed(_)));

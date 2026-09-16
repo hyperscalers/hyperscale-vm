@@ -197,6 +197,15 @@ fn the_lowering_refuses_a_badge_gate_on_an_instance_package() {
     refuse.compile_fail("tests/refusals/badge_gate_on_instance.rs");
 }
 
+/// The mirror of it: an account's virtual badge is its shard's to
+/// attest, so a principals package proving its own address is refused
+/// at the attribute that wrote it.
+#[test]
+fn the_lowering_refuses_a_self_proof_on_a_principals_package() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/proves_self_on_a_principal.rs");
+}
+
 /// The other direction: an instantiation gate belongs to a package that
 /// instantiates. A principals package is served by class and never brought
 /// up, so `#[requires]` on its configuration binds nothing and is refused

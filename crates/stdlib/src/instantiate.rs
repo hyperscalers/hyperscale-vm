@@ -49,15 +49,10 @@ pub fn instantiate(
     // Which method seals is the declaration's answer, not a name this
     // crate knows.
     let (seal, signature) = root.seal_of(address)?;
-    // Read off the declaration rather than asked of the caller: a method
-    // that admits anyone reads no proof, and one that issues nothing
-    // yields no edge.
-    let outputs = if signature.requires_evidence() {
-        let signed_in = account::authorize(root, founder)?;
-        root.call_presenting(signed_in, address, &seal, args)?
-    } else {
-        root.call(address, &seal, args)?
-    };
+    // A gated seal reads the intent's own signature, which the call
+    // carries whether or not the seal asks for one — so there is nothing
+    // to compose ahead of it and no branch on what its gate says.
+    let outputs = root.call(address, &seal, args)?;
     // One edge per supply the package states, and the kind decides which
     // door each is filed through: a balance lands in a vault and an
     // instance in the holdings interval, and the two share no accessor.

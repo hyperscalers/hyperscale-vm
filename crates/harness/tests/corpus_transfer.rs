@@ -327,40 +327,6 @@ fn transfer_executes_end_to_end_on_both_runtimes() {
     assert_eq!(amount_of(&final_store, vault(BOB, RES_X)), 100);
 }
 
-#[test]
-fn a_transfer_on_a_minted_proof_settles_like_one_on_the_signature() {
-    let world = world();
-    let mut store = MemoryStore::new();
-    store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
-
-    let graph = authorized_transfer_graph();
-    let (results, final_store) = run_both(&world, &store, &[(&graph, TxHash(Hash32([0x0A; 32])))]);
-    let TxResult::Completed(receipt) = &results[0] else {
-        panic!("the authorized transfer must complete");
-    };
-    // The proof changes where the withdrawal's authority came from and
-    // nothing about what it did.
-    assert_eq!(
-        receipt
-            .delta
-            .settles
-            .get(&vault(ALICE, RES_X))
-            .map(|moved| moved.debit),
-        Some(100)
-    );
-    assert_eq!(
-        receipt
-            .delta
-            .movements
-            .get(&vault(BOB, RES_X))
-            .unwrap()
-            .credit,
-        100
-    );
-    assert_eq!(amount_of(&final_store, vault(ALICE, RES_X)), 50);
-    assert_eq!(amount_of(&final_store, vault(BOB, RES_X)), 100);
-}
-
 /// The stdlib's own total mark, checked against the code that carries it.
 ///
 /// `account_metadata` declares `deposit` total, and a claim a package

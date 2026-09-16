@@ -158,24 +158,18 @@ proptest! {
             nodes: vec![
                 GraphNode {
                     target: sender.into(),
-                    method: "authorize".into(),
-                    args: vec![],
-                    evidence: [EvidenceRef::IntentSignature].into(),
-                },
-                GraphNode {
-                    target: sender.into(),
                     method: "withdraw".into(),
                     args: vec![
                         GraphArg::Literal(Value::Address(resource)),
                         GraphArg::Literal(Value::U128(amount)),
                     ],
-                    evidence: [EvidenceRef::Node(0)].into(),
+                    evidence: [EvidenceRef::IntentSignature].into(),
                 },
                 GraphNode {
                     target: recipient.into(),
                     method: "deposit".into(),
                     args: vec![GraphArg::Edge {
-                        edge: EdgeRef { producer: 1, output: 0 },
+                        edge: EdgeRef { producer: 0, output: 0 },
                         constraints: vec![],
                     }],
                     evidence: BTreeSet::new(),
@@ -223,24 +217,18 @@ proptest! {
             nodes: vec![
                 GraphNode {
                     target: sender.into(),
-                    method: "authorize".into(),
-                    args: vec![],
-                    evidence: [EvidenceRef::IntentSignature].into(),
-                },
-                GraphNode {
-                    target: sender.into(),
                     method: "withdraw".into(),
                     args: vec![
                         GraphArg::Literal(Value::Address(resource)),
                         GraphArg::Literal(Value::U128(1)),
                     ],
-                    evidence: [EvidenceRef::Node(0)].into(),
+                    evidence: [EvidenceRef::IntentSignature].into(),
                 },
                 GraphNode {
                     target: recipient.into(),
                     method: "deposit".into(),
                     args: vec![GraphArg::Edge {
-                        edge: EdgeRef { producer: 1, output: 0 },
+                        edge: EdgeRef { producer: 0, output: 0 },
                         constraints: vec![],
                     }],
                     evidence: BTreeSet::new(),
@@ -251,7 +239,7 @@ proptest! {
         let first = per_shard(&admitted, &resolver());
         let second = per_shard(&admitted, &resolver());
         assert_eq!(first, second);
-        assert_eq!(admitted.frames().len(), 3, "one frame per manifest node");
+        assert_eq!(admitted.frames().len(), 2, "one frame per manifest node");
         assert!(first[&shard_of(recipient)].contains(&Effect {
             target: EffectTarget::Point(vault(recipient, resource)),
             mode: Mode::Delta { moves: Moves::In },

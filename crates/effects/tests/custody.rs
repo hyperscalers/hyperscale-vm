@@ -523,7 +523,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
     );
 }
 
-/// A transfer between two accounts: sign in, reserve, credit.
+/// A transfer between two accounts: reserve, credit.
 ///
 /// The shape the case below needs and the custodian cannot give it. A
 /// reservation debits and says so, so the withdrawing node earns the
@@ -538,25 +538,19 @@ fn transferred(from: PrincipalAddr, to: PrincipalAddr, resource: ResourceAddr) -
                     nodes: vec![
                         GraphNode {
                             target: from.into(),
-                            method: "authorize".into(),
-                            args: vec![],
-                            evidence: [EvidenceRef::IntentSignature].into(),
-                        },
-                        GraphNode {
-                            target: from.into(),
                             method: "withdraw".into(),
                             args: vec![
                                 GraphArg::Literal(Value::Address(resource.address())),
                                 GraphArg::Literal(Value::U128(40)),
                             ],
-                            evidence: [EvidenceRef::Node(0)].into(),
+                            evidence: [EvidenceRef::IntentSignature].into(),
                         },
                         GraphNode {
                             target: to.into(),
                             method: "deposit".into(),
                             args: vec![GraphArg::Edge {
                                 edge: EdgeRef {
-                                    producer: 1,
+                                    producer: 0,
                                     output: 0,
                                 },
                                 constraints: Vec::new(),
@@ -623,7 +617,7 @@ fn a_total_frame_carries_no_entry_its_own_leg_would_answer() {
     assert!(admitting(holds).is_ok());
     assert!(matches!(
         admitting(claims),
-        Err(AdmissionError::MissingEvidence { node: 2 })
+        Err(AdmissionError::MissingEvidence { node: 1 })
     ));
 
     // Both at once is the one no earlier stage can answer.
@@ -631,7 +625,7 @@ fn a_total_frame_carries_no_entry_its_own_leg_would_answer() {
     assert_eq!(
         admitting(mixed),
         Err(AdmissionError::MovementUnanswerable {
-            node: 2,
+            node: 1,
             resource,
             behaviour: GrantedBehaviour::Deposit,
         }),

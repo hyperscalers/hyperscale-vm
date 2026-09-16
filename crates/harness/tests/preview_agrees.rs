@@ -10,12 +10,16 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    EnvelopeTree, IntentDecl, IntentHeader, ManifestGraph, TestHasher, admit_tree, explain_refusal,
+    Claim, EnvelopeTree, IntentDecl, IntentHeader, ManifestGraph, StoredRule, TestHasher,
+    admit_tree, explain_refusal,
 };
 use hyperscale_vm_harness::driver::{test_hash, vault};
 use hyperscale_vm_kernel::{MemoryStore, OwnerSet, Substates};
 use hyperscale_vm_preview::{Slack, preview};
-use hyperscale_vm_types::{NetworkId, Outcome, PrincipalAddr, UnmetCondition, encode_amount};
+use hyperscale_vm_stdlib::account;
+use hyperscale_vm_types::{
+    EffectTarget, NetworkId, Outcome, Presence, PrincipalAddr, UnmetCondition, encode_amount,
+};
 use wasmtime::Result;
 
 mod common;
@@ -93,10 +97,15 @@ fn a_preview_spends_what_the_run_spends() -> Result<()> {
 #[test]
 fn a_refused_preview_prints_the_refusal() -> Result<()> {
     let world = world();
-    let store = funded();
-    // Bob composing a transfer out of Alice's account: her own gate
-    // refuses the authorizing node, and the withdrawal never runs.
-    let tree = single_intent(BOB, authorized_transfer_by(BOB));
+    let mut store = funded();
+    // Securifying an account that already stored a rule: the one-way
+    // door is a declared precondition, so the shard holding the cell
+    // refuses against committed state and the body never runs.
+    store.write(auth(ALICE), stored_rule(ALICE).in_cell());
+    let securify = graph(|b| {
+        account::securify_uniform(b, ALICE, &StoredRule::claim(Claim::of_subject(BOB)), DAY_MS)
+    });
+    let tree = single_intent(ALICE, securify);
     let identity = tree.hash(&TestHasher);
     let admitted = admit_tree(
         &tree,
@@ -119,13 +128,17 @@ fn a_refused_preview_prints_the_refusal() -> Result<()> {
         Slack::NONE,
     );
 
-    let condition = UnmetCondition::Satisfies { node: 0 };
+    let condition = UnmetCondition::Holds {
+        target: EffectTarget::Point(auth(ALICE)),
+        required: Presence::Absent,
+        node: Some(0),
+    };
     assert_eq!(
         report.outcome,
         Outcome::ConditionUnmet {
             condition: condition.clone()
         },
-        "the fixture refuses at the authorizing node"
+        "the fixture refuses at the door it cannot reopen"
     );
     assert_eq!(
         report.refusal,

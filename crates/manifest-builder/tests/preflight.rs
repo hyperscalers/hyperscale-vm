@@ -228,11 +228,14 @@ fn the_operator_surface_is_the_badge_holders_custody() {
         preflight_tree(&one_intent(OPERATOR, &graph), &chain, &TestHasher, NETWORK).unwrap();
 
     // A pool is owned by nobody, so its operator surface admits whoever
-    // presents the pool's own badge: custody at the presentation, and
-    // the badge itself at the surface — reachable only through that
-    // presentation, which is the point, and which the report says
-    // rather than calling the surface unreachable.
-    assert_eq!(report.authority[0].authority, Authority::StoredRule);
+    // presents the pool's own badge: the holder's own signature at the
+    // presentation, and the badge itself at the surface — reachable only
+    // through that presentation, which is the point, and which the
+    // report says rather than calling the surface unreachable.
+    assert_eq!(
+        report.authority[0].authority,
+        Authority::Signature(OPERATOR)
+    );
     assert_eq!(
         report.authority[1].authority,
         Authority::Badge {
@@ -363,27 +366,20 @@ fn a_root_that_calls_nothing_is_still_one_of_the_intents() {
 ///
 /// A node's frame declares every cell the call reaches — a venue's
 /// reserve as readily as the caller's vault — so folding a frame whole
-/// would tell a signer they risk value that was never theirs. Here one
-/// intent reserves out of Alice's account and out of Bob's; only the
-/// first is Alice's to lose.
+/// would tell a signer they risk value that was never theirs. Here the
+/// stake reaches the pool's own reserve and Alice's vault; only the
+/// second is hers to lose.
 #[test]
 fn an_intent_is_exposed_only_by_the_cells_its_signer_holds() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let mine = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
-    // Bob's own sign-in, presented, since the builder answers a guarded
-    // call from the composer's account and this one is not theirs.
-    let bob = account::authorize(&mut b, BOB).unwrap();
-    let theirs = b
-        .call_presenting([bob], BOB, "withdraw", (RES_X, 30u128))
-        .unwrap()
-        .one()
-        .unwrap();
-    account::deposit(&mut b, ALICE, theirs).unwrap();
-    account::deposit(&mut b, BOB, mine).unwrap();
+    let funds = account::withdraw(&mut b, ALICE, RES_X, 100).unwrap();
+    let units = pool().stake(&mut b, funds).unwrap();
+    account::deposit(&mut b, ALICE, units).unwrap();
     let graph = b.build().unwrap();
 
-    let report = preflight_tree(&one_intent(ALICE, &graph), &chain, &TestHasher, NETWORK).unwrap();
+    let tree = one_intent(ALICE, &graph);
+    let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
     let nodes = report.manifest().nodes.len();
     let gas_limits = vec![1_000u64; nodes];
     let split = report.by_intent(&gas_limits).unwrap();
@@ -393,7 +389,7 @@ fn an_intent_is_exposed_only_by_the_cells_its_signer_holds() {
     assert_eq!(
         split.intents[0].exposure,
         std::iter::once((RES_X, 100)).collect(),
-        "the thirty out of Bob's account is Bob's to lose and not Alice's"
+        "what the pool moves out of its own reserve is not Alice's to lose"
     );
 }
 
@@ -624,21 +620,26 @@ fn either_note_meta() -> ResourceMeta {
 fn a_disjunction_reports_its_branches_and_names_no_certain_signer() {
     let chain = world();
     let note = either_note_meta().address(&TestHasher);
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
-    let approval = root.declare_proof(Claim::of_subject(DESK));
-    let alice = account::authorize(&mut root, ALICE).unwrap();
-    let funds = root
-        .call_presenting([alice, approval], ALICE, "withdraw", (note, 5u128))
+    // Alice's own request, signed before any composer exists, with a
+    // socket where the desk's approval goes. A scope rather than a
+    // presented list: the withdrawal's own gate is answered by the
+    // signature this intent carries, and naming evidence at the call
+    // would replace it rather than join it.
+    let mut request = IntentBuilder::declaration(&chain, &TestHasher, ALICE, TEST_HEADER);
+    let approval = request.declare_proof(Claim::of_subject(DESK));
+    let funds = request
+        .presenting(approval, |b| b.call(ALICE, "withdraw", (note, 5u128)))
         .unwrap()
         .one()
         .unwrap();
-    account::deposit(&mut root, ALICE, funds).unwrap();
-    let request = root;
-    let mut sub = env.subintent(DESK, TEST_HEADER);
-    let desk = account::authorize(&mut sub, DESK).unwrap();
-    let offered = sub.offer(desk).expect("the intent's own proof offers");
-    let wants = env.seal(request).unwrap().one().unwrap();
-    env.seal(sub).unwrap().none().unwrap();
+    account::deposit(&mut request, ALICE, funds).unwrap();
+    let request = request.into_decl().unwrap();
+
+    // The desk's composition grants the account its own intent acts as.
+    let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
+    let offered = root.grant();
+    let wants = env.adopt(ALICE, request).unwrap().one().unwrap();
+    env.seal(root).unwrap().none().unwrap();
     env.bind(wants, offered).unwrap();
     env.register_resource(either_note_meta());
     let tree = env.build().unwrap();
@@ -754,9 +755,8 @@ fn a_component_claim_the_transaction_mints_is_satisfiable() {
 
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     let approval = root.call_proving(venue, "approve", ()).unwrap();
-    let alice = account::authorize(&mut root, ALICE).unwrap();
     let funds = root
-        .call_presenting([alice, approval], ALICE, "withdraw", (ticket, 3u128))
+        .presenting(approval, |b| b.call(ALICE, "withdraw", (ticket, 3u128)))
         .unwrap()
         .one()
         .unwrap();
@@ -790,18 +790,16 @@ fn a_conjunction_reports_what_each_branch_asks() {
     let note = note_meta().address(&TestHasher);
     let mut request = IntentBuilder::declaration(&chain, &TestHasher, BOB, TEST_HEADER);
     let approval = request.declare_proof(Claim::of_subject(DESK));
-    let bob = account::authorize(&mut request, BOB).unwrap();
     let funds = request
-        .call_presenting([bob, approval], BOB, "withdraw", (note, 40u128))
+        .presenting(approval, |b| b.call(BOB, "withdraw", (note, 40u128)))
         .unwrap()
         .one()
         .unwrap();
     account::deposit(&mut request, BOB, funds).unwrap();
     let request = request.into_decl().unwrap();
 
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
-    let desk = account::authorize(&mut root, DESK).unwrap();
-    let offered = root.offer(desk).expect("the intent's own proof offers");
+    let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
+    let offered = root.grant();
     let wants = env.adopt(BOB, request).unwrap().one().unwrap();
     env.seal(root).unwrap().none().unwrap();
     env.bind(wants, offered).unwrap();
