@@ -351,9 +351,9 @@ fn a_root_that_calls_nothing_is_still_one_of_the_intents() {
 
     assert_eq!(split.intents.len(), 2, "the empty root and Bob's subintent");
     assert_eq!(split.intents[0].intent, report.intents[0].intent);
-    assert_eq!(split.intents[0].signer, ALICE);
+    assert_eq!(split.intents[0].account, ALICE);
     assert_eq!(split.intents[0].nodes, 0, "the root calls nothing");
-    assert_eq!(split.intents[1].signer, BOB);
+    assert_eq!(split.intents[1].account, BOB);
     assert_eq!(
         split.intents[1].exposure,
         std::iter::once((RES_X, 10)).collect(),
@@ -385,7 +385,7 @@ fn an_intent_is_exposed_only_by_the_cells_its_signer_holds() {
     let split = report.by_intent(&gas_limits).unwrap();
 
     assert_eq!(split.intents.len(), 1, "one intent, no subintents");
-    assert_eq!(split.intents[0].signer, ALICE);
+    assert_eq!(split.intents[0].account, ALICE);
     assert_eq!(
         split.intents[0].exposure,
         std::iter::once((RES_X, 100)).collect(),
@@ -455,11 +455,10 @@ fn a_shared_cell_is_named_rather_than_charged_to_either_intent() {
         split.intents.iter().map(|cost| cost.nodes).sum::<u32>(),
         u32::try_from(nodes).unwrap(),
     );
-    // Each intent names whose signature admits it — the composer's for
-    // the root, the subintent's own signer otherwise — rather than a
-    // weight from a vector nothing guarantees is one per intent.
-    assert_eq!(split.intents[0].signer, ALICE);
-    assert_eq!(split.intents[1].signer, BOB);
+    // Each intent names the account it acts as, rather than a weight
+    // from a vector nothing guarantees is one per intent.
+    assert_eq!(split.intents[0].account, ALICE);
+    assert_eq!(split.intents[1].account, BOB);
 
     // And the cells both intents reach are named, which is the whole
     // reason the bytes are not split.

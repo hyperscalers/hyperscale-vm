@@ -307,8 +307,9 @@ impl Chain {
     /// `founder`, over `args`, the same node a wallet composes.
     ///
     /// The leaf's bytes are evaluated from the record rather than
-    /// supplied by anyone. `founder` signs in first, because a package
-    /// may hold bringing up to the caller its configuration names; and
+    /// supplied by anyone. The intent acts as `founder`, because a
+    /// package may hold bringing up to the caller its configuration
+    /// names; and
     /// the supply the component comes up holding leaves as an edge,
     /// filed in that same account. The conclusion is answered rather
     /// than asserted on, because a bring-up may decline — a

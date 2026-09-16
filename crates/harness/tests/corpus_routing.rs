@@ -104,13 +104,11 @@ use common::world::*;
 /// propose reach only principals, which have no creation to finish and
 /// take no fence.
 ///
-/// Transfer, swap and fill moved when the sign-in stopped being a node:
-/// an account's own claim is carried by the intent's signature, so each
-/// manifest lost its leading `authorize` and every later node renumbered
-/// behind it. The leaves and their modes are the ones already pinned,
-/// plus the read of the account's `auth` cell that the sign-in condition
-/// declares. Propose alone stood still, because its only node always
-/// gated on the account composing it and never took a node ahead of it.
+/// An account's own claim rides the intent's signature, so nothing is
+/// composed ahead of a gated call and a transfer's first node is the
+/// reserve. The leaves and their modes are the ones pinned, plus the
+/// read of the account's `auth` cell that the sign-in condition
+/// declares.
 ///
 /// The fingerprint is over the routing's `Debug` rendering, so it is
 /// sensitive to more than routing: renaming a type the declaration holds
@@ -185,11 +183,10 @@ struct Shape {
 /// of its own. A row on its own would say little; the set is the
 /// falsifier.
 ///
-/// Every row's core is size one, and the sign-in node is why that is not
-/// automatic: it commits nothing, so it is a leg wherever a venue or a
-/// gated deposit bears the verdict, and the core itself wherever nothing
-/// else would. A regression that dropped the write-free role shows up
-/// here as swap and fill going to core size two.
+/// Every row's core is size one: a venue or a gated deposit bears the
+/// verdict where there is one, and the payer's home bears it where no
+/// node writes. A regression that seeded the payer's home beside a
+/// bearer shows up here as swap and fill going to core size two.
 #[test]
 fn every_pattern_takes_the_star_its_shape_implies() {
     let world = world();

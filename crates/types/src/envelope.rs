@@ -1,7 +1,7 @@
 //! The signed transaction envelope.
 //!
-//! The envelope carries the bound tree — the composer's root graph plus
-//! every signed subintent — as canonical bytes, beside the signing-time
+//! The envelope carries the bound tree — every signed intent and the
+//! wiring between them — as canonical bytes, beside the signing-time
 //! choices no node can derive: the fee payer, the fee ceiling, one
 //! compute ceiling per manifest node, the priority multiplier, the
 //! validity window, a capped optional message, and the network the
@@ -223,8 +223,9 @@ pub struct NetworkId(pub u8);
 pub struct SubintentSig {
     /// The scheme the key and signature below belong to.
     pub scheme: SchemeId,
-    /// The subintent signer's public key; its derived account address
-    /// must match the signer the tree binds.
+    /// The offered intent's attesting key. Whether the account that
+    /// intent acts as admits it is that account's own cell to say, on
+    /// its own shard.
     #[hbor(max = MAX_KEY_BYTES)]
     pub public_key: Vec<u8>,
     /// The signature over the subintent's declaration hash.

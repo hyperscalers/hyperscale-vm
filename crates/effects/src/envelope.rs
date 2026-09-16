@@ -1,15 +1,15 @@
-//! The bound envelope tree: a root intent composed with separately
-//! signed subintents through the sockets they declare, and the
-//! nullifier vocabulary that makes a committed subintent once-only.
+//! The bound envelope tree: intents composed through the sockets they
+//! declare, and the nullifier vocabulary that makes a committed intent
+//! once-only.
 //!
-//! A subintent's signer signs an [`IntentDecl`] — a graph over the
+//! An intent's signer signs an [`IntentDecl`] — a graph over the
 //! sockets it declares. A socket carries either of the two things that
 //! cross an intent boundary: a value edge, which exactly one node
-//! argument consumes, or a proof, which as many of the intent's nodes
-//! present as ask for it. The composer fills every socket — from
+//! argument consumes, or a claim, which as many of the intent's nodes
+//! present as ask for it. The composition fills every socket — from
 //! another intent's node, or by granting the authority of the account
-//! it acts as — and signs the whole envelope; nothing about the tree is
-//! renegotiated at admission.
+//! its own intent acts as — and signs the whole envelope; nothing about
+//! the tree is renegotiated at admission.
 //!
 //! [`admit_tree`] flattens the tree into one routing manifest: intents
 //! keep their author order and their sockets interleave them
@@ -18,12 +18,11 @@
 //! evidence presents alike. A composition admitting no such order is
 //! rejected.
 //!
-//! Committing a subintent writes a kernel nullifier substate at the
-//! canonical address `signer_prefix | H(nullifier_role, subintent_hash)`
-//! — computable, hence declarable, hence a creation conflict: two
-//! compositions racing one subintent contend on the nullifier key and
-//! exactly one commits. Cancellation is the signer spending the
-//! nullifier under their own prefix.
+//! Committing an intent writes a kernel nullifier substate under the
+//! account it acts as, bucketed by the intent's expiry and keyed by its
+//! own hash — computable, hence declarable, hence a creation conflict:
+//! two compositions racing one intent contend on the nullifier key and
+//! exactly one commits.
 
 use std::collections::BTreeSet;
 
@@ -175,20 +174,15 @@ pub struct IntentHeader {
     /// stand behind the same offer twice inside one window: the second
     /// carries the first's nullifier and is refused as already spent.
     /// A signer who means two offers picks two values, and a signer who
-    /// means one leaves it alone. The root intent, which carries no
-    /// nullifier, is held to the same rule by its escrow cells: a root
-    /// node's record and claim are keyed by the root declaration's hash,
-    /// so two envelopes composed over one root declaration inside one
-    /// window derive one record, and the second is refused as already
-    /// issued.
+    /// means one leaves it alone.
     pub discriminator: u64,
 }
 
 /// One intent's declared form: a graph over typed sockets.
 ///
-/// The root intent and every subintent share this shape; a subintent's
-/// signer signs exactly this, so [`IntentDecl::hash`] is the subintent's
-/// identity whatever composition later carries it. Outputs the graph
+/// Every intent has this shape, and its signer signs exactly this, so
+/// [`IntentDecl::hash`] is the intent's identity whatever composition
+/// later carries it. Outputs the graph
 /// does not consume internally are the intent's yields — the composition
 /// must bind every one to some intent's socket.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
@@ -251,15 +245,14 @@ impl IntentDecl {
 
 /// What a composition puts in one socket.
 ///
-/// The composer's choice, covered by the envelope identity and never by
-/// the declaring intent's own hash — which is what lets one signed
-/// subintent be carried by any composition that can fill its sockets.
+/// The composition's choice, covered by the envelope identity and never
+/// by the declaring intent's own hash — which is what lets one signed
+/// intent be carried by any composition that can fill its sockets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub enum Binding {
     /// The `output`-th edge of node `producer` inside `intent`.
     Value {
-        /// The producing intent: `0` names the root, `i + 1` names
-        /// subintent `i`.
+        /// The producing intent, by its position in the tree.
         intent: u32,
         /// The produced edge within that intent's graph.
         edge: EdgeRef,

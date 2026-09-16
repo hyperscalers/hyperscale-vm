@@ -244,8 +244,8 @@ impl<const N: usize> Evidence for &[Proof; N] {
     }
 }
 
-/// The identity an authorizing node proves, as a later call of the same
-/// graph presents it.
+/// The claim a proving node mints, as a later call of the same graph
+/// presents it.
 ///
 /// A node reference rather than a value edge: nothing is conserved, and
 /// presenting it twice says nothing presenting it once does not. It
@@ -428,11 +428,11 @@ pub struct TypedBuilder<'a> {
     graph: GraphBuilder,
     chain: &'a dyn ChainRecords,
     hasher: &'a dyn Hasher,
-    /// The principal this intent will be signed as.
+    /// The account this intent acts as.
     ///
     /// A declared fact rather than a fact about whoever runs the
-    /// builder: an agent preparing a subintent for somebody else's
-    /// wallet names that somebody, and the intent's own gates hold the
+    /// builder: an agent preparing an intent for somebody else's wallet
+    /// names that somebody, and the intent's own gates hold the
     /// declaration to it. A wrong name is a refusal at the node that
     /// reads it, never a forgery.
     signer: PrincipalAddr,
@@ -531,7 +531,7 @@ impl<'a> TypedBuilder<'a> {
         written
     }
 
-    /// The principal this intent will be signed as.
+    /// The account this intent acts as.
     #[must_use]
     pub const fn signer(&self) -> PrincipalAddr {
         self.signer
@@ -623,10 +623,9 @@ impl<'a> TypedBuilder<'a> {
     /// Append an invocation of `method`, a proving method of `target`,
     /// and return the proof it proves.
     ///
-    /// The call presents the intent's signature proof to its own gate —
-    /// signing in starts from a signature. The arguments are the gate's
-    /// where it has any: a custodial method names the badge it presents,
-    /// where a sign-in names nothing.
+    /// The call presents the intent's signature to its own gate, as
+    /// every gated call does. The arguments are the gate's where it has
+    /// any: a custodial method names the badge it presents.
     ///
     /// # Errors
     ///
@@ -1009,10 +1008,10 @@ impl<'a> TypedBuilder<'a> {
         );
 
         // The signature says which methods take evidence at all, so no
-        // call site has to. Signing in starts from the intent's
-        // signature; everything guarded presents claims proven earlier —
-        // more than one where the gate is a threshold, since satisfying
-        // two of three means presenting two.
+        // call site has to. Everything guarded presents the intent's
+        // signature and the claims proven earlier — more than one where
+        // the gate is a threshold, since satisfying two of three means
+        // presenting two.
         let evidence = match (signature.requires_evidence(), proofs) {
             (false, []) if earned.is_empty() => BTreeSet::new(),
             // A method that issues, destroys, reaches or moves value

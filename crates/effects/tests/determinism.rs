@@ -151,7 +151,7 @@ proptest! {
         chain.packages.publish_unchecked(pkg("account"), account::metadata());
         chain.instances.serve_principals(pkg("account"));
         // The sender signs, so it is a principal: the one target a
-        // signature signs in at.
+        // signature acts as.
         let sender = PrincipalAddr::new([sender_byte; 31]);
         let recipient = instance(&mut chain.instances, "account", 1, recipient_byte);
         let graph = ManifestGraph {

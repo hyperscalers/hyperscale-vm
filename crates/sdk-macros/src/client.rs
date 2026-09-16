@@ -45,12 +45,12 @@ pub enum Shape {
     /// the signer's account can, and an enclosing `presenting` scope
     /// carries the rest.
     Guarded,
-    /// The target's stored primary, proving the target's identity.
+    /// The component's own body, proving its address.
     Authorizing,
-    /// A rule the target stores beside its primary, proving nothing.
+    /// A rule the target stores in one of its cells, proving nothing.
     Governed,
-    /// The holder's rule and its possession of a badge, proving that
-    /// badge.
+    /// The holder's own claim and its possession of a badge, proving
+    /// that badge.
     Custodial,
 }
 

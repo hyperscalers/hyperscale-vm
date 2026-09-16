@@ -517,11 +517,11 @@ pub fn explain_admission(
 /// spelled out on [`explain_admission`]'s terms.
 ///
 /// A flattened node index numbers the emission order of the same
-/// interleave admission ran — a subintent's node comes before the node
-/// that consumes its socket, whichever intent wrote it — so the walk is
-/// re-run here over the tree rather than guessed from concatenation.
-/// The intents themselves are the tree's own: the root, then the
-/// intents in declaration order.
+/// interleave admission ran — an offered intent's node comes before the
+/// node that consumes its socket, whichever intent wrote it — so the
+/// walk is re-run here over the tree rather than guessed from
+/// concatenation. The intents themselves are the tree's own, in tree
+/// order.
 #[must_use]
 pub fn explain_admission_tree(
     tree: &EnvelopeTree,

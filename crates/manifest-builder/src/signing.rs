@@ -129,7 +129,7 @@ pub fn sign<S: AccountSigner>(
     Ok(envelope)
 }
 
-/// One bound subintent's signature over its declaration hash.
+/// One offered intent's signature over its declaration hash.
 ///
 /// The scheme is stamped beside the material it describes, so a signer's
 /// key and their claim about which curve produced it are written in one

@@ -41,8 +41,8 @@ fn a_transaction_says_what_the_protocol_asked_of_it() {
         &admit_here(&register_swap_graph(300), ALICE, &world).expect("admits"),
     );
 
-    // The sign-in and the plain withdrawal move nothing governed, and
-    // say so — an omitted line would read as a node this forgot.
+    // The plain withdrawal moves nothing governed, and says so — an
+    // omitted line would read as a node this forgot.
     assert!(
         text.contains("nothing — no resource this node moves governs it"),
         "{text}"
@@ -186,9 +186,8 @@ fn a_refusal_is_read_against_the_node_that_asked_and_no_other() {
     };
     let admitted = admit_here(&graph, ALICE, &world).expect("admits");
 
-    // Node 0 is the sign-in, which moves nothing and is asked for
-    // nothing. The leaf is the swap's, and saying so is what the node
-    // is for.
+    // Node 0 is the withdraw, and the leaf is the swap's: the
+    // explanation has to name the node whose leaf it is.
     let elsewhere = explain_refusal(
         &admitted,
         &UnmetCondition::Holds {

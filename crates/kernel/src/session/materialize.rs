@@ -2,9 +2,9 @@
 //! the capability table a session hands out.
 //!
 //! Every verdict here is a pre-execution abort — an infeasible
-//! reservation, a presence the leaf does not meet, a pairing no
-//! capability is built for — judged over committed state before any
-//! guest runs.
+//! reservation, a presence the leaf does not meet, a sign-in the
+//! account's rule refuses, a pairing no capability is built for — judged
+//! over committed state before any guest runs.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -766,10 +766,10 @@ enum Judgement {
         /// What it required there.
         required: Presence,
     },
-    /// State cannot say, and the rule holds no leaf to point at. A
-    /// threshold over no branches is the shape — this algebra's spelling
-    /// of the rule nobody satisfies — and it refuses, because the
-    /// alternative is a verdict reached by finding nothing to object to.
+    /// State cannot say, and the rule holds no leaf to point at: a leaf
+    /// no state judge reads, or a threshold this judge could only partly
+    /// see. Refused, because the alternative is a verdict reached by
+    /// finding nothing to object to.
     Unanswerable,
     /// The rule stored at an account's `auth` cell does not admit the
     /// keys that attested the intent.

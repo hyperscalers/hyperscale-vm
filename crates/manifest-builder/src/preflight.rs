@@ -313,17 +313,16 @@ pub struct IntentCost {
     pub compute: u64,
     /// What its calls' own methods may emit between them.
     pub event_bytes: u64,
-    /// Whose signature admits it: the composer for the root, the
-    /// subintent's own signer otherwise.
+    /// The account it acts as.
     ///
-    /// The signer and not the signature's cost. What a signature weighs
-    /// depends on its scheme, and an intent is not held to one — a
-    /// conjunction asks several parties for one node, so the signatures
-    /// an envelope binds are not one per intent and pairing them
-    /// positionally would put one intent's scheme against another's.
-    /// A caller that has chosen the schemes knows which belong to whom
-    /// and can price them with [`DeclaredWork::signature`].
-    pub signer: PrincipalAddr,
+    /// The account and not the signatures' cost. What a signature
+    /// weighs depends on its scheme, and an account's rule may ask for
+    /// several keys, so the signatures an envelope binds are not one per
+    /// intent and pairing them positionally would put one intent's
+    /// scheme against another's. A caller that has chosen the schemes
+    /// knows which belong to whom and can price them with
+    /// [`DeclaredWork::signature`].
+    pub account: PrincipalAddr,
     /// The most this intent's own nodes may move out, by resource.
     ///
     /// The reserves they declare, which is the whole of what its signer
@@ -596,7 +595,7 @@ impl Report {
 
         let intents = order
             .into_iter()
-            .map(|(intent, signer)| IntentCost {
+            .map(|(intent, account)| IntentCost {
                 nodes: u32::try_from(
                     origins
                         .iter()
@@ -606,7 +605,7 @@ impl Report {
                 .unwrap_or(u32::MAX),
                 compute: compute.get(&intent).copied().unwrap_or(0),
                 event_bytes: events.get(&intent).copied().unwrap_or(0),
-                signer,
+                account,
                 exposure: exposure.get(&intent).cloned().unwrap_or_default(),
                 unbounded_outflow: unbounded.contains(&intent),
                 intent,

@@ -105,8 +105,8 @@
 //!   `config.<field>`, `issued(<Resource>)`, and `governs(<field>)`,
 //!   combined with `||`, `&&`, and `n_of(<k>, …)`.
 //! - `#[proves(self)]`, `#[proves(<badge>)]`, `#[proves(<badge>[<id>])]`
-//!   — sign in as oneself, or prove possession of a badge parameter (an
-//!   address; the id a `u64`).
+//!   — vouch for the component's own address, or prove possession of a
+//!   badge parameter (an address; the id a `u64`).
 //! - `#[total]` — the method cannot refuse or trap; the gate checks the
 //!   claim against the artifact.
 //! - `#[name("…")]` — publish under this name instead of the kebab-cased
@@ -120,9 +120,9 @@
 //! to every caller — it reads like "authenticate me" and means "anyone
 //! who calls me speaks as me" — so on an instance package the macro
 //! refuses the shape: a proving method carries the package's error arm,
-//! and declines the paths that should not vouch. The account's is the
-//! exception, because the kernel judges its stored rule before the
-//! export runs — an empty principals body is already gated.
+//! and declines the paths that should not vouch. A principals package
+//! has no proving form at all: its holder's claim is the signature's,
+//! attested by the account's own shard.
 //!
 //! # Names the generated client takes
 //!

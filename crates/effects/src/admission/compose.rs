@@ -1,7 +1,7 @@
 //! Composition: what a signed form is, before anything is judged.
 //!
 //! Shape-agnostic by design. A bare graph is one intent with no sockets
-//! and no subintents, a tree is several joined through the sockets they
+//! and nothing offered into it, a tree is several joined through the sockets they
 //! declare, and nothing here reads a signature — bindings, socket
 //! consumption, the deterministic interleave over the sockets each node
 //! names, and the bounds an envelope's own inputs have to clear before

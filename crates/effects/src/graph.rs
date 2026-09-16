@@ -30,8 +30,8 @@ pub struct EdgeRef {
 }
 
 /// A declarative edge annotation, checked at admission where static and at
-/// execution otherwise. The same constraint language binds subintent
-/// yields.
+/// execution otherwise. The same constraint language binds an offered
+/// intent's yields.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub enum Constraint {
     /// The edge must carry at least this amount at execution.

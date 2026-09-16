@@ -1,11 +1,11 @@
 //! A refused call leaves the builder exactly as it was.
 //!
-//! The builder mints sign-in nodes ahead of a call whose movements will
-//! ask for them, and a refusal discovered after that walk would leave
-//! those nodes in the graph — admission-valid, signed if the author
-//! recovers and builds. So every refusal a call can reach is judged
-//! before anything is appended, and these pin it: after a refusal, the
-//! graph builds to exactly what it held before the call.
+//! The builder walks a call's gate and its movements before appending
+//! anything, and a refusal discovered after an append would leave the
+//! node in the graph — admission-valid, signed if the author recovers
+//! and builds. So every refusal a call can reach is judged before
+//! anything is appended, and these pin it: after a refusal, the graph
+//! builds to exactly what it held before the call.
 
 use std::sync::Arc;
 

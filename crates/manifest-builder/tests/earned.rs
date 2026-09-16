@@ -1,12 +1,11 @@
-//! What a call's movements earn rides beside how the method signs in.
+//! What a call's movements earn rides beside the intent's signature.
 //!
-//! A rule-reading method takes the intent's signature — whether the key
-//! still holds its account's authority is the stored rule's question.
+//! A rule-reading method takes the intent's signature — whether the
+//! keys still hold the account's authority is its shard's question.
 //! But a resource the same call moves asks its own question, and the
-//! answer is the sign-in node the builder minted for it. Dropping that
-//! reference would leave a dead node in the graph and the movement's
-//! claim unpresented, so the signature and the earned proofs are one
-//! evidence set.
+//! answer is the proof presented for it. Dropping that reference would
+//! leave the movement's claim unpresented, so the signature and the
+//! earned proofs are one evidence set.
 
 use std::sync::Arc;
 
@@ -22,7 +21,7 @@ use hyperscale_vm_types::{CallTarget, Moves, PrincipalAddr, ResourceAddr};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 /// A badge whose deposit rule asks for Alice, so a call moving it earns
-/// a claim the builder mints a sign-in for.
+/// a claim the intent's signature answers.
 const BADGE: ResourceAddr = ResourceAddr::new([0xBA; 31]);
 
 struct Principals {

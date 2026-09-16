@@ -598,14 +598,15 @@ impl Placed<'_> {
 
     /// Every party the routing declares beyond any node's frame — the
     /// fee payer, whose vault the reservation and the burn reach, and
-    /// every signer, whose nullifier a bound subintent writes — sits on
-    /// a shard that runs a member, so some member's scope covers it.
+    /// every account an intent acts as, whose nullifier and `auth` cell
+    /// sit under its prefix — sits on a shard that runs a member, so
+    /// some member's scope covers it.
     ///
     /// What is excluded is a shard that runs nothing. A payer on such a
     /// shard is a routing participant with no member: the shard would
     /// freeze divided, compose a member and find no plan for it, and
-    /// attest a refusal with the price apart while the core committed. A
-    /// signer likewise would have their nullifier written by whichever
+    /// attest a refusal with the price apart while the core committed.
+    /// An account likewise would have its nullifier written by whichever
     /// member happened to run there, after the core committed or never.
     /// Running whole provisions the vault and writes the nullifier where
     /// a whole execution always did.
@@ -614,7 +615,9 @@ impl Placed<'_> {
     /// say some member's scope covers the owner: a payer whose shard
     /// runs only a delivery passes, and should. What provisions the
     /// vault and takes the reservation is that the shard runs a member
-    /// at all, not which role that member plays.
+    /// at all, not which role that member plays. An account is held to
+    /// more — its shard must be one the core waits on — and
+    /// `every_account_is_awaited` says why.
     fn every_route_owner_participates(
         participants: &BTreeSet<ShardId>,
         payer: Address,
@@ -1329,12 +1332,12 @@ mod tests {
         assert_eq!(star.roles[0], LegRole::Inbound);
     }
 
-    /// The world the write-free tests share: an account that proves its
-    /// own identity and withdraws under it, and a total sink elsewhere.
+    /// The world the write-free tests share: a component-class instance
+    /// with one read-only proving method and a reserve beside it, and a
+    /// total sink elsewhere.
     ///
-    /// One instance for both nodes, which is what an account is — a
-    /// sign-in reads the authority cell the withdrawal is gated on, and
-    /// they are the same party's cells by construction.
+    /// One instance for both nodes, so the write-free node and the
+    /// reserve are the same party's by construction.
     fn signed_world() -> (Records, Manifest) {
         let (base, _) = star_world(Totality::Total);
         let mut chain = Records::new();
@@ -1345,7 +1348,7 @@ mod tests {
         }
         let mut account = (*base.package(pkg("vault")).expect("published")).clone();
         account.methods.insert(
-            "authorize".into(),
+            "attest".into(),
             MethodSignature {
                 effects: vec![self_point(SlotId(9), ModeExpr::Read)],
                 ..MethodSignature::default()
@@ -1359,7 +1362,7 @@ mod tests {
             nodes: vec![
                 Node {
                     target: account,
-                    method: "authorize".into(),
+                    method: "attest".into(),
                     inputs: vec![],
                     evidence: Vec::new(),
                 },
@@ -1979,7 +1982,7 @@ mod tests {
     }
 
     /// A party the routing declares beyond any node — a sponsored payer,
-    /// a signer with no node of their own — has to sit on a shard some
+    /// an account with no node of its own — has to sit on a shard some
     /// member runs on, or the shape runs whole: divided, that shard would
     /// compose a member with nothing to run and refuse while the core
     /// committed.

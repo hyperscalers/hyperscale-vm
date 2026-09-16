@@ -193,11 +193,11 @@ fn admit_composed(tree: &EnvelopeTree) -> Result<AdmittedTree, AdmissionError> {
 /// the interleave put there — not the call sitting at that index in
 /// concatenation order.
 ///
-/// The root's only node waits on a socket the subintent fills, so the
-/// emission order leads with the subintent's nodes: flattened node 0 is
-/// the subintent's sign-in, while concatenation would call it the root's
-/// deposit. The refusal is planted on the sign-in, and the explanation
-/// must name it.
+/// The composition's only node waits on a socket the offered intent
+/// fills, so the emission order leads with the offered intent's nodes:
+/// flattened node 0 is its withdraw, while concatenation would call it
+/// the composition's deposit. The refusal is planted on that withdraw,
+/// and the explanation must name it.
 #[test]
 fn a_tree_refusal_is_explained_at_the_interleaved_node() {
     let broken_withdraw = GraphNode::signed(

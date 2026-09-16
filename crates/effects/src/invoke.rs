@@ -192,8 +192,8 @@ pub struct NodeCall {
     /// The authority conditions this node's declaration requires, each a
     /// judged rule over the call's presented evidence and the stored
     /// rules its cells hold. All must be satisfied — a claim leaf by the
-    /// presented set alone, a stored leaf by the rule the named role
-    /// selects at the cell, judged where the cell lives.
+    /// presented set alone, a stored leaf by the rule stored at the
+    /// cell, judged where the cell lives.
     pub requires: Vec<Rule<JudgedLeaf>>,
 }
 

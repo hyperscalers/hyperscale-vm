@@ -592,13 +592,12 @@ pub enum Outcome {
         /// The index into the declining package's error table.
         code: u32,
     },
-    /// A subintent this transaction commits was already spent.
+    /// An intent this transaction commits was already spent.
     ///
-    /// The composer lost a race it could not have won: canonical order
-    /// picks between two compositions carrying one subintent, an earlier
-    /// block may have committed it, or its signer may have cancelled it
-    /// by spending the nullifier directly. None of those is visible to a
-    /// composer at signing time, so this is priced with
+    /// The composition lost a race it could not have won: canonical
+    /// order picks between two compositions carrying one intent, or an
+    /// earlier block committed it. Neither is visible to a composer at
+    /// signing time, so this is priced with
     /// [`Outcome::Infeasible`] — a conflict tiebreak and a stale
     /// declaration are the two cases the taxonomy names.
     #[hbor(discriminant = 7)]

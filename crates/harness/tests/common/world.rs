@@ -895,8 +895,8 @@ pub fn run_both(
 ///
 /// The tree's own path rather than the bare graph's: an envelope carries
 /// its bindings and its records itself, so nothing is attached here, and
-/// the nullifier of every bound subintent rides the batch entry that
-/// makes it once-only.
+/// the nullifier of every intent rides the batch entry that makes it
+/// once-only.
 ///
 /// # Errors
 ///
@@ -924,8 +924,8 @@ pub fn run_both_tree(
     Ok(run_lanes(&LANES, store, &[entry]))
 }
 
-/// As [`run_both`], with one signature riding every graph — how a test
-/// puts the wrong signer behind an authorization.
+/// As [`run_both`], with every intent acting as `signer`'s account where
+/// one is named — how a test puts another account behind a gate.
 pub fn run_both_signed(
     world: &Records,
     store: &MemoryStore,

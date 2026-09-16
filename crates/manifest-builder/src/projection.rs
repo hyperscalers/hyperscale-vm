@@ -386,7 +386,7 @@ pub(crate) fn proven_claims(
 /// What an envelope carries in its `resources` section, found rather
 /// than asked for. Run over a declaration rather than over a builder,
 /// because the composer assembling an envelope is not always the party
-/// that wrote what it carries: a presented subintent arrives whole and
+/// that wrote what it carries: an offered intent arrives whole and
 /// already signed, and the records it needs are readable off it. Records
 /// ride the envelope rather than any intent, so attaching them forges
 /// nothing that a signature covers.

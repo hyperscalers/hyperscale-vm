@@ -2,7 +2,7 @@
 //! manifest.
 //!
 //! One checker serves both signed forms. A bare graph is the degenerate
-//! envelope — a single intent with no sockets and no subintents — and a
+//! envelope — one intent with no sockets and nothing offered into it — and a
 //! composed tree is several intents joined through the sockets they
 //! declare, each carrying a value edge or a proof. So [`admit_intents`]
 //! takes a slice of [`IntentView`] and everything below it is
@@ -303,7 +303,7 @@ impl Admitted {
 ///
 /// A bare graph is the degenerate envelope: one intent acting as
 /// `composer` and attested by the key that account derives, no
-/// parameters, no subintents, its own hash as the identity. Envelope
+/// parameters, nothing offered into it, its own hash as the identity. Envelope
 /// trees go through [`crate::envelope::admit_tree`], which supplies the
 /// identity from the signed envelope and the attesting set from its
 /// signatures.
