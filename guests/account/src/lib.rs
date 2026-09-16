@@ -25,8 +25,8 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint(principals)]
 pub mod account {
     use hyperscale_vm_sdk::state::{
-        Bucket, Cell, Ids, Keyed, NfBucket, Quantity, RuleBytes, Vault, clock_ms, destroy,
-        destroy_nf,
+        Bucket, Cell, Ids, Keyed, NfBucket, PrincipalRule, Quantity, RuleBytes, Vault, clock_ms,
+        destroy, destroy_nf,
     };
     use hyperscale_vm_sdk::{Address, ResourceAddr, nobody};
 
@@ -48,8 +48,10 @@ pub mod account {
     struct Pending {
         /// When it may be enacted without a confirmation.
         effective_at_ms: u64,
-        /// What each cell becomes.
-        primary: RuleBytes,
+        /// What each cell becomes. The primary at the narrowed kind the
+        /// governing cell takes, the other two at the wide one their own
+        /// gates read.
+        primary: PrincipalRule,
         recovery: RuleBytes,
         confirmation: RuleBytes,
         /// How long the proposals after this one wait.
@@ -267,12 +269,12 @@ pub mod account {
         #[requires(self)]
         pub fn securify(
             &mut self,
-            primary: RuleBytes,
+            primary: PrincipalRule,
             recovery: RuleBytes,
             confirmation: RuleBytes,
             delay_ms: u64,
         ) {
-            self.auth().create(primary);
+            self.auth().create(primary.into_bytes());
             self.recovery.set(Some(recovery));
             self.confirmation.set(Some(confirmation));
             self.delay_ms.set(delay_ms);
@@ -289,7 +291,7 @@ pub mod account {
         #[requires(governs(recovery))]
         pub fn propose(
             &mut self,
-            primary: RuleBytes,
+            primary: PrincipalRule,
             recovery: RuleBytes,
             confirmation: RuleBytes,
             delay_ms: u64,
@@ -342,7 +344,7 @@ pub mod account {
 
         /// File `pending` as the governing rules and clear the wait.
         fn enact(&mut self, pending: Pending) {
-            self.auth().set(Some(pending.primary));
+            self.auth().set(Some(pending.primary.into_bytes()));
             self.recovery.set(Some(pending.recovery));
             self.confirmation.set(Some(pending.confirmation));
             self.delay_ms.set(pending.delay_ms);

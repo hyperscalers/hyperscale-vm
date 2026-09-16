@@ -91,7 +91,7 @@ promote() — infallible
       5  requires 1 of (the rule stored at self.recovery, 2 of (self.recovery is absent, claim self))
   exports  handles for clauses 0–4
 
-propose(rule, rule, rule, u64) — infallible
+propose(principal-rule, rule, rule, u64) — infallible
   declares
       0  read self.recovery
       1  requires 1 of (the rule stored at self.recovery, 2 of (self.recovery is absent, claim self))
@@ -105,7 +105,7 @@ refuse(resource-address) — infallible
       1  write self.refused[arg0]
   exports  handle for clause 1
 
-securify(rule, rule, rule, u64) — infallible
+securify(principal-rule, rule, rule, u64) — infallible
   declares
       0  requires claim self
       1  requires self.auth is absent

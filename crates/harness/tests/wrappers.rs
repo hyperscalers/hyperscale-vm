@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
     Claim, EvidenceRef, Hash32, Hasher, InstanceMeta, ManifestGraph, PackageHash, PackageMetadata,
-    Records, ResourceKind, RuleBytes, StoredRule, TestHasher, Value, admit, always,
+    PrincipalRule, Records, ResourceKind, RuleBytes, StoredRule, TestHasher, Value, admit, always,
     issued_resource,
 };
 use hyperscale_vm_fixtures::{HAND_AUTHORED, amm, book, lottery, nf, payouts, registry};
@@ -151,9 +151,11 @@ fn the_account_wrappers_match_their_signatures() {
             &StoredRule::claim(Claim::of_subject(BOB)),
             86_400_000,
         )?;
-        let rule = RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(BOB)))
-            .expect("a rule within the vocabulary caps");
-        account::propose(b, ALICE, rule.clone(), rule.clone(), rule, 86_400_000)?;
+        let stored = StoredRule::claim(Claim::of_subject(BOB));
+        let rule = RuleBytes::try_from(&stored).expect("a rule within the vocabulary caps");
+        let governing =
+            PrincipalRule::try_from(&stored).expect("a rule over principal claims encodes");
+        account::propose(b, ALICE, governing, rule.clone(), rule, 86_400_000)?;
         account::cancel(b, ALICE)?;
         account::confirm(b, ALICE)
     });
@@ -167,22 +169,70 @@ fn the_account_wrappers_match_their_signatures() {
 fn a_degenerate_rule_is_refused_where_it_is_written() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
-    let refused = account::securify_uniform(
-        &mut b,
-        ALICE,
-        &StoredRule::CountOf {
-            count: 2,
-            rules: vec![StoredRule::claim(Claim::of_subject(ALICE))],
-        },
-        86_400_000,
-    );
+    let degenerate = StoredRule::CountOf {
+        count: 2,
+        rules: vec![StoredRule::claim(Claim::of_subject(ALICE))],
+    };
+    // The governing cell's own kind, which `securify` takes first.
     assert!(matches!(
-        refused,
+        account::securify_uniform(&mut b, ALICE, &degenerate, 86_400_000),
+        Err(TypedError::ParamKind {
+            expected: "principal-rule",
+            ..
+        })
+    ));
+    // And the wide kind the recovery surface takes, which decodes the
+    // same vocabulary and refuses the same bytes.
+    let stored = StoredRule::claim(Claim::of_subject(ALICE));
+    let governing = PrincipalRule::try_from(&stored).expect("a rule over principal claims encodes");
+    let broken = RuleBytes::try_from(&degenerate).expect("a degenerate rule still encodes");
+    assert!(matches!(
+        account::propose(&mut b, ALICE, governing, broken.clone(), broken, 86_400_000),
         Err(TypedError::ParamKind {
             expected: "rule",
             ..
         })
     ));
+}
+
+/// The governing cell takes a rule over principal claims and nothing
+/// else, refused where it is written.
+///
+/// That cell is judged against the keys attesting an intent. A leaf
+/// naming a resource is one no attesting set can meet and a holding is
+/// one the judge cannot read at all, so either would store a rule that
+/// leaves the account unopenable — and the recovery surface, judged
+/// against presented claims instead, keeps both.
+#[test]
+fn the_governing_cell_takes_a_rule_over_principals_alone() {
+    let chain = world();
+    let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
+    let badge = StoredRule::claim(Claim::of_subject(BASE));
+    assert!(
+        matches!(
+            account::securify_uniform(&mut b, ALICE, &badge, 86_400_000),
+            Err(TypedError::ParamKind {
+                expected: "principal-rule",
+                ..
+            })
+        ),
+        "a badge cannot govern the cell keys are judged against"
+    );
+
+    // The same rule is a recovery surface the account keeps: a holder of
+    // the badge may propose, and whoever presents it is what answers.
+    let stored = StoredRule::claim(Claim::of_subject(ALICE));
+    let governing = PrincipalRule::try_from(&stored).expect("a rule over principal claims encodes");
+    let recovery = RuleBytes::try_from(&badge).expect("a rule within the vocabulary caps");
+    account::propose(
+        &mut b,
+        ALICE,
+        governing,
+        recovery.clone(),
+        recovery,
+        86_400_000,
+    )
+    .expect("a badge may hold the recovery role");
 }
 
 /// The threshold over nothing is not degenerate — it is how the

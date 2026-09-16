@@ -79,6 +79,23 @@ pub enum ParamType {
     /// A non-fungible value edge, carrying the instances it moves rather
     /// than an amount.
     NfBucket,
+    /// [`Rule`](Self::Rule), narrowed to a rule every leaf of which is a
+    /// claim on a principal address.
+    ///
+    /// What an `auth` cell can hold. That cell is judged against the
+    /// keys attesting an intent and against nothing else, so a leaf
+    /// naming anything but a principal is a leaf no attesting set can
+    /// ever meet — and a holding is one the judge cannot read at all.
+    /// Either would leave an account nobody can open, which is a door
+    /// the vocabulary can close at the parameter rather than leave for
+    /// its owner to walk into.
+    ///
+    /// Last rather than beside the kind it narrows: the tag is this
+    /// list's order, a package hash folds the tags its signatures carry,
+    /// and a component's address folds that hash — so an insertion
+    /// anywhere earlier moves every instance in every world onto a
+    /// different shard. Additions go on the end.
+    PrincipalRule,
 }
 
 impl ParamType {
@@ -118,6 +135,7 @@ impl ParamType {
             Self::Package => "package-address",
             Self::Resource => "resource-address",
             Self::Rule => "rule",
+            Self::PrincipalRule => "principal-rule",
             Self::Ids => "ids",
             Self::Bucket => "bucket",
             Self::NfBucket => "nf-bucket",
@@ -157,6 +175,14 @@ impl ParamType {
             (Self::Package, Value::Address(address)) => PackageAddr::try_from(*address).is_ok(),
             (Self::Resource, Value::Address(address)) => ResourceAddr::try_from(*address).is_ok(),
             (Self::Rule, Value::Bytes(bytes)) => StoredRule::from_slice(bytes).is_ok(),
+            (Self::PrincipalRule, Value::Bytes(bytes)) => StoredRule::from_slice(bytes)
+                .ok()
+                .and_then(|rule| rule.claims_only())
+                .is_some_and(|claims| {
+                    claims.leaves().all(|claim| {
+                        claim.instance.is_none() && PrincipalAddr::try_from(claim.subject).is_ok()
+                    })
+                }),
             (Self::Ids, Value::List(elements)) => {
                 elements.len() <= MAX_IDS_PER_EDGE
                     && elements.iter().enumerate().all(|(position, element)| {

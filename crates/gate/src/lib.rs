@@ -447,6 +447,7 @@ fn derived_width(expr: &Expr, params: &[ParamType]) -> Option<CoreType> {
             | ParamType::Package
             | ParamType::Resource
             | ParamType::Rule
+            | ParamType::PrincipalRule
             | ParamType::Ids => scalar(false),
             ParamType::Bucket | ParamType::NfBucket => None,
         },

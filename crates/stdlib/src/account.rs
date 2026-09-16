@@ -14,7 +14,7 @@
 //! [`PrincipalAddr`]: hyperscale_vm_types::PrincipalAddr
 
 use hyperscale_hbor::to_vec;
-use hyperscale_vm_effects::{PackageMetadata, RuleBytes, StoredRule};
+use hyperscale_vm_effects::{PackageMetadata, PrincipalRule, RuleBytes, StoredRule};
 use hyperscale_vm_manifest_builder::{BuildError, TypedBuilder, TypedError};
 use hyperscale_vm_types::PrincipalAddr;
 
@@ -82,14 +82,8 @@ pub fn securify_uniform(
     recovery_delay_ms: u64,
 ) -> Result<(), TypedError> {
     let sealed = RuleBytes::try_from(rule).map_err(|_| BuildError::RuleArgTooDeep)?;
-    securify(
-        b,
-        who,
-        sealed.clone(),
-        sealed.clone(),
-        sealed,
-        recovery_delay_ms,
-    )
+    let governing = PrincipalRule::try_from(rule).map_err(|_| BuildError::RuleArgTooDeep)?;
+    securify(b, who, governing, sealed.clone(), sealed, recovery_delay_ms)
 }
 
 #[cfg(test)]

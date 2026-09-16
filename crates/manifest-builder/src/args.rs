@@ -8,7 +8,7 @@
 //! caller's, and growing it is a change to this crate rather than an impl
 //! away.
 
-use hyperscale_vm_effects::{GraphArg, RuleBytes, StoredRule, Value};
+use hyperscale_vm_effects::{GraphArg, PrincipalRule, RuleBytes, StoredRule, Value};
 use hyperscale_vm_types::{
     Address, CallTarget, ComponentAddr, PackageAddr, PrincipalAddr, ResourceAddr,
 };
@@ -137,6 +137,16 @@ impl Arg for StoredRule {
 /// whoever built them encoded the rule.
 impl sealed::Sealed for RuleBytes {}
 impl Arg for RuleBytes {
+    fn bind(self, _builder: &mut GraphBuilder) -> GraphArg {
+        GraphArg::Literal(Value::Bytes(self.0))
+    }
+}
+
+/// The same bytes at the narrowed kind; whether every leaf is a
+/// principal claim is the parameter's question, asked where the call is
+/// typed and again at admission.
+impl sealed::Sealed for PrincipalRule {}
+impl Arg for PrincipalRule {
     fn bind(self, _builder: &mut GraphBuilder) -> GraphArg {
         GraphArg::Literal(Value::Bytes(self.0))
     }

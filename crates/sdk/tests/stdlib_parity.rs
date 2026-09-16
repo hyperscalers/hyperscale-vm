@@ -129,7 +129,7 @@ fn account() -> Blueprint {
         .method(
             "securify",
             &[
-                ParamType::Rule,
+                ParamType::PrincipalRule,
                 ParamType::Rule,
                 ParamType::Rule,
                 ParamType::U64,
@@ -147,7 +147,7 @@ fn account() -> Blueprint {
         .method(
             "propose",
             &[
-                ParamType::Rule,
+                ParamType::PrincipalRule,
                 ParamType::Rule,
                 ParamType::Rule,
                 ParamType::U64,

@@ -3,8 +3,8 @@
 //! gates badges open.
 
 use hyperscale_vm_effects::{
-    Claim, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta, ManifestGraph, Records,
-    RuleBytes, StoredRule, TestHasher, Value, holdings_collection, never,
+    Claim, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta, ManifestGraph, PrincipalRule,
+    Records, RuleBytes, StoredRule, TestHasher, Value, holdings_collection, never,
 };
 use hyperscale_vm_fixtures::nf;
 use hyperscale_vm_harness::driver::{amount_of, vault};
@@ -317,7 +317,7 @@ fn seed_pending(
 ) {
     let pending = account::Pending {
         effective_at_ms: at_ms,
-        primary: rule.clone(),
+        primary: PrincipalRule(rule.0.clone()),
         recovery: rule.clone(),
         confirmation: rule.clone(),
         delay_ms,
@@ -978,7 +978,7 @@ fn propose_at_delay(delay_ms: u64) -> ManifestGraph {
         account::propose(
             b,
             ALICE,
-            stored_rule(BOB),
+            governing_rule(BOB),
             stored_rule(BOB),
             stored_rule(BOB),
             delay_ms,
@@ -1087,7 +1087,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
         account::propose(
             b,
             ALICE,
-            stored_rule(MAKER),
+            governing_rule(MAKER),
             stored_rule(MAKER),
             stored_rule(MAKER),
             DAY_MS,
@@ -1129,7 +1129,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
         account::propose(
             b,
             ALICE,
-            stored_rule(BOB),
+            governing_rule(BOB),
             stored_rule(BOB),
             stored_rule(BOB),
             DAY_MS,

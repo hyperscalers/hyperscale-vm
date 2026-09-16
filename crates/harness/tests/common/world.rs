@@ -7,10 +7,10 @@ use std::sync::{Arc, LazyLock};
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG};
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, Claim, EnvelopeTree, Hash32, Hasher, InstanceMeta, LegShape,
-    ManifestGraph, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver, PresentedGrants, Records,
-    RuleBytes, ShardId, ShardResolver, SlotId, Star, StoredRule, TestHasher, Value,
-    admit_presenting, admit_tree, child_key, collection_id, holdings_collection, legs_of,
-    package_slot, per_shard, star_at,
+    ManifestGraph, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver, PresentedGrants,
+    PrincipalRule, Records, RuleBytes, ShardId, ShardResolver, SlotId, Star, StoredRule,
+    TestHasher, Value, admit_presenting, admit_tree, child_key, collection_id, holdings_collection,
+    legs_of, package_slot, per_shard, star_at,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, security, shares};
 use hyperscale_vm_harness::driver::{Lanes, declared_vault, run_lanes, test_hash, vault};
@@ -178,6 +178,12 @@ pub fn own_cell(owner: impl Into<Address>, offset: u16) -> SubstateKey {
 /// One identity, as the rule a cell stores.
 pub fn stored_rule(identity: PrincipalAddr) -> RuleBytes {
     RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(identity)))
+        .expect("a rule within the vocabulary caps")
+}
+
+/// The same rule at the narrowed kind the governing cell takes.
+pub fn governing_rule(identity: PrincipalAddr) -> PrincipalRule {
+    PrincipalRule::try_from(&StoredRule::claim(Claim::of_subject(identity)))
         .expect("a rule within the vocabulary caps")
 }
 
@@ -1078,7 +1084,7 @@ pub fn propose_by(signer: PrincipalAddr) -> ManifestGraph {
         account::propose(
             b,
             ALICE,
-            stored_rule(BOB),
+            governing_rule(BOB),
             stored_rule(BOB),
             stored_rule(BOB),
             DAY_MS,

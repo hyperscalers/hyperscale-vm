@@ -74,6 +74,44 @@ impl RuleBytes {
     }
 }
 
+/// A rule every leaf of which is a claim on a principal address.
+///
+/// The one shape an `auth` cell can usefully hold, and a parameter
+/// declaring it is where that is settled: the cell is judged against the
+/// keys attesting an intent, so a leaf naming a component or a resource
+/// is one no attesting set can meet and a holding is one the judge
+/// cannot read — either leaves an account nobody opens. Admission
+/// decodes the bytes and refuses them, on the terms every other
+/// parameter kind is held to, before the composition is signed.
+///
+/// Carried as the same bytes [`RuleBytes`] is, so a body that stores
+/// what it was handed converts nothing here either.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hbor, HborShape)]
+#[hbor(transparent)]
+pub struct PrincipalRule(pub Vec<u8>);
+
+impl PrincipalRule {
+    /// The bytes a cell holds, which is what a body does with one.
+    #[must_use]
+    pub fn into_bytes(self) -> RuleBytes {
+        RuleBytes(self.0)
+    }
+
+    /// The canonical bytes, for a caller that only reads them.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl TryFrom<&StoredRule> for PrincipalRule {
+    type Error = EncodeError;
+
+    fn try_from(rule: &StoredRule) -> Result<Self, EncodeError> {
+        rule.to_bytes().map(Self)
+    }
+}
+
 /// Whether the rule stored in `owner`'s `auth` cell admits `keys`.
 ///
 /// The one judgment made against keys rather than against the claims a

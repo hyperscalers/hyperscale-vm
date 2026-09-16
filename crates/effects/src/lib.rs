@@ -52,7 +52,7 @@ pub use artifact::{
     ArtifactError, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata, declaration_hash,
     decode_metadata, encode_metadata, extract_metadata, metadata_section,
 };
-pub use auth::{RuleBytes, auth_cell_admits};
+pub use auth::{PrincipalRule, RuleBytes, auth_cell_admits};
 pub use claim::Claim;
 pub use dsl::{
     Clause, Condition, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs, Expr,

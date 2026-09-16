@@ -58,13 +58,15 @@ use hyperscale_hbor::{
 /// `create` on the record handle states at most a display width, and the
 /// kind comes from the mark's own declaration.
 pub use hyperscale_vm_effects::ResourceRecord;
+use hyperscale_vm_effects::{LeafForm, RECORD_WIRE_DEPTH};
 /// The stored-authority vocabulary, named where a body's words live.
 ///
 /// A rule parameter is [`RuleBytes`] — the same type a cell holds, so a
-/// body that stores what it was handed converts nothing. The bytes stay
-/// opaque, decoded only where the rule is judged.
-pub use hyperscale_vm_effects::RuleBytes;
-use hyperscale_vm_effects::{LeafForm, RECORD_WIRE_DEPTH};
+/// body that stores what it was handed converts nothing — or
+/// [`PrincipalRule`], which is those bytes narrowed to a rule over
+/// principal claims for the one cell judged against keys. The bytes stay
+/// opaque either way, decoded only where the rule is judged.
+pub use hyperscale_vm_effects::{PrincipalRule, RuleBytes};
 use hyperscale_vm_types::{
     Address, CallTarget, ComponentAddr, Drawn as WireDrawn, PackageAddr, PrincipalAddr,
     ResourceAddr,
@@ -322,6 +324,22 @@ impl LeafShape for u128 {
 /// of a rule cell produces and a bare `Cell<RuleBytes>` would hold bytes
 /// no gate could read.
 impl Cellular for RuleBytes {
+    fn from_cell(cell: &[u8]) -> Self {
+        Self(cell.to_vec())
+    }
+
+    fn to_cell(&self) -> Vec<u8> {
+        self.0.clone()
+    }
+}
+
+/// The same bytes, at the narrowed parameter kind.
+///
+/// A parameter only: what a cell holds is [`RuleBytes`], and a body
+/// reaching one calls [`PrincipalRule::into_bytes`] — which converts
+/// nothing, and says at the call site that the narrowing was the
+/// parameter's rather than the cell's.
+impl Cellular for PrincipalRule {
     fn from_cell(cell: &[u8]) -> Self {
         Self(cell.to_vec())
     }
@@ -1728,6 +1746,15 @@ impl LeafShape for Seal {
 
 /// A record's leaf is the record's own encoding.
 impl LeafShape for RuleBytes {
+    fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(Self::shape(types))
+    }
+}
+
+/// The same bytes, so the same leaf. Stated because [`Cellular`] asks
+/// for it and a parameter crosses through that; a cell holding a rule is
+/// declared [`RuleBytes`], which is what the gate grammar reads.
+impl LeafShape for PrincipalRule {
     fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
         LeafForm::Value(Self::shape(types))
     }

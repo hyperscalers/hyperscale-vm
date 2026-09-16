@@ -516,12 +516,14 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
         "u64" => quote!(U64),
         "Vec" | "Bytes" => quote!(Bytes),
         "Rule" | "RuleBytes" => quote!(Rule),
+        "PrincipalRule" => quote!(PrincipalRule),
         _ => {
             return Err(syn::Error::new(
                 ty.span(),
                 "a contract parameter must be one of `Bucket`, `NfBucket`, `Ids`, \
                  `Quantity`, `OrderKey`, `Fixed`, `SignedFixed`, `u128`, `u64`, `Address`, \
-                 bytes, or `[u8; N]` — these are the kinds a manifest can bind",
+                 `RuleBytes`, `PrincipalRule`, bytes, or `[u8; N]` — these are the kinds a \
+                 manifest can bind",
             ));
         }
     };
