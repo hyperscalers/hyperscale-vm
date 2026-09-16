@@ -422,6 +422,18 @@ pub enum AdmissionError {
         /// The intent, in tree order.
         intent: u32,
     },
+    /// A node presenting an account its intent does not act as. The
+    /// claim is the account's own shard's to attest, for the intents
+    /// that name it; a node naming any other has nothing behind it.
+    #[error("intent {intent}: node {node} presents {account:?}, which the intent does not act as")]
+    ForeignAccount {
+        /// The intent the node belongs to.
+        intent: u32,
+        /// The presenting node, in that intent.
+        node: u32,
+        /// The account it named.
+        account: PrincipalAddr,
+    },
     /// A proof drawn from a node that is not an earlier node of the same
     /// intent — the proof's producer must have run, and aborted the
     /// transaction if its own gate refused, before anything consumes it.
@@ -850,7 +862,8 @@ impl AdmissionError {
             },
             // Stated in the intent's own numbering, because the other
             // index in the sentence has no flattened form.
-            Self::ForwardProof { intent, node, .. }
+            Self::ForeignAccount { intent, node, .. }
+            | Self::ForwardProof { intent, node, .. }
             | Self::ProvesNothing { intent, node, .. }
             | Self::ForwardEdge { intent, node, .. }
             | Self::UnknownSocket { intent, node, .. }

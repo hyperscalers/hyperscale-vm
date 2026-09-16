@@ -274,7 +274,7 @@ fn a_scope_holding_two_proofs_carries_both_to_the_gate() {
         gated.contains(&EvidenceRef::Node(0)) && gated.contains(&EvidenceRef::Node(1)),
         "both proofs ride the gate: {gated:?}"
     );
-    assert!(gated.contains(&EvidenceRef::Attestation), "{gated:?}");
+    assert!(gated.contains(&EvidenceRef::Account(ALICE)), "{gated:?}");
 }
 
 /// A guarded call composed without a proof presents the intent's own
@@ -292,7 +292,7 @@ fn a_guarded_call_without_a_proof_presents_the_intents_signature() {
     assert_eq!(graph.nodes.len(), 2, "the withdrawal and the deposit");
     assert_eq!(
         graph.nodes[0].evidence,
-        BTreeSet::from([EvidenceRef::Attestation])
+        BTreeSet::from([EvidenceRef::Account(ALICE)])
     );
 }
 
@@ -312,7 +312,7 @@ fn a_badge_gate_without_a_proof_is_answered_from_the_signers_account() {
     });
     assert_eq!(
         graph.nodes[1].evidence,
-        BTreeSet::from([EvidenceRef::Attestation, EvidenceRef::Node(0)])
+        BTreeSet::from([EvidenceRef::Account(ALICE), EvidenceRef::Node(0)])
     );
 }
 

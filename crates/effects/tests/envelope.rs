@@ -62,13 +62,10 @@ fn world() -> Records {
     chain
 }
 
-fn withdraw(
-    target: impl Into<CallTarget>,
-    resource: impl Into<Address>,
-    amount: u128,
-) -> GraphNode {
+fn withdraw(account: PrincipalAddr, resource: impl Into<Address>, amount: u128) -> GraphNode {
     GraphNode::signed(
-        target,
+        account,
+        account,
         "withdraw",
         vec![
             GraphArg::Literal(Value::Address(resource.into())),
@@ -295,6 +292,7 @@ fn an_intent_acts_as_no_account_twice() {
 fn a_tree_refusal_is_explained_at_the_interleaved_node() {
     let broken_withdraw = GraphNode::signed(
         BOB,
+        BOB,
         "withdraw",
         // One argument to a method declaring two: an arity refusal at
         // whatever flattened index this node is emitted at — which is 0,
@@ -463,8 +461,8 @@ fn two_intents_acting_as_one_account_each_nullify() {
 }
 
 /// An intent acting as two accounts writes two nullifiers, signs in
-/// twice, and presents both accounts' claims from its one signature; an
-/// intent acting as none is refused.
+/// twice, and each of its withdrawals presents the account it draws
+/// from and no other; an intent acting as none is refused.
 #[test]
 fn an_intent_acting_as_two_accounts_nullifies_and_signs_in_for_each() {
     let mut root = intent(
@@ -506,14 +504,11 @@ fn an_intent_acting_as_two_accounts_nullifies_and_signs_in_for_each() {
             "each account's sign-in is its own condition",
         );
     }
-    // Each withdrawal presented the signature, which resolves to both
-    // accounts' claims.
-    for node in &admitted.manifest().nodes {
-        if node.method == "withdraw" {
-            assert!(node.evidence.contains(&Claim::of_subject(ALICE)));
-            assert!(node.evidence.contains(&Claim::of_subject(BOB)));
-        }
-    }
+    // Each withdrawal presents the account it draws from: the claim is
+    // the named account's, not every account's.
+    let nodes = &admitted.manifest().nodes;
+    assert_eq!(nodes[0].evidence, vec![Claim::of_subject(ALICE)]);
+    assert_eq!(nodes[2].evidence, vec![Claim::of_subject(BOB)]);
 
     let mut nobody = tree;
     nobody.root.accounts.clear();
@@ -1091,9 +1086,10 @@ fn what_fills_a_socket_must_match_the_declared_resource() {
 
 /// The member's producer, yielding named instances instead of an
 /// amount.
-fn withdraw_nf(target: impl Into<CallTarget>, resource: impl Into<Address>, id: u64) -> GraphNode {
+fn withdraw_nf(account: PrincipalAddr, resource: impl Into<Address>, id: u64) -> GraphNode {
     GraphNode::signed(
-        target,
+        account,
+        account,
         "withdraw-nf",
         vec![
             GraphArg::Literal(Value::Address(resource.into())),
@@ -1406,6 +1402,7 @@ fn a_socket_cannot_fill_a_value_parameter() {
     let mut tree = composed_tree(100);
     tree.root.members[0].signed.intent.graph.nodes[1] = GraphNode::signed(
         BOB,
+        BOB,
         "withdraw",
         vec![GraphArg::Socket(0), GraphArg::Literal(Value::U128(1))],
     );
@@ -1417,6 +1414,7 @@ fn a_socket_cannot_fill_a_value_parameter() {
     // And a give the same way.
     let mut given = composed_tree(100);
     given.root.graph.nodes[1] = GraphNode::signed(
+        ALICE,
         ALICE,
         "withdraw",
         vec![

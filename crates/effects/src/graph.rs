@@ -14,7 +14,7 @@
 use std::collections::BTreeSet;
 
 use hyperscale_hbor::{Hbor, to_vec};
-use hyperscale_vm_types::{CallTarget, MAX_MANIFEST_NODES, ResourceAddr};
+use hyperscale_vm_types::{CallTarget, MAX_MANIFEST_NODES, PrincipalAddr, ResourceAddr};
 
 use crate::hash::Hasher;
 use crate::manifest::ManifestHash;
@@ -99,15 +99,18 @@ pub const MAX_EVIDENCE_PER_NODE: usize = 8;
 /// Evidence is presented, never ambient: a node names what it hands its
 /// callee, so a call into one package cannot carry authority the author
 /// meant for another. Two of the three sources are scoped to the node's
-/// own intent — a signature proof to the intent whose signature produced
-/// it, a node proof to the intent whose node proved it. A socket is the
-/// one that is not, which is why the declaration shapes it and the
-/// composition answers for what fills it.
+/// own intent — an account to the intent that acts as it, a node proof
+/// to the intent whose node proved it. A socket is the one that is not,
+/// which is why the declaration shapes it and the composition answers
+/// for what fills it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 pub enum EvidenceRef {
-    /// The proof the enclosing intent's own attestation produces: the
-    /// claim of each account that intent acts as.
-    Attestation,
+    /// The claim of an account the enclosing intent acts as. Nobody
+    /// holds it and no node proves it: the account's own shard attests
+    /// that the keys behind the intent are ones its stored rule admits,
+    /// as a condition judged before any body runs. Refused where the
+    /// intent does not act as the account.
+    Account(PrincipalAddr),
     /// The proof an earlier node of the same intent proved, carrying the
     /// identity of that node's target.
     ///
@@ -169,7 +172,7 @@ impl GraphNode {
             .iter()
             .filter_map(|reference| match reference {
                 EvidenceRef::Socket(socket) => Some(*socket),
-                EvidenceRef::Attestation | EvidenceRef::Node(_) => None,
+                EvidenceRef::Account(_) | EvidenceRef::Node(_) => None,
             });
         args.chain(presented)
     }
@@ -203,16 +206,17 @@ impl GraphNode {
         }
     }
 
-    /// A call presenting the enclosing intent's signature proof — what
-    /// an authorizing method takes.
+    /// A call presenting `account`, one the enclosing intent acts as —
+    /// what an authorizing method takes.
     #[must_use]
     pub fn signed(
+        account: PrincipalAddr,
         target: impl Into<CallTarget>,
         method: impl Into<String>,
         args: Vec<GraphArg>,
     ) -> Self {
         Self {
-            evidence: BTreeSet::from([EvidenceRef::Attestation]),
+            evidence: BTreeSet::from([EvidenceRef::Account(account)]),
             ..Self::new(target, method, args)
         }
     }

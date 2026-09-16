@@ -308,17 +308,19 @@ impl GraphBuilder {
         self.call_presenting(target, method, args, BTreeSet::new())
     }
 
-    /// The same call, presenting the enclosing intent's signature proof —
-    /// what an authorizing method takes.
+    /// The same call, presenting `account` — one the enclosing intent
+    /// acts as — which is what an authorizing method takes.
     ///
     /// The typed builder reads which methods need this off their
-    /// signatures; here the author says so, because a bare graph builder
-    /// has no metadata to consult.
+    /// signatures and knows which accounts it acts as; here the author
+    /// says both, because a bare graph builder has no metadata to
+    /// consult and no account of its own.
     ///
     /// Its refusal surface is [`call`](Self::call)'s.
     #[must_use = "every output edge must be consumed for the graph to build"]
     pub fn call_signed<const N: usize>(
         &mut self,
+        account: PrincipalAddr,
         target: impl Into<CallTarget>,
         method: impl Into<String>,
         args: impl Args,
@@ -327,7 +329,7 @@ impl GraphBuilder {
             target,
             method,
             args,
-            BTreeSet::from([EvidenceRef::Attestation]),
+            BTreeSet::from([EvidenceRef::Account(account)]),
         )
     }
 
@@ -597,7 +599,7 @@ mod tests {
     #[test]
     fn a_transfer_builds_the_hand_written_graph() {
         let mut b = GraphBuilder::new();
-        let [funds] = b.call_signed(ALICE, "withdraw", (RES, 100u128));
+        let [funds] = b.call_signed(ALICE, ALICE, "withdraw", (RES, 100u128));
         let [] = b.call(BOB, "deposit", (funds.resource_is(RES).min(1),));
         assert_eq!(
             b.build(),
@@ -610,7 +612,7 @@ mod tests {
                             GraphArg::Literal(Value::Address(RES.address())),
                             GraphArg::Literal(Value::U128(100)),
                         ],
-                        evidence: [EvidenceRef::Attestation].into(),
+                        evidence: [EvidenceRef::Account(ALICE)].into(),
                     },
                     GraphNode {
                         target: BOB.into(),
@@ -635,7 +637,7 @@ mod tests {
     #[test]
     fn a_dropped_output_is_a_dangling_edge() {
         let mut b = GraphBuilder::new();
-        let [_funds] = b.call_signed(ALICE, "withdraw", (RES, 100u128));
+        let [_funds] = b.call_signed(ALICE, ALICE, "withdraw", (RES, 100u128));
         assert_eq!(
             b.build(),
             Err(BuildError::DanglingOutput {
@@ -662,7 +664,7 @@ mod tests {
     #[test]
     fn an_export_consumes_without_a_node() {
         let mut b = GraphBuilder::new();
-        let [funds] = b.call_signed(ALICE, "withdraw", (RES, 100u128));
+        let [funds] = b.call_signed(ALICE, ALICE, "withdraw", (RES, 100u128));
         let yielded = b.export(funds);
         assert_eq!(
             yielded,
@@ -686,7 +688,7 @@ mod tests {
     #[test]
     fn a_constrained_export_is_refused() {
         let mut b = GraphBuilder::new();
-        let [funds] = b.call_signed(ALICE, "withdraw", (RES, 100u128));
+        let [funds] = b.call_signed(ALICE, ALICE, "withdraw", (RES, 100u128));
         let _ = b.export(funds.min(1));
         assert_eq!(b.build(), Err(BuildError::ConstrainedExport));
     }
@@ -694,7 +696,7 @@ mod tests {
     #[test]
     fn a_foreign_bucket_is_refused() {
         let mut minting = GraphBuilder::new();
-        let [funds] = minting.call_signed(ALICE, "withdraw", (RES, 100u128));
+        let [funds] = minting.call_signed(ALICE, ALICE, "withdraw", (RES, 100u128));
         let mut other = GraphBuilder::new();
         #[allow(
             clippy::tuple_array_conversions,
@@ -744,7 +746,7 @@ mod tests {
     #[test]
     fn a_retyped_edge_carries_the_refusal_to_its_binding() {
         let mut b = GraphBuilder::new();
-        let [funds] = b.call_signed(ALICE, "withdraw", (RES, 100u128));
+        let [funds] = b.call_signed(ALICE, ALICE, "withdraw", (RES, 100u128));
         // The handle survives the mistaken assertion — the fluent chain
         // continues — and the mistake surfaces where the graph would.
         let mut funds = funds;

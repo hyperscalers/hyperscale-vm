@@ -23,7 +23,6 @@
 //! refused transaction and can never admit one the protocol would refuse.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::iter;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -303,7 +302,7 @@ impl Proof {
         proves[0] = Some(Claim::of_subject(account));
         Self {
             builder,
-            reference: EvidenceRef::Attestation,
+            reference: EvidenceRef::Account(account),
             proves,
         }
     }
@@ -1098,16 +1097,19 @@ impl<'a> TypedBuilder<'a> {
                     method: method.to_owned(),
                 });
             }
-            // A gated call presents the intent's signature and, beside
-            // it, either what the builder resolved for the gate and what
-            // the movements earned, or the evidence the caller named.
-            // The signature rides every one of them because it costs the
-            // graph nothing and names the account this intent acts as —
-            // which is the claim a stored rule the composer cannot read
-            // is most likely to want, and the one no node could prove
-            // anyway — so evidence named at the call joins it rather
-            // than standing in for it.
-            (true, []) => iter::once(EvidenceRef::Attestation)
+            // A gated call presents every account the intent acts as
+            // and, beside them, either what the builder resolved for
+            // the gate and what the movements earned, or the evidence
+            // the caller named. The accounts ride every one of them
+            // because they cost the graph nothing and are the claims a
+            // stored rule the composer cannot read is most likely to
+            // want, and the ones no node could prove anyway — so
+            // evidence named at the call joins them rather than
+            // standing in for them.
+            (true, []) => self
+                .accounts()
+                .iter()
+                .map(|account| EvidenceRef::Account(*account))
                 .chain(
                     gated
                         .iter()
@@ -1115,7 +1117,10 @@ impl<'a> TypedBuilder<'a> {
                         .map(|proof| proof.reference()),
                 )
                 .collect(),
-            (true, presented) => iter::once(EvidenceRef::Attestation)
+            (true, presented) => self
+                .accounts()
+                .iter()
+                .map(|account| EvidenceRef::Account(*account))
                 .chain(presented.iter().map(|proof| proof.reference()))
                 .collect(),
         };

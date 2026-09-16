@@ -197,7 +197,9 @@ fn an_edge_nothing_typed_stays_untyped() {
     // The untyped path mints an edge with no declared type behind it.
     // `take` types its outputs by that edge, so neither output can be
     // typed either — and the layer leaves them alone rather than guessing.
-    let [funds] = b.untyped().call_signed(ALICE, "withdraw", (RES, 100u128));
+    let [funds] = b
+        .untyped()
+        .call_signed(ALICE, ALICE, "withdraw", (RES, 100u128));
     let [taken, rest] = b
         .call(splitter(), "in-lots", (funds, 30u128))
         .unwrap()
@@ -220,7 +222,9 @@ fn an_asserted_type_carries_through_the_untyped_path() {
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     // An author who types the edge by hand tells the layer as much as a
     // signature would, and the type propagates from the assertion.
-    let [funds] = b.untyped().call_signed(ALICE, "withdraw", (RES, 100u128));
+    let [funds] = b
+        .untyped()
+        .call_signed(ALICE, ALICE, "withdraw", (RES, 100u128));
     let [taken, rest] = b
         .call(splitter(), "in-lots", (funds.resource_is(RES), 30u128))
         .unwrap()
@@ -454,7 +458,7 @@ fn explicit_evidence_stands_in_for_the_scope() {
     let gated = graph.nodes.last().expect("the gated call is a node");
     assert_eq!(
         gated.evidence,
-        [EvidenceRef::Node(1), EvidenceRef::Attestation]
+        [EvidenceRef::Node(1), EvidenceRef::Account(OPERATOR)]
             .into_iter()
             .collect(),
         "the per-call spelling and the signature are the whole of the evidence"

@@ -158,7 +158,7 @@ fn the_untyped_builder_routes_by_class_alone() {
     // the strength of the sink's class.
     let mut b = GraphBuilder::new();
     b.rest_to(ALICE);
-    let [_funds] = b.call_signed(ALICE, "withdraw", (RES, 100u128));
+    let [_funds] = b.call_signed(ALICE, ALICE, "withdraw", (RES, 100u128));
     let graph = b.build().unwrap();
     assert_eq!(graph.nodes.len(), 2);
     assert_eq!(graph.nodes[1].target, CallTarget::Principal(ALICE));

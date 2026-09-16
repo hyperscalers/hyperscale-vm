@@ -163,7 +163,7 @@ proptest! {
                         GraphArg::Literal(Value::Address(resource)),
                         GraphArg::Literal(Value::U128(amount)),
                     ],
-                    evidence: [EvidenceRef::Attestation].into(),
+                    evidence: [EvidenceRef::Account(sender)].into(),
                 },
                 GraphNode {
                     target: recipient.into(),
@@ -222,7 +222,7 @@ proptest! {
                         GraphArg::Literal(Value::Address(resource)),
                         GraphArg::Literal(Value::U128(1)),
                     ],
-                    evidence: [EvidenceRef::Attestation].into(),
+                    evidence: [EvidenceRef::Account(sender)].into(),
                 },
                 GraphNode {
                     target: recipient.into(),
@@ -302,7 +302,7 @@ mod golden {
                     target: ComponentAddr::new([0x10; 31]).into(),
                     method: "withdraw".into(),
                     args: vec![GraphArg::Literal(Value::U128(7))],
-                    evidence: [EvidenceRef::Attestation].into(),
+                    evidence: [EvidenceRef::Account(super::ALICE)].into(),
                 },
                 GraphNode {
                     target: ComponentAddr::new([0x20; 31]).into(),
@@ -321,15 +321,15 @@ mod golden {
         let identity = graph.hash(&TestHasher);
         assert_eq!(
             hex(&identity.0.0),
-            "8eba60a896b42597d47fb26c605b2c9e370666fa5f38142253853863ebf42282"
+            "2775172345c7e69b205fb5430f152071094766c81ead58cbda408919ea4696e6"
         );
         assert_eq!(
             format!("{:016x}", fresh_id(&TestHasher, identity, 1, 0)),
-            "a2742114a93a2dde"
+            "6295d154b15e1482"
         );
         assert_eq!(
             hex(&fresh_local(&TestHasher, identity, 1, 0).0),
-            "de2d3aa9142174a29cc84780134ed7ef"
+            "82145eb154d19562b30498c6329923aa"
         );
     }
 }

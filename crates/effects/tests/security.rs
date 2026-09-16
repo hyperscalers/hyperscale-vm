@@ -147,7 +147,7 @@ fn transfer_to(resource: ResourceAddr, recipient: PrincipalAddr) -> IntentTree {
                             GraphArg::Literal(Value::Address(resource.address())),
                             GraphArg::Literal(Value::U128(40)),
                         ],
-                        evidence: BTreeSet::from([EvidenceRef::Attestation]),
+                        evidence: BTreeSet::from([EvidenceRef::Account(ALICE)]),
                     },
                     GraphNode {
                         target: recipient.into(),

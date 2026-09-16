@@ -854,16 +854,7 @@ impl<'a> IntentBuilder<'a> {
                 let source = match proof.reference() {
                     EvidenceRef::Node(producer) => ClaimSource::Node(producer),
                     EvidenceRef::Socket(passed) => ClaimSource::Socket(passed),
-                    // The signature's proof is the claim of one of this
-                    // intent's accounts, granted as that account.
-                    EvidenceRef::Attestation => self
-                        .graph
-                        .accounts()
-                        .iter()
-                        .copied()
-                        .find(|account| proof.covers(&Claim::of_subject(*account)))
-                        .map(ClaimSource::Account)
-                        .ok_or(IntentError::ForeignBinding)?,
+                    EvidenceRef::Account(account) => ClaimSource::Account(account),
                 };
                 Ok(Wiring::Ready(Binding::Authority(source)))
             }
@@ -1086,7 +1077,7 @@ fn check_sockets(intent: &Intent, at: u32) -> Result<(), IntentError> {
             .iter()
             .filter_map(|reference| match reference {
                 EvidenceRef::Socket(socket) => Some((*socket, false)),
-                EvidenceRef::Attestation | EvidenceRef::Node(_) => None,
+                EvidenceRef::Account(_) | EvidenceRef::Node(_) => None,
             })
     });
     let passed = intent

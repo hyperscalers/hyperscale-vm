@@ -152,7 +152,7 @@ fn a_rule_reading_call_answers_both_gates_with_one_signature() {
     assert_eq!(graph.nodes.len(), 1, "the call alone");
     assert_eq!(
         graph.nodes[0].evidence,
-        [EvidenceRef::Attestation].into(),
+        [EvidenceRef::Account(ALICE)].into(),
         "one signature answers the stored rule and the badge alike"
     );
 }

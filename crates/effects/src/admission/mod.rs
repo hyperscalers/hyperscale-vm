@@ -1143,21 +1143,23 @@ impl Admission<'_> {
         let mut evidence = Vec::with_capacity(node.evidence.len());
         for reference in &node.evidence {
             match reference {
-                EvidenceRef::Attestation => {
-                    // The accounts' virtual badges. Nobody holds them
-                    // and no node proves them: the intent acts as these
-                    // accounts, and each account's own shard attests
-                    // that the keys behind the intent are ones its
-                    // stored rule admits, as a condition judged before
-                    // any body runs. So what a signature presents here
-                    // is every account itself, and a rule naming one
-                    // follows the rotations of whatever key opens it.
-                    evidence.extend(
-                        intent
-                            .accounts
-                            .iter()
-                            .map(|account| Claim::of_subject(account.address())),
-                    );
+                EvidenceRef::Account(account) => {
+                    // An account's virtual badge. Nobody holds it and no
+                    // node proves it: the intent acts as the account,
+                    // and the account's own shard attests that the keys
+                    // behind the intent are ones its stored rule admits,
+                    // as a condition judged before any body runs. So
+                    // what is presented is the account itself, and a
+                    // rule naming it follows the rotations of whatever
+                    // key opens it.
+                    if !intent.accounts.contains(account) {
+                        return Err(AdmissionError::ForeignAccount {
+                            intent: Self::intent_of(intent_index),
+                            node: local,
+                            account: *account,
+                        });
+                    }
+                    evidence.push(Claim::of_subject(account.address()));
                 }
                 EvidenceRef::Node(producer) => {
                     // An earlier node of the same intent, whose proven

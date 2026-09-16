@@ -107,7 +107,7 @@ proptest! {
         let chain = world();
         let mut b = GraphBuilder::new();
         for t in &transfers {
-            let [funds] = b.call_signed(ACCOUNTS[0], "withdraw", (RES, t.amount));
+            let [funds] = b.call_signed(ACCOUNTS[0], ACCOUNTS[0], "withdraw", (RES, t.amount));
             let mut funds = funds.resource_is(RES);
             if let Some((min, max)) = t.bounds {
                 funds = funds.min(min).max(max);
@@ -174,7 +174,7 @@ proptest! {
 fn the_walkthrough_transfer_admits() {
     let chain = world();
     let mut b = GraphBuilder::new();
-    let [funds] = b.call_signed(ACCOUNTS[0], "withdraw", (RES, 100u128));
+    let [funds] = b.call_signed(ACCOUNTS[0], ACCOUNTS[0], "withdraw", (RES, 100u128));
     let [] = b.call(ACCOUNTS[1], "deposit", (funds.resource_is(RES),));
     let graph = b.build().unwrap();
     let admitted = admit_leaf(&graph, ACCOUNTS[0], &chain, &TestHasher).unwrap();

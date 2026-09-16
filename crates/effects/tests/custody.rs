@@ -525,7 +525,7 @@ fn transferred(from: PrincipalAddr, to: PrincipalAddr, resource: ResourceAddr) -
                             GraphArg::Literal(Value::Address(resource.address())),
                             GraphArg::Literal(Value::U128(40)),
                         ],
-                        evidence: [EvidenceRef::Attestation].into(),
+                        evidence: [EvidenceRef::Account(from)].into(),
                     },
                     GraphNode {
                         target: to.into(),

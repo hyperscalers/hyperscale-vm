@@ -426,7 +426,7 @@ fn a_signature_opens_only_the_account_its_intent_acts_as() {
                 GraphArg::Literal(Value::Address(RES_X.address())),
                 GraphArg::Literal(Value::U128(100)),
             ],
-            evidence: [EvidenceRef::Attestation].into(),
+            evidence: [EvidenceRef::Account(ALICE)].into(),
         }],
     };
     let (results, _) = run_both_signed(
@@ -1392,7 +1392,7 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
                 GraphArg::Literal(Value::Address(badge.address())),
                 GraphArg::Literal(Value::U64(id)),
             ],
-            evidence: [EvidenceRef::Attestation].into(),
+            evidence: [EvidenceRef::Account(BOB)].into(),
         }],
     };
     let (results, store) = run_both_signed(

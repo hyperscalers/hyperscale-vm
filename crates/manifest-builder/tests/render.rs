@@ -158,7 +158,7 @@ fn a_split_binds_both_halves_and_numbers_the_repeat() {
 fn a_graph_renders_without_any_metadata_at_all() {
     let chain = world();
     let mut b = GraphBuilder::new();
-    let [funds] = b.call_signed(ALICE, "withdraw", (TOKEN, 100u128));
+    let [funds] = b.call_signed(ALICE, ALICE, "withdraw", (TOKEN, 100u128));
     let [] = b.call(BOB, "deposit", (funds.resource_is(TOKEN),));
     let graph = b.build().unwrap();
 
