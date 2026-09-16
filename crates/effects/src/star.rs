@@ -391,14 +391,14 @@ pub fn star_at(
 /// **The core must have a bearer.** A core with no node in it names no
 /// shard for a refusal, a departure or an absence to be taken against,
 /// so there is nothing for a reclaim to be admitted on. Where nothing
-/// else is in the core, every write-free node is — all of them, so which
-/// one bears the verdict is never a pick. Where there is no write-free
-/// node either — and a spend has none — the fee payer's home bears it
-/// instead: a party the routing already names, on a shard its legs
-/// already reach. It seeds only a home some node is already on, since a
-/// core shard running nothing would compose a member and find no plan
-/// for it; a payer off every leg leaves the core empty and the shape
-/// runs whole.
+/// else is in the core, the fee payer's home bears it: a party the
+/// routing already names, on a shard its legs already reach, and the
+/// cheaper bearer by a crossing wherever a write-free node was the other
+/// candidate — a core that runs nothing but a proof takes the payer's
+/// reserve in as a crossing and issues it out again as another. It
+/// seeds only a home some node is already on, since a core shard
+/// running nothing would compose a member and find no plan for it; a
+/// payer off every leg leaves the core empty and the shape runs whole.
 ///
 /// **A leg on a core shard is the core's.** Every leg whose home is a
 /// core shard runs in the core member and is replicated where the core
@@ -441,14 +441,6 @@ fn settle(
             settled[index] = LegRole::Core;
         }
     }
-    if !settled.contains(&LegRole::Core) {
-        for role in &mut settled {
-            if *role == LegRole::Attesting {
-                *role = LegRole::Core;
-            }
-        }
-    }
-
     // The core set is read once: folding a leg whose home is already in
     // it adds no shard, so one pass settles every role.
     let mut core: BTreeSet<ShardId> = settled
@@ -1439,17 +1431,18 @@ mod tests {
         assert_eq!(roles[2], LegRole::Outbound);
     }
 
-    /// The core has to have somebody in it, and where the write-free node
-    /// is the only candidate it is the one — so the shape below is core
-    /// after the anchoring even though the role before it was not.
+    /// The core has to have somebody in it, and where no node writes the
+    /// payer's home bears it — so the write-free node below, on that
+    /// home, is core after the anchoring even though the role before it
+    /// was not.
     #[test]
-    fn a_write_free_source_bears_the_verdict_where_nothing_else_does() {
+    fn the_payers_home_bears_the_verdict_where_no_node_writes() {
         let (chain, manifest) = signed_world();
         let (star, _) = star_and_shape(&manifest, &chain);
         assert_eq!(
             star.roles[0],
             LegRole::Core,
-            "nothing else is in the core, so the sign-in is",
+            "nothing writes, so the payer's home is the core and the node on it folds in",
         );
         assert_eq!(star.core.len(), 1);
         assert!(star.decomposes, "the sink is off the core");
@@ -1637,15 +1630,14 @@ mod tests {
         assert!(star.decomposes);
     }
 
-    /// The seed runs after the attesting fallback, not before it. A
-    /// write-free node is a bearer the shape supplies itself, and the
-    /// payer's home is the last resort rather than a competing answer,
-    /// so it is asked only once nothing in the shape answers. Ordered
-    /// the other way the seed would fire on shapes that already have a
-    /// bearer, putting the core on whichever shard happens to pay and
-    /// leaving the write-free node a leg off it.
+    /// A write-free node is not a bearer the shape supplies itself: a
+    /// core that runs nothing but a proof takes the payer's reserve in
+    /// as one crossing and issues it out as another, where the payer's
+    /// home folds the reserve in and crosses once. So the seed is the
+    /// one fallback, and the write-free node stays the leg its role
+    /// says.
     #[test]
-    fn the_fallback_bears_the_core_before_the_payers_home_can() {
+    fn the_payers_home_bears_the_core_and_a_write_free_node_stays_a_leg() {
         let here = Address::new([0x11; 31], AddressClass::Component);
         let alice = Address::new([0x22; 31], AddressClass::Component);
         let bob = Address::new([0x33; 31], AddressClass::Component);
@@ -1658,15 +1650,12 @@ mod tests {
         let star = paid_for(&legs, alice, &[alice]);
         assert_eq!(
             star.roles,
-            vec![LegRole::Core, LegRole::Inbound, LegRole::Outbound],
-            "the write-free node bears it and the payer's withdraw stays a leg",
+            vec![LegRole::Attesting, LegRole::Core, LegRole::Outbound],
+            "the payer's home bears it and the withdraw folds in",
         );
-        assert_eq!(
-            star.core,
-            BTreeSet::from([resolver().shard_of(here)]),
-            "seeded ahead of the fallback this would be the payer's shard",
-        );
-        assert!(!star.core.contains(&resolver().shard_of(alice)));
+        assert_eq!(star.core, BTreeSet::from([resolver().shard_of(alice)]));
+        assert_eq!(star.edges.len(), 1, "one crossing, to the delivery");
+        assert!(star.decomposes);
     }
 
     /// Two accounts swapping with no venue between them: every node
