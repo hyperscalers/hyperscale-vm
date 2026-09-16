@@ -95,7 +95,7 @@ fn an_intent_acting_as_two_accounts_commits_on_both_sign_ins() {
     assert_eq!(amount_of(&end, vault(BOB, RES_Y)), 10);
     assert_eq!(amount_of(&end, vault(ALICE, RES_Y)), 10);
 
-    let [record] = admitted.intents.as_slice() else {
+    let [record] = admitted.intents() else {
         panic!("one intent");
     };
     let written = cells(&end);
@@ -146,7 +146,7 @@ fn one_refusing_rule_refuses_the_whole_intent() {
     assert_eq!(amount_of(&end, vault(BOB, RES_Y)), 20);
     assert_eq!(amount_of(&end, vault(ALICE, RES_Y)), 0);
     let written = cells(&end);
-    for nullifier in &admitted.intents[0].nullifiers {
+    for nullifier in &admitted.intents()[0].nullifiers {
         assert!(
             !written.contains_key(&nullifier.key),
             "{:?} spent nothing",

@@ -3,9 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_vm_effects::{
-    AdmissionError, Hash32, ManifestGraph, SlotId, TestHasher, admit, fresh_id,
-};
+use hyperscale_vm_effects::{AdmissionError, Hash32, ManifestGraph, SlotId, TestHasher, fresh_id};
 use hyperscale_vm_fixtures::book;
 use hyperscale_vm_harness::driver::{amount_of, declared_vault, vault};
 use hyperscale_vm_sdk::client::VaultField;
@@ -39,7 +37,7 @@ fn place_graph() -> ManifestGraph {
 fn each_side_of_the_book_takes_only_its_own_resource() {
     let chain = world();
     let refused = |graph: &ManifestGraph, signer| {
-        admit(graph, signer, &chain, &TestHasher).expect_err("the book declares which side this is")
+        admit_here(graph, signer, &chain).expect_err("the book declares which side this is")
     };
 
     // A maker escrowing quote where the book escrows base.
@@ -73,8 +71,8 @@ fn each_side_of_the_book_takes_only_its_own_resource() {
     );
 
     // The controls: each side in the resource it is declared in.
-    admit(&place_graph(), MAKER, &chain, &TestHasher).expect("an ask in base admits");
-    admit(&fill_graph(), TAKER, &chain, &TestHasher).expect("a fill in quote admits");
+    admit_here(&place_graph(), MAKER, &chain).expect("an ask in base admits");
+    admit_here(&fill_graph(), TAKER, &chain).expect("a fill in quote admits");
 }
 
 #[test]
@@ -138,7 +136,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() {
     };
 
     // The placed ask landed at the declared fresh sequence.
-    let admitted = admit(&place, MAKER, &world, &TestHasher).unwrap();
+    let admitted = admit_here(&place, MAKER, &world).unwrap();
     let seq = fresh_id(&TestHasher, admitted.identity(), 1, 0);
     let placed_ask = EntryKey {
         owner: Address::from(book()),

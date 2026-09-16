@@ -13,9 +13,12 @@
 
 use std::collections::BTreeSet;
 
+mod common;
+
+use common::world::admit_here;
 use hyperscale_vm_effects::{
     Claim, EvidenceRef, Hash32, Hasher, InstanceMeta, ManifestGraph, PackageHash, PackageMetadata,
-    PrincipalRule, Records, ResourceKind, RuleBytes, StoredRule, TestHasher, Value, admit, always,
+    PrincipalRule, Records, ResourceKind, RuleBytes, StoredRule, TestHasher, Value, always,
     issued_resource,
 };
 use hyperscale_vm_fixtures::{HAND_AUTHORED, amm, book, lottery, nf, payouts, registry};
@@ -136,7 +139,7 @@ fn admits(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) -
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     write(&mut b).expect("every wrapper types against its own signature");
     let graph = b.build().expect("every output is consumed");
-    admit(&graph, ALICE, &chain, &TestHasher).expect("a wrapped graph admits");
+    admit_here(&graph, ALICE, &chain).expect("a wrapped graph admits");
     graph
 }
 

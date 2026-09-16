@@ -7,15 +7,18 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use common::{ALICE, BOB, RES_X, meta_granting, payouts, pkg, resolver, shard_of, vault, world};
+use common::{
+    ALICE, BOB, RES_X, admit_leaf, admit_leaf_presenting, meta_granting, payouts, pkg, resolver,
+    shard_of, vault, world,
+};
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, HALT, VAULT};
 use hyperscale_vm_effects::{
     AbiParam, AdmissionError, Claim, Clause, Condition, Constraint, EdgeRef, EvalError,
     EvidenceRef, Expr, GrantedBehaviour, GraphArg, GraphNode, Hash32, InstanceMeta, JudgedLeaf,
-    MAX_VALUE_DEPTH, ManifestGraph, MethodSignature, ModeExpr, PackageMetadata, ParamType,
-    PresentedGrants, Records, ResourceGrants, ResourceKind, ResourceMeta, Rule, RuleBytes,
-    RuleExpr, RuleLeaf, SlotRef, StoredRule, TargetExpr, TestHasher, Totality, Value, admit,
-    admit_presenting, child_key, explain_admission, fresh_id, holdings_entry, per_shard,
+    MAX_VALUE_DEPTH, ManifestGraph, MethodSignature, ModeExpr, PackageMetadata, ParamType, Records,
+    ResourceGrants, ResourceKind, ResourceMeta, Rule, RuleBytes, RuleExpr, RuleLeaf, SlotRef,
+    StoredRule, TargetExpr, TestHasher, Totality, Value, child_key, explain_admission, fresh_id,
+    holdings_entry, per_shard,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Moves, Presence,
@@ -148,7 +151,7 @@ fn valid_graph() -> ManifestGraph {
 #[test]
 fn a_well_formed_graph_lowers_and_routes() {
     let chain = setup();
-    let admitted = admit(&valid_graph(), ALICE, &chain, &TestHasher).expect("admits");
+    let admitted = admit_leaf(&valid_graph(), ALICE, &chain, &TestHasher).expect("admits");
 
     // The lowered edges carry their static resource types.
     let routing = per_shard(&admitted, &resolver());
@@ -180,8 +183,8 @@ fn constraint_changes_reach_lowering_and_the_fresh_id_root() {
     };
     constraints[0] = Constraint::MinAmount(29);
 
-    let strict = admit(&valid_graph(), ALICE, &chain, &TestHasher).expect("admits");
-    let loose = admit(&loosened, ALICE, &chain, &TestHasher).expect("admits");
+    let strict = admit_leaf(&valid_graph(), ALICE, &chain, &TestHasher).expect("admits");
+    let loose = admit_leaf(&loosened, ALICE, &chain, &TestHasher).expect("admits");
     // A bound is execution-relevant, so lowering carries it: the two
     // manifests differ where the constraint does. The identity differs
     // too — it is the signed graph's hash, so two distinct signed
@@ -203,7 +206,7 @@ fn evidence_is_presented_exactly_where_it_is_required() {
     let mut extra = valid_graph();
     extra.nodes[1].evidence = [EvidenceRef::IntentSignature].into();
     assert_eq!(
-        admit(&extra, ALICE, &chain, &TestHasher),
+        admit_leaf(&extra, ALICE, &chain, &TestHasher),
         Err(AdmissionError::UnexpectedEvidence { node: 1 })
     );
 
@@ -211,7 +214,7 @@ fn evidence_is_presented_exactly_where_it_is_required() {
     let mut missing = valid_graph();
     missing.nodes[0].evidence.clear();
     assert_eq!(
-        admit(&missing, ALICE, &chain, &TestHasher),
+        admit_leaf(&missing, ALICE, &chain, &TestHasher),
         Err(AdmissionError::MissingEvidence { node: 0 })
     );
 }
@@ -255,7 +258,7 @@ fn proof_graph() -> ManifestGraph {
 #[test]
 fn an_accounts_own_gate_is_answered_by_its_signature() {
     let chain = setup();
-    let admitted = admit(&proof_graph(), ALICE, &chain, &TestHasher).expect("admits");
+    let admitted = admit_leaf(&proof_graph(), ALICE, &chain, &TestHasher).expect("admits");
 
     let withdraw = &admitted.manifest().nodes[0];
     assert_eq!(withdraw.evidence, vec![Claim::of_subject(ALICE)]);
@@ -405,7 +408,8 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
         &Presenting::Fungible(Expr::Config(0)),
         vec![Value::Address(badge.address())],
     );
-    let admitted = admit(&custodian_graph(custodian), ALICE, &chain, &TestHasher).expect("admits");
+    let admitted =
+        admit_leaf(&custodian_graph(custodian), ALICE, &chain, &TestHasher).expect("admits");
     assert_eq!(
         admitted.calls()[0].requires,
         vec![Rule::Require(JudgedLeaf::Stored {
@@ -443,7 +447,8 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
     // be forgeable — which is why the justification check names none.
     let (chain, custodian) =
         custodian_world(&Presenting::Identity, vec![Value::Address(badge.address())]);
-    let admitted = admit(&custodian_graph(custodian), ALICE, &chain, &TestHasher).expect("admits");
+    let admitted =
+        admit_leaf(&custodian_graph(custodian), ALICE, &chain, &TestHasher).expect("admits");
     assert_eq!(
         admitted.manifest().nodes[1].evidence,
         vec![Claim::of_subject(custodian)]
@@ -456,7 +461,8 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
         &Presenting::Instance(Expr::Config(0), Expr::Literal(Value::U64(7))),
         vec![Value::Address(badge.address())],
     );
-    let admitted = admit(&custodian_graph(custodian), ALICE, &chain, &TestHasher).expect("admits");
+    let admitted =
+        admit_leaf(&custodian_graph(custodian), ALICE, &chain, &TestHasher).expect("admits");
     assert_eq!(
         admitted.manifest().nodes[1].evidence,
         vec![Claim::of_instance(badge, 7), Claim::of_subject(badge),],
@@ -472,7 +478,7 @@ fn a_custodial_method_mints_the_badge_its_gate_verifies() {
             AddressClass::Component,
         ))],
     );
-    assert!(admit(&custodian_graph(custodian), ALICE, &chain, &TestHasher).is_err());
+    assert!(admit_leaf(&custodian_graph(custodian), ALICE, &chain, &TestHasher).is_err());
 }
 
 /// A proof consumer never runs ahead of its producer, and never draws
@@ -485,7 +491,7 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
     let mut own = proof_graph();
     own.nodes[0].evidence = [EvidenceRef::Node(0)].into();
     assert_eq!(
-        admit(&own, ALICE, &chain, &TestHasher),
+        admit_leaf(&own, ALICE, &chain, &TestHasher),
         Err(AdmissionError::ForwardProof {
             intent: 0,
             node: 0,
@@ -497,7 +503,7 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
     let mut later = proof_graph();
     later.nodes[0].evidence = [EvidenceRef::Node(1)].into();
     assert_eq!(
-        admit(&later, ALICE, &chain, &TestHasher),
+        admit_leaf(&later, ALICE, &chain, &TestHasher),
         Err(AdmissionError::ForwardProof {
             intent: 0,
             node: 0,
@@ -520,7 +526,7 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
         evidence: [EvidenceRef::Node(1)].into(),
     });
     assert_eq!(
-        admit(&unminting, ALICE, &chain, &TestHasher),
+        admit_leaf(&unminting, ALICE, &chain, &TestHasher),
         Err(AdmissionError::ProvesNothing {
             intent: 0,
             node: 2,
@@ -532,7 +538,7 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
     let mut unsigned = proof_graph();
     unsigned.nodes[0].evidence.clear();
     assert_eq!(
-        admit(&unsigned, ALICE, &chain, &TestHasher),
+        admit_leaf(&unsigned, ALICE, &chain, &TestHasher),
         Err(AdmissionError::MissingEvidence { node: 0 })
     );
 }
@@ -552,7 +558,7 @@ fn a_refusal_reads_back_into_the_graph_that_earned_it() {
     let chain = world();
     let mut wrong_kind = valid_graph();
     wrong_kind.nodes[0].args[1] = GraphArg::Literal(Value::U64(100));
-    let refusal = admit(&wrong_kind, ALICE, &chain, &TestHasher)
+    let refusal = admit_leaf(&wrong_kind, ALICE, &chain, &TestHasher)
         .expect_err("a u64 does not fill a u128 parameter");
 
     let told = explain_admission(&wrong_kind, &chain, &refusal);
@@ -625,7 +631,7 @@ fn an_unsatisfied_gate_reads_back_leaf_by_leaf() {
 
     let mut graph = custodian_graph(custodian);
     graph.nodes[1].target = gatekeeper.into();
-    let refusal = admit(&graph, ALICE, &chain, &TestHasher)
+    let refusal = admit_leaf(&graph, ALICE, &chain, &TestHasher)
         .expect_err("one badge does not meet a threshold of two");
     assert!(matches!(
         refusal,
@@ -647,7 +653,7 @@ fn an_unsatisfied_gate_reads_back_leaf_by_leaf() {
 #[allow(clippy::too_many_lines)] // one assertion block per mutation class
 fn every_malformed_mutation_rejects() {
     let chain = setup();
-    let admit_it = |graph: &ManifestGraph| admit(graph, ALICE, &chain, &TestHasher);
+    let admit_it = |graph: &ManifestGraph| admit_leaf(graph, ALICE, &chain, &TestHasher);
 
     // Dangling edge: drop the rest-consuming node.
     let mut dangling = valid_graph();
@@ -843,7 +849,7 @@ fn a_literal_nested_past_the_bound_rejects_ahead_of_the_hash() {
     let mut graph = valid_graph();
     graph.nodes[0].args[0] = GraphArg::Literal(nest(MAX_VALUE_DEPTH));
     assert_eq!(
-        admit(&graph, ALICE, &chain, &TestHasher),
+        admit_leaf(&graph, ALICE, &chain, &TestHasher),
         Err(AdmissionError::ValueTooDeep { node: 0, param: 0 })
     );
 
@@ -851,7 +857,7 @@ fn a_literal_nested_past_the_bound_rejects_ahead_of_the_hash() {
     // takes over, so the bound is exactly where it says it is.
     graph.nodes[0].args[0] = GraphArg::Literal(nest(MAX_VALUE_DEPTH - 1));
     assert!(matches!(
-        admit(&graph, ALICE, &chain, &TestHasher),
+        admit_leaf(&graph, ALICE, &chain, &TestHasher),
         Err(AdmissionError::ParamKind { .. })
     ));
 }
@@ -859,7 +865,7 @@ fn a_literal_nested_past_the_bound_rejects_ahead_of_the_hash() {
 #[test]
 fn repeated_amount_bounds_fold_to_their_conjunction() {
     let chain = setup();
-    let admit_it = |graph: &ManifestGraph| admit(graph, ALICE, &chain, &TestHasher);
+    let admit_it = |graph: &ManifestGraph| admit_leaf(graph, ALICE, &chain, &TestHasher);
 
     // Execution enforces every constraint in the list, so admission judges
     // the conjunction — greatest lower bound against least upper bound.
@@ -936,12 +942,12 @@ fn a_denomination_reads_a_parameter_bound_after_the_one_it_constrains() {
 
     // The edge carries what the later argument names.
     assert_eq!(
-        admit(&sorted(RES_X), ALICE, &chain, &TestHasher).map(|_| ()),
+        admit_leaf(&sorted(RES_X), ALICE, &chain, &TestHasher).map(|_| ()),
         Ok(())
     );
     // And does not.
     assert!(matches!(
-        admit(&sorted(common::RES_Y), ALICE, &chain, &TestHasher),
+        admit_leaf(&sorted(common::RES_Y), ALICE, &chain, &TestHasher),
         Err(AdmissionError::WrongDenomination {
             node: 1,
             param: 0,
@@ -982,7 +988,7 @@ fn a_component_address_where_a_resource_belongs_is_refused() {
         ],
     };
     let refused =
-        admit(&graph, ALICE, &chain, &TestHasher).expect_err("a component is not a resource");
+        admit_leaf(&graph, ALICE, &chain, &TestHasher).expect_err("a component is not a resource");
     assert!(matches!(
         &refused,
         AdmissionError::Eval {
@@ -1068,7 +1074,7 @@ fn a_refusal_names_the_listed_clause_that_declared_it() {
             evidence: BTreeSet::new(),
         }],
     };
-    let refusal = admit(&graph, ALICE, &chain, &TestHasher)
+    let refusal = admit_leaf(&graph, ALICE, &chain, &TestHasher)
         .expect_err("a foreign prefix with no reach refuses");
     assert!(matches!(
         refusal,
@@ -1138,7 +1144,8 @@ fn an_unbindable_abi_param_is_explained_as_a_binding() {
             evidence: BTreeSet::new(),
         }],
     };
-    let refusal = admit(&graph, ALICE, &chain, &TestHasher).expect_err("nothing binds guard 7");
+    let refusal =
+        admit_leaf(&graph, ALICE, &chain, &TestHasher).expect_err("nothing binds guard 7");
     assert!(matches!(
         refusal,
         AdmissionError::UnbindableAbiParam {
@@ -1176,7 +1183,7 @@ fn a_halted_non_fungible_class_fences_the_interval_movement() {
         rules,
     };
     let seat = record.address(&TestHasher);
-    let presented = PresentedGrants::from_presented(&TestHasher, std::slice::from_ref(&record));
+    let presented = std::slice::from_ref(&record);
     let chain = setup();
 
     let graph = ManifestGraph {
@@ -1204,8 +1211,8 @@ fn a_halted_non_fungible_class_fences_the_interval_movement() {
             },
         ],
     };
-    let admitted =
-        admit_presenting(&graph, ALICE, &[ALICE], &chain, &presented, &TestHasher).expect("admits");
+    let admitted = admit_leaf_presenting(&graph, ALICE, &[ALICE], &chain, presented, &TestHasher)
+        .expect("admits");
     let halted = EffectTarget::Point(child_key(
         &TestHasher,
         ALICE,
@@ -1249,7 +1256,7 @@ fn a_double_destruction_asks_the_burn_question_once() {
         rules,
     };
     let shreddable = record.address(&TestHasher);
-    let presented = PresentedGrants::from_presented(&TestHasher, std::slice::from_ref(&record));
+    let presented = std::slice::from_ref(&record);
 
     let mut package = PackageMetadata::default();
     package.methods.insert(
@@ -1299,8 +1306,8 @@ fn a_double_destruction_asks_the_burn_question_once() {
             },
         ],
     };
-    let admitted =
-        admit_presenting(&graph, ALICE, &[ALICE], &chain, &presented, &TestHasher).expect("admits");
+    let admitted = admit_leaf_presenting(&graph, ALICE, &[ALICE], &chain, presented, &TestHasher)
+        .expect("admits");
     let burns = admitted.injected()[2]
         .iter()
         .filter(|entry| entry.behaviour == GrantedBehaviour::Burn)
@@ -1343,7 +1350,7 @@ fn the_injection_dedup_scan_is_charged_work() {
             }
         })
         .collect();
-    let presented = PresentedGrants::from_presented(&TestHasher, &records);
+    let presented = records.as_slice();
 
     // One moving clause per resource, then conditions judged nowhere
     // near admission — presence leaves — so nothing refuses before the
@@ -1404,7 +1411,7 @@ fn the_injection_dedup_scan_is_charged_work() {
             evidence: BTreeSet::new(),
         }],
     };
-    let refused = admit_presenting(&graph, ALICE, &[ALICE], &chain, &presented, &TestHasher)
+    let refused = admit_leaf_presenting(&graph, ALICE, &[ALICE], &chain, presented, &TestHasher)
         .expect_err("the scan is charged, and this shape exhausts the envelope");
     assert!(matches!(
         refused,
@@ -1432,7 +1439,7 @@ proptest! {
             edge: EdgeRef { producer: 1, output: 0 },
             constraints,
         };
-        let verdict = admit(&graph, ALICE, &chain, &TestHasher);
+        let verdict = admit_leaf(&graph, ALICE, &chain, &TestHasher);
         let lower = mins.iter().copied().max().expect("non-empty");
         let upper = maxes.iter().copied().min().expect("non-empty");
         if lower > upper {
@@ -1463,8 +1470,8 @@ proptest! {
             edge: EdgeRef { producer, output },
             constraints: vec![],
         };
-        let first = admit(&graph, ALICE, &chain, &TestHasher);
-        let second = admit(&graph, ALICE, &chain, &TestHasher);
+        let first = admit_leaf(&graph, ALICE, &chain, &TestHasher);
+        let second = admit_leaf(&graph, ALICE, &chain, &TestHasher);
         assert_eq!(first, second);
     }
 
@@ -1477,7 +1484,7 @@ proptest! {
             edge: EdgeRef { producer: 1, output: 0 },
             constraints: vec![Constraint::MinAmount(min), Constraint::MaxAmount(max)],
         };
-        let verdict = admit(&graph, ALICE, &chain, &TestHasher);
+        let verdict = admit_leaf(&graph, ALICE, &chain, &TestHasher);
         if min > max {
             assert_eq!(
                 verdict,
@@ -1571,7 +1578,7 @@ fn a_signature_presents_the_account_to_any_rule_naming_it() {
             evidence: [EvidenceRef::IntentSignature].into(),
         }],
     };
-    let admitted = admit(&signed, ALICE, &chain, &TestHasher).expect("admits");
+    let admitted = admit_leaf(&signed, ALICE, &chain, &TestHasher).expect("admits");
     assert_eq!(
         admitted.calls()[0].evidence,
         vec![Claim::of_subject(ALICE)],
@@ -1598,7 +1605,7 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
             evidence: [EvidenceRef::IntentSignature].into(),
         }],
     };
-    let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
+    let admitted = admit_leaf(&graph, ALICE, &chain, &TestHasher).expect("admits");
 
     let key = child_key(&TestHasher, target, AUTH, &[]);
     // The condition's own presence requirement, then the instantiation
@@ -1699,7 +1706,7 @@ fn evidence_follows_the_conditions_this_call_evaluated() {
     // The guard fires: the condition is there, so a claim is required
     // and the intent's own signature answers for it.
     assert!(
-        admit(
+        admit_leaf(
             &call(true, [EvidenceRef::IntentSignature].into()),
             ALICE,
             &chain,
@@ -1708,16 +1715,16 @@ fn evidence_follows_the_conditions_this_call_evaluated() {
         .is_ok()
     );
     assert_eq!(
-        admit(&call(true, BTreeSet::new()), ALICE, &chain, &TestHasher),
+        admit_leaf(&call(true, BTreeSet::new()), ALICE, &chain, &TestHasher),
         Err(AdmissionError::MissingEvidence { node: 0 })
     );
 
     // The guard does not fire: the frame carries no condition, so the
     // same call needs nothing — and a proof presented anyway is refused
     // rather than carried past everything that could have read it.
-    assert!(admit(&call(false, BTreeSet::new()), ALICE, &chain, &TestHasher).is_ok());
+    assert!(admit_leaf(&call(false, BTreeSet::new()), ALICE, &chain, &TestHasher).is_ok());
     assert_eq!(
-        admit(
+        admit_leaf(
             &call(false, [EvidenceRef::IntentSignature].into()),
             ALICE,
             &chain,
@@ -1799,7 +1806,7 @@ fn a_reach_may_not_name_the_prefix_of_the_reaching_instance() {
     let record = seizable_meta();
     let seized = record.address(&TestHasher);
     let (chain, issuer) = bailiff_world();
-    let presented = PresentedGrants::from_presented(&TestHasher, std::slice::from_ref(&record));
+    let presented = std::slice::from_ref(&record);
     let reaching = |owner: Address| ManifestGraph {
         nodes: vec![
             GraphNode {
@@ -1829,12 +1836,12 @@ fn a_reach_may_not_name_the_prefix_of_the_reaching_instance() {
 
     // Somebody else's prefix, which is what the authority is for.
     assert!(
-        admit_presenting(
+        admit_leaf_presenting(
             &reaching(BOB.address()),
             ALICE,
             &[ALICE],
             &chain,
-            &presented,
+            presented,
             &TestHasher
         )
         .is_ok()
@@ -1842,12 +1849,12 @@ fn a_reach_may_not_name_the_prefix_of_the_reaching_instance() {
 
     // Its own, which the authority says nothing about.
     assert_eq!(
-        admit_presenting(
+        admit_leaf_presenting(
             &reaching(issuer.address()),
             ALICE,
             &[ALICE],
             &chain,
-            &presented,
+            presented,
             &TestHasher
         ),
         Err(AdmissionError::ReachesItself { node: 0, clause: 0 }),
@@ -1885,18 +1892,18 @@ fn a_reach_is_admitted_by_the_reached_resource_and_by_nothing_else() {
             },
         ],
     };
-    let presented = PresentedGrants::from_presented(&TestHasher, std::slice::from_ref(&record));
+    let presented = std::slice::from_ref(&record);
     let reaching = [EvidenceRef::IntentSignature].into();
 
     // The record's entry names Alice, and her claim is what the frame
     // demands — injected, never declared, so the package says nothing
     // about it and cannot say otherwise.
-    let admitted = admit_presenting(
+    let admitted = admit_leaf_presenting(
         &graph(reaching),
         ALICE,
         &[ALICE],
         &chain,
-        &presented,
+        presented,
         &TestHasher,
     )
     .expect("the reach admits the party the entry names");
@@ -1909,12 +1916,12 @@ fn a_reach_is_admitted_by_the_reached_resource_and_by_nothing_else() {
     // Withheld: there is nothing to resolve the entry against, and an
     // absent authority withholds.
     assert_eq!(
-        admit_presenting(
+        admit_leaf_presenting(
             &graph([EvidenceRef::IntentSignature].into()),
             ALICE,
             &[ALICE],
             &chain,
-            PresentedGrants::none(),
+            &[],
             &TestHasher
         ),
         Err(AdmissionError::Unadmitted {
@@ -1970,11 +1977,11 @@ fn bytes_at_the_wrong_width_are_refused_naming_the_width() {
         }],
     };
     assert_eq!(
-        admit(&filed(vec![7; 4]), ALICE, &chain, &TestHasher).map(|_| ()),
+        admit_leaf(&filed(vec![7; 4]), ALICE, &chain, &TestHasher).map(|_| ()),
         Ok(())
     );
     assert_eq!(
-        admit(&filed(vec![7; 3]), ALICE, &chain, &TestHasher).map(|_| ()),
+        admit_leaf(&filed(vec![7; 3]), ALICE, &chain, &TestHasher).map(|_| ()),
         Err(AdmissionError::ParamWidth {
             node: 0,
             param: 0,

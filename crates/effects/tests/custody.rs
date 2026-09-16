@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, meta_granting, pkg, world};
 use hyperscale_vm_effects::vocabulary::{HALT, VAULT};
 use hyperscale_vm_effects::{
-    AdmissionError, AdmittedTree, Claim, EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour,
+    AdmissionError, Admitted, Claim, EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour,
     GraphArg, GraphNode, Hash32, Holding, InstanceMeta, Intent, IntentHeader, JudgedLeaf,
     ManifestGraph, Records, ResourceGrants, ResourceKind, ResourceMeta, Rule, RuleBytes, SlotRef,
     StoredRule, TestHasher, Value, admit_tree, child_key,
@@ -212,7 +212,7 @@ fn round_trip(custodian: ComponentAddr) -> EnvelopeTree {
 /// The tree admitted against `chain`, every intent attested by the key
 /// its own account derives — what a fixture means when it says nothing
 /// else about who signed.
-fn admit_env(env: &EnvelopeTree, chain: &Records) -> Result<AdmittedTree, AdmissionError> {
+fn admit_env(env: &EnvelopeTree, chain: &Records) -> Result<Admitted, AdmissionError> {
     admit_tree(env, env.hash(&TestHasher), chain, &TestHasher)
 }
 
@@ -224,7 +224,7 @@ fn a_component_answers_for_its_own_vault() {
 
     let cell = credential(custodian);
     assert!(
-        admitted.admitted.declaration().required().any(|rule| *rule
+        admitted.declaration().required().any(|rule| *rule
             == Rule::Require(JudgedLeaf::Presence {
                 target: EffectTarget::Point(cell),
                 expect: Presence::Present,
@@ -232,7 +232,7 @@ fn a_component_answers_for_its_own_vault() {
         "the requirement is the custodian's own, not its caller's",
     );
     assert!(
-        admitted.admitted.declaration().set.contains(&Effect {
+        admitted.declaration().set.contains(&Effect {
             target: EffectTarget::Point(cell),
             mode: Mode::Read,
         }),
@@ -244,12 +244,12 @@ fn a_component_answers_for_its_own_vault() {
     // and BOB below, and bind neither.
     let other = admit_env(&env, &chain).expect("a different signer admits the same way");
     assert_eq!(
-        other.admitted.declaration().conditions,
-        admitted.admitted.declaration().conditions,
+        other.declaration().conditions,
+        admitted.declaration().conditions,
         "the caller is not who the rule is about",
     );
     assert!(
-        !admitted.admitted.declaration().set.contains(&Effect {
+        !admitted.declaration().set.contains(&Effect {
             target: EffectTarget::Point(credential(ALICE)),
             mode: Mode::Read,
         }),
@@ -282,7 +282,7 @@ fn a_halt_binds_the_component_holding_the_value() {
         &[Value::Address(freezable().address()).canonical_bytes()],
     ));
     assert!(
-        admitted.admitted.declaration().required().any(|rule| *rule
+        admitted.declaration().required().any(|rule| *rule
             == Rule::Require(JudgedLeaf::Presence {
                 target: halted,
                 expect: Presence::Absent,
@@ -290,7 +290,7 @@ fn a_halt_binds_the_component_holding_the_value() {
         "every movement of a freezable resource requires the mover's flag absent",
     );
     assert!(
-        admitted.admitted.declaration().set.contains(&Effect {
+        admitted.declaration().set.contains(&Effect {
             target: halted,
             mode: Mode::Read,
         }),
@@ -312,7 +312,7 @@ fn a_halt_covers_every_slot_the_holder_keeps_the_resource_in() {
     let mut env = paid_out(custodian, ALICE);
     env.resources = vec![freezable_meta()];
     let admitted = admit_env(&env, &chain).expect("the payout admits");
-    let declaration = admitted.admitted.declaration();
+    let declaration = admitted.declaration();
 
     // Two of the recipient's own cells take the value, at two different
     // slots — which is the shape that would defeat a per-slot flag.
@@ -371,7 +371,7 @@ fn a_resource_granting_no_freeze_reads_no_halt_leaf() {
         &[Value::Address(governed().address()).canonical_bytes()],
     ));
     assert!(
-        !admitted.admitted.declaration().set.contains(&Effect {
+        !admitted.declaration().set.contains(&Effect {
             target: would_be,
             mode: Mode::Read,
         }),
@@ -455,7 +455,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
             resources: vec![meta],
         };
         let admitted = admit_env(&env, &chain).expect("the receiving method admits");
-        let asked = admitted.admitted.declaration().required().cloned();
+        let asked = admitted.declaration().required().cloned();
         (target, asked.collect::<Vec<_>>())
     };
 
@@ -644,7 +644,7 @@ fn one_flag_is_read_once_however_many_directions_the_access_moves_in() {
     env.resources = vec![freezable_meta()];
     let admitted =
         admit_env(&env, &chain).expect("the custodian moves its own value on the resource's terms");
-    let ordered = &admitted.admitted.frames()[1].ordered;
+    let ordered = &admitted.frames()[1].ordered;
 
     let both_ways = ordered.iter().any(|access| {
         access.holds == Some(freezable())

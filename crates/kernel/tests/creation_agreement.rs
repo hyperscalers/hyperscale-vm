@@ -6,14 +6,35 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    Clause, Expr, GraphNode, Hash32, InstanceMeta, ManifestGraph, MethodSignature, ModeExpr,
-    PackageHash, PackageMetadata, PrefixShardResolver, Records, ShardResolver, SlotId, SlotRef,
-    TargetExpr, TestHasher, Totality, Value, admit, collection_id, fresh_id, fresh_local,
+    AdmissionError, Admitted, ChainRecords, Clause, EnvelopeTree, Expr, GraphNode, Hash32, Hasher,
+    InstanceMeta, Intent, IntentHeader, ManifestGraph, MethodSignature, ModeExpr, PackageHash,
+    PackageMetadata, PrefixShardResolver, Records, ShardResolver, SlotId, SlotRef, TargetExpr,
+    TestHasher, Totality, Value, admit_tree, collection_id, fresh_id, fresh_local,
 };
 use hyperscale_vm_kernel::MemoryStore;
 use hyperscale_vm_types::{
-    Effect, EffectSet, EffectTarget, Mode, Moves, PrincipalAddr, SubstateKey,
+    Effect, EffectSet, EffectTarget, Mode, Moves, NetworkId, PrincipalAddr, SubstateKey,
 };
+
+/// Any window; nothing here validates one against a clock.
+const HEADER: IntentHeader = IntentHeader {
+    network: NetworkId(242),
+    validity_start_ms: 0,
+    validity_end_ms: 3_600_000,
+    discriminator: 0,
+};
+
+/// Admit `graph` as a tree of one leaf acting as `account`, attested by
+/// that account's own key.
+fn admit_leaf(
+    graph: &ManifestGraph,
+    account: PrincipalAddr,
+    chain: &dyn ChainRecords,
+    hasher: &dyn Hasher,
+) -> Result<Admitted, AdmissionError> {
+    let tree = EnvelopeTree::of_one(Intent::leaf(HEADER, account, graph.clone()));
+    admit_tree(&tree, tree.hash(hasher), chain, hasher)
+}
 
 /// A package whose one method creates one object and inserts one
 /// collection entry at a fresh sequence.
@@ -98,7 +119,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
             },
         ],
     };
-    let admitted = admit(&graph, COMPOSER, &chain, &TestHasher).expect("admits");
+    let admitted = admit_leaf(&graph, COMPOSER, &chain, &TestHasher).expect("admits");
     let identity = admitted.identity();
     // The creator's shard's share of the declaration, grouped the way a
     // resolver places it: every access whose target's owner resolves

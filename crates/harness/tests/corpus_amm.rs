@@ -149,6 +149,7 @@ fn swap_profile_and_provision_shape_are_exact() {
     assert_eq!(
         routing[&shard_of(ALICE)].provision_targets(),
         [
+            EffectTarget::Point(leaf_nullifier(ALICE, &swap_graph(300))),
             EffectTarget::Point(auth(ALICE)),
             EffectTarget::Point(refused(ALICE, RES_Y)),
         ]

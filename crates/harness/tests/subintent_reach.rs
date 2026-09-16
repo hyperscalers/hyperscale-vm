@@ -29,7 +29,7 @@
 //! itself is `capability_reach.rs`.
 
 use hyperscale_vm_effects::{
-    AdmittedTree, CallArg, Constraint, EnvelopeTree, Hasher, IntentHeader, PackageHash,
+    Admitted, CallArg, Constraint, EnvelopeTree, Hasher, IntentHeader, PackageHash,
     PrefixShardResolver, Records, SignedIntent, TestHasher, admit_tree, per_shard,
 };
 use hyperscale_vm_embed::abi::{ABI, EVENTS, MEMORY, STATE};
@@ -117,15 +117,15 @@ fn traded() -> EnvelopeTree {
 
 /// Admit and route the tree the way a block would, into the one entry
 /// its runner walks.
-fn routed(world: &Records, tree: &EnvelopeTree) -> Result<(BatchTx, AdmittedTree)> {
+fn routed(world: &Records, tree: &EnvelopeTree) -> Result<(BatchTx, Admitted)> {
     let identity = tree.hash(&TestHasher);
     let admitted = admit_tree(tree, identity, world, &TestHasher).context("admission")?;
-    let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 0 });
+    let routing = per_shard(&admitted, &PrefixShardResolver { bits: 0 });
     ensure!(routing.len() == 1, "the null resolver routes to one shard");
-    let declaration = admitted.admitted.declaration().clone();
+    let declaration = admitted.declaration().clone();
     let entry = BatchTx::new(TxHash(identity.0), declaration, env())
-        .with_calls(admitted.admitted.calls().to_vec())
-        .with_nullifiers(admitted.intents.clone());
+        .with_calls(admitted.calls().to_vec())
+        .with_nullifiers(admitted.intents().to_vec());
     Ok((entry, admitted))
 }
 
@@ -274,7 +274,7 @@ fn the_table_spans_both_signers() -> Result<()> {
         "one declaration carries both signers' cells"
     );
     assert_eq!(
-        admitted.intents.len(),
+        admitted.intents().len(),
         2,
         "the composition's own intent and the one offered into it"
     );

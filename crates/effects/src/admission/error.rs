@@ -15,11 +15,11 @@ use crate::resource::{GrantedBehaviour, ResourceKind};
 use crate::rule::Rule;
 use crate::types::MAX_VALUE_DEPTH;
 
-/// Why admission rejected a graph or an envelope tree.
+/// Why admission rejected a tree.
 ///
 /// Deterministic: every node reaches the identical verdict. Node
 /// indices refer to the flattened manifest admission lowers to; for a
-/// bare graph the two numberings coincide.
+/// tree of one intent the two numberings coincide.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum AdmissionError {
     /// A movement a resource's entry grants to nobody: a debit of a

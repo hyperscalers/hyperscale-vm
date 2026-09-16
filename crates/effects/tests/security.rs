@@ -221,7 +221,7 @@ fn an_authored_rule_governs_a_holder_the_package_never_named() {
     env.resources = vec![record(issuer, b"share")];
     let admitted =
         admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher).expect("the transfer admits");
-    let declaration = admitted.admitted.declaration();
+    let declaration = admitted.declaration();
 
     let held = credential(ALICE, registered);
     assert!(
@@ -276,12 +276,7 @@ fn each_side_of_a_transfer_answers_for_its_own_register_entry() {
     env.resources = vec![record(issuer, b"share")];
     let admitted =
         admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher).expect("the transfer admits");
-    let conditions: Vec<_> = admitted
-        .admitted
-        .declaration()
-        .required()
-        .cloned()
-        .collect();
+    let conditions: Vec<_> = admitted.declaration().required().cloned().collect();
 
     for holder in [Address::from(ALICE), Address::from(BOB)] {
         assert!(
@@ -304,7 +299,6 @@ fn the_unrestricted_class_is_asked_nothing() {
         .expect("the transfer admits with no record presented at all");
     assert!(
         !admitted
-            .admitted
             .declaration()
             .required()
             .any(|rule| matches!(rule, Rule::Require(JudgedLeaf::Presence { .. }))),
@@ -398,7 +392,7 @@ fn a_member_presenting_a_granted_claim_is_the_cores_off_the_granters_shard() {
     let admitted = admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher)
         .expect("the registrar grants what Bob's socket asks");
 
-    let legs = legs_of(&admitted.admitted);
+    let legs = legs_of(&admitted);
     let star = star_at(
         &legs,
         REGISTRAR.address(),

@@ -7,12 +7,14 @@
 
 use std::collections::BTreeSet;
 
+mod common;
+
+use common::admit_leaf;
 use hyperscale_vm_effects::{
     Claim, Clause, Constraint, EnvelopeTree, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta,
     Intent, IntentHeader, ManifestGraph, MethodSignature, PackageHash, PackageMetadata,
     PrefixShardResolver, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes,
-    ShardResolver, SignedIntent, StoredRule, TestHasher, Totality, Value, admit, admit_tree,
-    footprint,
+    ShardResolver, SignedIntent, StoredRule, TestHasher, Totality, Value, admit_tree, footprint,
 };
 use hyperscale_vm_manifest_builder::{
     Authority, IntentBuilder, Interface, PreflightError, Report, TypedBuilder, preflight_tree,
@@ -114,20 +116,17 @@ fn a_report_is_what_the_chain_derives() {
     let identity = tree.hash(&TestHasher);
     let admitted = admit_tree(&tree, identity, &chain, &TestHasher).unwrap();
     assert_eq!(report.identity(), identity);
-    assert_eq!(report.manifest(), admitted.admitted.manifest());
-    assert_eq!(report.admitted, admitted.admitted);
-    // The identity is the tree's, header and all, which is what every
-    // fresh derivation and every signature binds to; the graph alone
-    // hashes to something the chain never admits.
-    assert_ne!(
-        report.identity(),
-        admit(&graph, ALICE, &chain, &TestHasher)
-            .unwrap()
-            .identity()
+    assert_eq!(report.manifest(), admitted.manifest());
+    assert_eq!(report.admitted, admitted);
+    // A graph admitted through the leaf is the same graph admitted as a
+    // tree of one intent, node for node and key for key.
+    assert_eq!(
+        admit_leaf(&graph, ALICE, &chain, &TestHasher).unwrap(),
+        admitted
     );
     assert_eq!(
         report.footprint(),
-        footprint(&admitted.admitted.declaration().set),
+        footprint(&admitted.declaration().set),
         "the reservation is taken once against the whole declaration"
     );
     let work = report.work(&[4_000, 3_000], &[SchemeId::ED25519], 500);
@@ -140,7 +139,7 @@ fn a_report_is_what_the_chain_derives() {
     assert_eq!(work.footprint, report.footprint());
     assert_eq!(
         work.read_bytes,
-        admitted.admitted.declaration().set.read_bytes() + 500,
+        admitted.declaration().set.read_bytes() + 500,
         "reads are the declaration's bytes plus the artifacts"
     );
     assert_eq!(

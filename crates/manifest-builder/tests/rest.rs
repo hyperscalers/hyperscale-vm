@@ -5,9 +5,11 @@
 //! nobody claimed. A builder with no policy still refuses, because routing
 //! value somewhere the author never named is worse than making them say.
 
+mod common;
+
+use common::admit_leaf;
 use hyperscale_vm_effects::{
     Constraint, GraphArg, Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, Value,
-    admit,
 };
 use hyperscale_vm_fixtures::payouts;
 use hyperscale_vm_manifest_builder::{GraphBuilder, TypedBuilder, TypedError};
@@ -102,7 +104,7 @@ fn a_policy_deposits_what_nothing_claimed() {
     assert_eq!(edge.producer, 1);
     assert_eq!(edge.output, 1);
     assert_eq!(constraints, &vec![Constraint::ResourceIs(RES)]);
-    admit(&graph, ALICE, &chain, &TestHasher).unwrap();
+    admit_leaf(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
 #[test]
@@ -122,7 +124,7 @@ fn explicit_consumption_wins() {
     // nothing — and the second half went where the author sent it.
     assert_eq!(graph.nodes.len(), 4);
     assert_eq!(graph.nodes[3].target, CallTarget::Principal(BOB));
-    admit(&graph, ALICE, &chain, &TestHasher).unwrap();
+    admit_leaf(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
 #[test]
@@ -145,7 +147,7 @@ fn every_rest_edge_is_routed_not_just_the_first() {
         assert_eq!(node.target, CallTarget::Principal(ALICE));
         assert_eq!(node.method, "deposit");
     }
-    admit(&graph, ALICE, &chain, &TestHasher).unwrap();
+    admit_leaf(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
 #[test]
@@ -166,5 +168,5 @@ fn the_untyped_builder_routes_by_class_alone() {
         panic!("a rest edge binds an edge");
     };
     assert!(constraints.is_empty());
-    admit(&graph, ALICE, &chain, &TestHasher).unwrap();
+    admit_leaf(&graph, ALICE, &chain, &TestHasher).unwrap();
 }

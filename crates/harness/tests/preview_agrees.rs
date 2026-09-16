@@ -107,7 +107,7 @@ fn a_refused_preview_prints_the_refusal() -> Result<()> {
     let [blessed, _reference] = LANES.engine_backends();
     let report = preview(
         &entry,
-        Some(&admitted.admitted),
+        Some(&admitted),
         source,
         blessed,
         test_hash,
@@ -128,7 +128,7 @@ fn a_refused_preview_prints_the_refusal() -> Result<()> {
     );
     assert_eq!(
         report.refusal,
-        Some(explain_refusal(&admitted.admitted, &condition)),
+        Some(explain_refusal(&admitted, &condition)),
         "and prints what the refusal prints anywhere else"
     );
     Ok(())

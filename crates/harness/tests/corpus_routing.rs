@@ -149,13 +149,13 @@ fn the_catalogue_routes_to_pinned_vectors() {
     );
 }
 
-const PIN_TRANSFER: &str = "edca73ecef3ef55c44d43e2676f90e9c78a096ba6f098d47e1adf7c927ad9e60";
+const PIN_TRANSFER: &str = "db1e8bd376e495dce24580e504372616a0db91366d623cd13a2a8e4080824022";
 
-const PIN_SWAP: &str = "96b71001953ceeea23c701867442228c0e763cb66706b94fb8848914188ed398";
+const PIN_SWAP: &str = "afe5ccc618344491bddc8249097efef60557c0be6b6b856d145231ea50a63452";
 
-const PIN_FILL: &str = "4c265eea1130d4924a0783b8f0f51b1dab9c1ddc213185f939f8e87c1635e1fe";
+const PIN_FILL: &str = "85195892f0f4e2f1264f6ecc6b77641b5464f78aa010be8e2ff482417c0f1173";
 
-const PIN_PROPOSE: &str = "6cb64854621b0e573240f6a8e98ff8b66a95ec025daf0da08df4c1cad803e446";
+const PIN_PROPOSE: &str = "4acc9b0f80354363cd8a5a4faa4405b9f38576b11d92678a9422ef22d55fc50a";
 
 /// One catalogue pattern and the star its shape implies.
 struct Shape {
@@ -305,7 +305,7 @@ fn a_transfer_acting_as_its_recipient_runs_whole() {
     let admitted = admit_tree(&tree, tree.hash(&TestHasher), &world, &TestHasher)
         .expect("one intent acts as both");
     let both = star_at(
-        &legs_of(&admitted.admitted),
+        &legs_of(&admitted),
         ALICE.address(),
         &[ALICE.address(), BOB.address()],
         &PrefixShardResolver { bits: 8 },

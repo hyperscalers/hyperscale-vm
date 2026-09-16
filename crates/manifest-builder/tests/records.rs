@@ -14,9 +14,11 @@
 //! the records it needs are readable off it, and attaching them touches
 //! nothing that signature covers.
 
+mod common;
+
+use common::admit_leaf_presenting;
 use hyperscale_vm_effects::{
-    Hash32, Hasher, InstanceMeta, PackageHash, PresentedGrants, Records, TestHasher, Value,
-    admit_presenting,
+    Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, Value,
 };
 use hyperscale_vm_fixtures::security;
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError, graph_records};
@@ -101,27 +103,11 @@ fn a_composer_finds_the_record_its_own_transfer_is_judged_against() {
     );
 
     assert!(
-        admit_presenting(
-            &graph,
-            ALICE,
-            &[ALICE],
-            &chain,
-            &PresentedGrants::from_presented(&TestHasher, &found),
-            &TestHasher
-        )
-        .is_ok(),
+        admit_leaf_presenting(&graph, ALICE, &[ALICE], &chain, &found, &TestHasher).is_ok(),
         "what the composer found is what admission resolves the entries against",
     );
     assert!(
-        admit_presenting(
-            &graph,
-            ALICE,
-            &[ALICE],
-            &chain,
-            PresentedGrants::none(),
-            &TestHasher
-        )
-        .is_err(),
+        admit_leaf_presenting(&graph, ALICE, &[ALICE], &chain, &[], &TestHasher).is_err(),
         "and withholding it withholds the movement",
     );
 }

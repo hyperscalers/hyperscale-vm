@@ -1214,16 +1214,6 @@ impl IntentRecord {
     }
 }
 
-/// An admitted tree: the flattened routing manifest with its identity,
-/// plus the nullifier record of every intent it carries.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AdmittedTree {
-    /// The lowered manifest and the identity rooting fresh derivations.
-    pub admitted: Admitted,
-    /// One record per intent, in tree order.
-    pub intents: Vec<IntentRecord>,
-}
-
 /// The tree's canonical bytes — what an envelope carries.
 ///
 /// The vocabulary owns its own codec: a tree is an ordinary HBOR value
@@ -1275,14 +1265,14 @@ pub fn admit_tree(
     identity: ManifestHash,
     chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
-) -> Result<AdmittedTree, AdmissionError> {
+) -> Result<Admitted, AdmissionError> {
     let flat = flatten(&tree.root)?;
     let intents = flat.intents();
     if intents.len() > MAX_INTENTS {
         return Err(AdmissionError::TooManyIntents);
     }
-    // Ahead of every intent hash, for the reason `admit` checks ahead
-    // of the graph hash.
+    // Ahead of every intent hash: hashing takes the depth bound as
+    // given.
     for intent in intents {
         check_value_depth(&intent.graph)?;
     }
@@ -1363,8 +1353,5 @@ pub fn admit_tree(
             mode: Mode::Write { moves: Moves::Both },
         });
     }
-    Ok(AdmittedTree {
-        admitted,
-        intents: records,
-    })
+    Ok(admitted.with_intents(records))
 }

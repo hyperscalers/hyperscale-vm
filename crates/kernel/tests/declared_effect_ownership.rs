@@ -19,14 +19,36 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Clause, Declaration, Expr, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, ManifestGraph,
-    MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType, Records, SlotId, SlotRef,
-    TargetExpr, TestHasher, Totality, Value, admit, child_key,
+    AdmissionError, Admitted, ChainRecords, Clause, Declaration, EnvelopeTree, Expr, GraphArg,
+    GraphNode, Hash32, Hasher, InstanceMeta, Intent, IntentHeader, ManifestGraph, MethodSignature,
+    ModeExpr, PackageHash, PackageMetadata, ParamType, Records, SlotId, SlotRef, TargetExpr,
+    TestHasher, Totality, Value, admit_tree, child_key,
 };
 use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_types::{
-    Address, AddressClass, ComponentAddr, Moves, PrincipalAddr, SubstateKey, TxHash, encode_amount,
+    Address, AddressClass, ComponentAddr, Moves, NetworkId, PrincipalAddr, SubstateKey, TxHash,
+    encode_amount,
 };
+
+/// Any window; nothing here validates one against a clock.
+const HEADER: IntentHeader = IntentHeader {
+    network: NetworkId(242),
+    validity_start_ms: 0,
+    validity_end_ms: 3_600_000,
+    discriminator: 0,
+};
+
+/// Admit `graph` as a tree of one leaf acting as `account`, attested by
+/// that account's own key.
+fn admit_leaf(
+    graph: &ManifestGraph,
+    account: PrincipalAddr,
+    chain: &dyn ChainRecords,
+    hasher: &dyn Hasher,
+) -> Result<Admitted, AdmissionError> {
+    let tree = EnvelopeTree::of_one(Intent::leaf(HEADER, account, graph.clone()));
+    admit_tree(&tree, tree.hash(hasher), chain, hasher)
+}
 
 /// The role the stdlib account keeps its balances under.
 const VAULT: SlotId = SlotId(1);
@@ -115,7 +137,7 @@ fn a_package_cannot_declare_an_effect_on_a_cell_it_does_not_own() {
 
     // Admission judges the shape. The method is public — nothing about
     // it requires authority — so nothing here is an authority question.
-    let Ok(admitted) = admit(&graph, ATTACKER, &chain, &TestHasher) else {
+    let Ok(admitted) = admit_leaf(&graph, ATTACKER, &chain, &TestHasher) else {
         return; // Refused before routing: the gap is closed at admission.
     };
     let declaration = admitted.declaration().clone();
@@ -160,7 +182,7 @@ fn a_capability_on_a_strangers_vault_cannot_spend_it() {
     let (chain, instance) = world();
     let graph = drain_graph(instance);
 
-    let Ok(admitted) = admit(&graph, ATTACKER, &chain, &TestHasher) else {
+    let Ok(admitted) = admit_leaf(&graph, ATTACKER, &chain, &TestHasher) else {
         return;
     };
     let declaration = admitted.declaration().clone();

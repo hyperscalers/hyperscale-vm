@@ -8,14 +8,13 @@ mod common;
 use std::collections::{BTreeMap, BTreeSet};
 
 use common::{
-    ALICE, ASKS, BASE, BOB, FILL_CAP, QUOTE, RES_X, RES_Y, auth, book, config_leaf, declared_vault,
-    effect_set, pkg, pool, quarantine, refused, resolver, shapes, shard_of, vault,
-    wide_account_metadata, world,
+    ALICE, ASKS, BASE, BOB, FILL_CAP, QUOTE, RES_X, RES_Y, admit_leaf, auth, book, config_leaf,
+    declared_vault, effect_set, nullifier_write, pkg, pool, quarantine, refused, resolver, shapes,
+    shard_of, vault, wide_account_metadata, world,
 };
 use hyperscale_vm_effects::{
     AdmissionError, Composed, EdgeRef, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta,
-    ManifestGraph, Records, ResolveError, TestHasher, Value, admit, collection_id, fresh_id,
-    per_shard,
+    ManifestGraph, Records, ResolveError, TestHasher, Value, collection_id, fresh_id, per_shard,
 };
 use hyperscale_vm_types::{Address, Effect, EffectTarget, Mode, Moves};
 
@@ -64,13 +63,14 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
             },
         ],
     };
-    let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
+    let admitted = admit_leaf(&graph, ALICE, &chain, &TestHasher).expect("admits");
     let routing = per_shard(&admitted, &resolver());
 
     let expected = BTreeMap::from([
         (
             shard_of(ALICE),
             effect_set(&[
+                nullifier_write(ALICE, &graph),
                 Effect {
                     target: EffectTarget::Point(auth(ALICE)),
                     mode: Mode::Read,
@@ -130,13 +130,14 @@ fn swap_writes_both_reserves_and_reads_the_config() {
             },
         ],
     };
-    let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
+    let admitted = admit_leaf(&graph, ALICE, &chain, &TestHasher).expect("admits");
     let routing = per_shard(&admitted, &resolver());
 
     let expected = BTreeMap::from([
         (
             shard_of(ALICE),
             effect_set(&[
+                nullifier_write(ALICE, &graph),
                 Effect {
                     target: EffectTarget::Point(auth(ALICE)),
                     mode: Mode::Read,
@@ -202,7 +203,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
             },
         ],
     };
-    let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
+    let admitted = admit_leaf(&graph, ALICE, &chain, &TestHasher).expect("admits");
     let routing = per_shard(&admitted, &resolver());
 
     let seq = fresh_id(&TestHasher, admitted.identity(), 1, 0);
@@ -211,6 +212,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
     // sharing one is not a case this test is about.
     let mut grouped: BTreeMap<_, Vec<Effect>> = BTreeMap::new();
     grouped.entry(shard_of(ALICE)).or_default().extend([
+        nullifier_write(ALICE, &graph),
         Effect {
             target: EffectTarget::Point(auth(ALICE)),
             mode: Mode::Read,
@@ -283,13 +285,14 @@ fn order_book_fill_declares_a_capped_price_interval() {
             },
         ],
     };
-    let admitted = admit(&graph, BOB, &chain, &TestHasher).expect("admits");
+    let admitted = admit_leaf(&graph, BOB, &chain, &TestHasher).expect("admits");
     let routing = per_shard(&admitted, &resolver());
 
     let expected = BTreeMap::from([
         (
             shard_of(BOB),
             effect_set(&[
+                nullifier_write(BOB, &graph),
                 Effect {
                     target: EffectTarget::Point(auth(BOB)),
                     mode: Mode::Read,
@@ -390,7 +393,7 @@ fn a_declared_superset_evaluates_without_error() {
             },
         ],
     };
-    let admitted = admit(&graph, ALICE, &chain, &TestHasher).expect("admits");
+    let admitted = admit_leaf(&graph, ALICE, &chain, &TestHasher).expect("admits");
     let routing = per_shard(&admitted, &resolver());
     let set = &routing[&shard_of(alice)];
     // The exact effect and the never-touched superset both routed; three
@@ -442,24 +445,24 @@ fn a_presented_record_is_the_whole_of_instantiation() {
 
     // Unregistered and uncertified: the target is unresolvable.
     assert!(matches!(
-        admit(&graph, ALICE, &bare, &TestHasher),
+        admit_leaf(&graph, ALICE, &bare, &TestHasher),
         Err(AdmissionError::Resolve(ResolveError::UnknownInstance(_)))
     ));
 
     // A record for some other instance enables nothing at the pool.
     let elsewhere = Composed::new(&bare, &[common::book_meta()], &TestHasher);
     assert!(matches!(
-        admit(&graph, ALICE, &elsewhere, &TestHasher),
+        admit_leaf(&graph, ALICE, &elsewhere, &TestHasher),
         Err(AdmissionError::Resolve(ResolveError::UnknownInstance(_)))
     ));
 
     // The pool's own record resolves the call — to exactly the
     // routing a pre-registered world derives.
     let certified = Composed::new(&bare, &[common::pool_meta()], &TestHasher);
-    let admitted = admit(&graph, ALICE, &certified, &TestHasher).expect("admits");
+    let admitted = admit_leaf(&graph, ALICE, &certified, &TestHasher).expect("admits");
     let routing = per_shard(&admitted, &resolver());
 
-    let reference = admit(&graph, ALICE, &registered, &TestHasher).expect("admits");
+    let reference = admit_leaf(&graph, ALICE, &registered, &TestHasher).expect("admits");
     let reference = per_shard(&reference, &resolver());
     assert_eq!(routing, reference);
 }

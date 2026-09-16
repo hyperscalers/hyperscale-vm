@@ -6,15 +6,18 @@
 use std::collections::BTreeSet;
 
 use hyperscale_hbor::from_slice_with_depth;
+mod common;
+
+use common::admit_leaf;
 use hyperscale_vm_effects::vocabulary::AUTH;
 use hyperscale_vm_effects::{
-    AdmissionError, AdmittedTree, Binding, Bounds, ChainRecords, Claim, ClaimSource, Constraint,
+    AdmissionError, Admitted, Binding, Bounds, ChainRecords, Claim, ClaimSource, Constraint,
     CrossingCell, CrossingSite, ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, EnvelopeTree,
     EvidenceRef, Give, GiveRef, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, Intent,
     IntentHash, IntentHeader, IntentRecord, JudgedLeaf, MAX_ACCOUNTS, MAX_SOCKETS, MAX_TREE_DEPTH,
     MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, Marked, Marker, Member, NULLIFIER_SLOT,
     NodeInput, PackageHash, PrefixShardResolver, Records, ResourceKind, Rule, ShardResolver,
-    SignedIntent, Socket, TREE_WIRE_DEPTH, TestHasher, Value, ValueSource, admit, admit_tree,
+    SignedIntent, Socket, TREE_WIRE_DEPTH, TestHasher, Value, ValueSource, admit_tree,
     bucketed_child_key, child_key, decode_tree, encode_tree, escrow_claim_key, escrow_record_key,
     explain_admission_tree, nullifier_key, per_shard,
 };
@@ -182,16 +185,15 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
     ))
 }
 
-fn admit_composed(tree: &EnvelopeTree) -> Result<AdmittedTree, AdmissionError> {
+fn admit_composed(tree: &EnvelopeTree) -> Result<Admitted, AdmissionError> {
     let chain = world();
     let identity = tree.hash(&TestHasher);
     admit_tree(tree, identity, &chain, &TestHasher)
 }
 
 /// The flattened calls, as target and method.
-fn shape(admitted: &AdmittedTree) -> Vec<(Address, String)> {
+fn shape(admitted: &Admitted) -> Vec<(Address, String)> {
     admitted
-        .admitted
         .manifest()
         .nodes
         .iter()
@@ -218,7 +220,6 @@ fn an_intent_is_attested_by_keys_the_account_need_not_derive() {
         let cell = child_key(&TestHasher, account.address(), AUTH, &[]);
         assert!(
             admitted
-                .admitted
                 .declaration()
                 .conditions
                 .iter()
@@ -346,7 +347,7 @@ fn a_socket_filled_from_the_other_channel_names_the_mismatch() {
 fn a_composed_tree_flattens_deterministically() {
     let tree = composed_tree(100);
     let admitted = admit_composed(&tree).unwrap();
-    let manifest = admitted.admitted.manifest();
+    let manifest = admitted.manifest();
 
     // Root nodes lead where ready, the interface interleaves the rest:
     // each intent's withdraw, then the two deposits consuming each
@@ -388,7 +389,7 @@ fn a_composed_tree_flattens_deterministically() {
     );
 
     // The nullifier record: canonical address under the account.
-    let record = &admitted.intents[1];
+    let record = &admitted.intents()[1];
     assert_eq!(record.accounts().collect::<Vec<_>>(), [BOB]);
     let [nullifier] = record.nullifiers.as_slice() else {
         panic!("one account, one nullifier");
@@ -407,14 +408,14 @@ fn a_composed_tree_flattens_deterministically() {
 fn routing_carries_the_nullifier_creation_write() {
     let tree = composed_tree(100);
     let admitted = admit_composed(&tree).unwrap();
-    let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 8 });
-    assert_eq!(admitted.intents.len(), tree.intents().len());
+    let routing = per_shard(&admitted, &PrefixShardResolver { bits: 8 });
+    assert_eq!(admitted.intents().len(), tree.intents().len());
     let resolver = PrefixShardResolver { bits: 8 };
     let creation = |record: &IntentRecord| Effect {
         target: EffectTarget::Point(record.nullifiers[0].key),
         mode: Mode::Write { moves: Moves::Both },
     };
-    let (own, offered) = (&admitted.intents[0], &admitted.intents[1]);
+    let (own, offered) = (&admitted.intents()[0], &admitted.intents()[1]);
     let (alice, bob) = (
         resolver.shard_of(own.nullifiers[0].account.address()),
         resolver.shard_of(offered.nullifiers[0].account.address()),
@@ -436,7 +437,7 @@ fn two_intents_acting_as_one_account_each_nullify() {
     tree.root.members[0].signed.intent.graph.nodes =
         vec![withdraw(ALICE, RES_Y, 10), deposit_param(ALICE, 0)];
     let admitted = admit_composed(&tree).expect("one account may offer twice");
-    let [own, again] = admitted.intents.as_slice() else {
+    let [own, again] = admitted.intents() else {
         panic!("two intents, two records");
     };
     assert_eq!(
@@ -469,7 +470,7 @@ fn an_intent_acting_as_two_accounts_nullifies_and_signs_in_for_each() {
     root.attested_by = vec![ALICE, BOB];
     let tree = EnvelopeTree::of_one(root);
     let admitted = admit_composed(&tree).expect("one intent acts as both");
-    let [record] = admitted.intents.as_slice() else {
+    let [record] = admitted.intents() else {
         panic!("one intent");
     };
     assert_eq!(record.accounts().collect::<Vec<_>>(), [ALICE, BOB]);
@@ -482,7 +483,6 @@ fn an_intent_acting_as_two_accounts_nullifies_and_signs_in_for_each() {
         let cell = child_key(&TestHasher, account.address(), AUTH, &[]);
         assert!(
             admitted
-                .admitted
                 .declaration()
                 .conditions
                 .iter()
@@ -496,7 +496,7 @@ fn an_intent_acting_as_two_accounts_nullifies_and_signs_in_for_each() {
     }
     // Each withdrawal presented the signature, which resolves to both
     // accounts' claims.
-    for node in &admitted.admitted.manifest().nodes {
+    for node in &admitted.manifest().nodes {
         if node.method == "withdraw" {
             assert!(node.evidence.contains(&Claim::of_subject(ALICE)));
             assert!(node.evidence.contains(&Claim::of_subject(BOB)));
@@ -536,11 +536,11 @@ fn an_intent_at_the_account_ceiling_costs_one_cell_per_account() {
 
     let full = acting_as(&accounts[..MAX_ACCOUNTS]);
     let admitted = admit_composed(&full).expect("the ceiling admits");
-    let [record] = admitted.intents.as_slice() else {
+    let [record] = admitted.intents() else {
         panic!("one intent");
     };
     assert_eq!(record.nullifiers.len(), MAX_ACCOUNTS);
-    let declaration = admitted.admitted.declaration();
+    let declaration = admitted.declaration();
     let auth_cells: BTreeSet<_> = accounts[..MAX_ACCOUNTS]
         .iter()
         .map(|account| child_key(&TestHasher, account.address(), AUTH, &[]))
@@ -649,7 +649,6 @@ fn an_origin_names_the_intent_its_node_signed() {
     let bob = tree.root.members[0].signed.intent.hash(&TestHasher);
 
     let origins: Vec<(IntentHash, u32)> = admitted
-        .admitted
         .origins()
         .iter()
         .map(|origin| (origin.intent, origin.local))
@@ -659,13 +658,13 @@ fn an_origin_names_the_intent_its_node_signed() {
     // intent's signer signed plus the crossing grace, which outlives the
     // nullifier's by the span a successor needs to decide an inherited
     // record across a reshape cut.
-    for origin in admitted.admitted.origins() {
+    for origin in admitted.origins() {
         assert_eq!(
             origin.expiry_ms,
             TEST_HEADER.validity_end_ms + CROSSING_GRACE_MS,
         );
     }
-    for record in &admitted.intents {
+    for record in admitted.intents() {
         assert_eq!(
             record.expiry_ms,
             TEST_HEADER.validity_end_ms + ARTIFACT_GRACE_MS,
@@ -699,9 +698,8 @@ fn an_escrow_key_is_fixed_by_the_intent_its_node_signed() {
     let bob = first.root.members[0].signed.intent.hash(&TestHasher);
     assert_eq!(bob, second.root.members[0].signed.intent.hash(&TestHasher));
 
-    let origin_of = |tree: &EnvelopeTree, at: usize| {
-        admit_composed(tree).expect("admits").admitted.origins()[at]
-    };
+    let origin_of =
+        |tree: &EnvelopeTree, at: usize| admit_composed(tree).expect("admits").origins()[at];
     let (one, other) = (origin_of(&first, 1), origin_of(&second, 1));
     assert_eq!(one, other);
     assert_eq!(one.intent, bob);
@@ -1490,7 +1488,7 @@ fn a_root_grants_the_account_it_acts_as() {
         ]
     );
     assert!(
-        admitted.admitted.manifest().nodes[0]
+        admitted.manifest().nodes[0]
             .evidence
             .contains(&Claim::of_subject(ALICE))
     );
@@ -1658,10 +1656,10 @@ fn a_two_level_tree_admits_and_nullifies_every_intent() {
         }],
     );
     let admitted = admit_composed(&tree).expect("the group resolves");
-    assert_eq!(admitted.intents.len(), 3);
+    assert_eq!(admitted.intents().len(), 3);
     assert_eq!(
         admitted
-            .intents
+            .intents()
             .iter()
             .flat_map(IntentRecord::accounts)
             .collect::<Vec<_>>(),
@@ -1674,7 +1672,7 @@ fn a_two_level_tree_admits_and_nullifies_every_intent() {
     );
     // Bob's deposit takes the root's edge, bounded by his own socket
     // and by Carol's.
-    let manifest = admitted.admitted.manifest();
+    let manifest = admitted.manifest();
     assert_eq!(
         manifest.nodes[3].inputs,
         vec![NodeInput::Edge {
@@ -1705,7 +1703,7 @@ fn a_sealed_group_is_indistinguishable_from_a_leaf() {
         }],
     ))
     .unwrap();
-    assert_eq!(leaf.admitted.manifest(), group.admitted.manifest());
+    assert_eq!(leaf.manifest(), group.manifest());
 }
 
 /// A group whose interface does not agree with what it passes through
@@ -1796,7 +1794,7 @@ fn a_claim_granted_two_levels_deep_resolves_only_where_every_level_regranted_it(
     ))
     .expect("re-granted at every level");
     assert!(
-        admitted.admitted.manifest().nodes[0]
+        admitted.manifest().nodes[0]
             .evidence
             .contains(&Claim::of_subject(ALICE))
     );
@@ -1949,7 +1947,7 @@ fn a_bare_graph_admits_no_sockets_or_gives() {
         nodes: vec![deposit_param(ALICE, 0)],
     };
     assert_eq!(
-        admit(&graph, ALICE, &chain, &TestHasher),
+        admit_leaf(&graph, ALICE, &chain, &TestHasher),
         Err(AdmissionError::UnknownSocket {
             intent: 0,
             node: 0,
@@ -1960,7 +1958,7 @@ fn a_bare_graph_admits_no_sockets_or_gives() {
         nodes: vec![deposit_give(ALICE, 0, 0, Vec::new())],
     };
     assert_eq!(
-        admit(&graph, ALICE, &chain, &TestHasher),
+        admit_leaf(&graph, ALICE, &chain, &TestHasher),
         Err(AdmissionError::UnknownGive { intent: 0, give: 0 })
     );
 }
@@ -1981,14 +1979,11 @@ fn fresh_keys_root_at_the_envelope_identity() {
         .map(|identity| admit_tree(&tree, *identity, &chain, &TestHasher).unwrap())
         .collect();
     assert_eq!(
-        admitted[0].admitted.manifest(),
-        admitted[1].admitted.manifest(),
+        admitted[0].manifest(),
+        admitted[1].manifest(),
         "the corpus graph mints no fresh keys, so the manifests agree"
     );
-    assert_ne!(
-        admitted[0].admitted.identity(),
-        admitted[1].admitted.identity()
-    );
+    assert_ne!(admitted[0].identity(), admitted[1].identity());
 }
 
 #[test]

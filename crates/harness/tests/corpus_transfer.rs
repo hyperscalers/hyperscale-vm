@@ -228,6 +228,10 @@ fn transfer_profile_and_provision_shape_are_exact() {
         (
             shard_of(ALICE),
             set(&[
+                point(
+                    leaf_nullifier(ALICE, &transfer_graph()),
+                    Mode::Write { moves: Moves::Both },
+                ),
                 point(auth(ALICE), Mode::Read),
                 point(vault(ALICE, RES_X), Mode::Reserve { amount: 100 }),
             ]),
@@ -248,14 +252,20 @@ fn transfer_profile_and_provision_shape_are_exact() {
 
     // The acceptance test, executable: the balance movement stays
     // commutative on both sides — both credits and one reservation, and
-    // no read of a balance anywhere. What provisions is one leaf per
-    // side and neither is a balance: the sender's rule cell, absent for
-    // a virtual account, where the read is what carries that absence to
-    // the counterpart; and the recipient's own flag, which is what lets
-    // a deposit pick a destination without ever refusing one.
+    // no read of a balance anywhere. What provisions is never a balance:
+    // the sender's rule cell, absent for a virtual account, where the
+    // read is what carries that absence to the counterpart, beside the
+    // nullifier cell her intent spends; and the recipient's own flag,
+    // which is what lets a deposit pick a destination without ever
+    // refusing one.
     assert_eq!(
         routing[&shard_of(ALICE)].provision_targets(),
-        std::iter::once(EffectTarget::Point(auth(ALICE))).collect()
+        [
+            EffectTarget::Point(leaf_nullifier(ALICE, &transfer_graph())),
+            EffectTarget::Point(auth(ALICE)),
+        ]
+        .into_iter()
+        .collect()
     );
     assert_eq!(
         routing[&shard_of(BOB)].provision_targets(),

@@ -488,8 +488,8 @@ pub fn grants_read_config(grants: &GrantsExpr) -> BTreeSet<u32> {
     read
 }
 
-/// A refusal at admitting a bare graph, with the place it points to
-/// spelled out.
+/// A refusal at admitting a tree of one intent, with the place it
+/// points to spelled out against that intent's own graph.
 ///
 /// The sentence a composer gets carries indices — node 7, argument 2,
 /// clause 4 — and an index means nothing without the thing it indexes.
@@ -509,9 +509,9 @@ pub fn explain_admission(
     records: &dyn ChainRecords,
     refusal: &AdmissionError,
 ) -> String {
-    // A bare graph is one intent with no sockets, so the interleave
-    // emits its nodes in author order and the flattened numbering is the
-    // graph's own.
+    // A tree of one intent has no sockets, so the interleave emits its
+    // nodes in author order and the flattened numbering is the graph's
+    // own.
     explain_placed(&[graph], None, records, refusal)
 }
 

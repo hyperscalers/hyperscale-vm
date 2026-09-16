@@ -6,11 +6,11 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use common::{ALICE, account, pkg, resolver, shard_of, vault};
+use common::{ALICE, account, admit_leaf, pkg, resolver, shard_of, vault};
 use hyperscale_vm_effects::{
     EdgeContent, EdgeRef, EvalBudget, EvalInputs, EvidenceRef, Expr, GraphArg, GraphNode, Hash32,
     InstanceMeta, InstanceRegistry, ManifestGraph, ManifestHash, PresentedGrants, Records, SlotId,
-    SlotRef, SlotWidths, TestHasher, Value, admit, evaluate_expr, per_shard,
+    SlotRef, SlotWidths, TestHasher, Value, evaluate_expr, per_shard,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Moves, PrincipalAddr,
@@ -176,7 +176,7 @@ proptest! {
                 },
             ],
         };
-        let admitted = admit(&graph, sender, &chain, &TestHasher).unwrap();
+        let admitted = admit_leaf(&graph, sender, &chain, &TestHasher).unwrap();
         let first = per_shard(&admitted, &resolver());
         let second = per_shard(&admitted, &resolver());
         assert_eq!(first, second);
@@ -235,7 +235,7 @@ proptest! {
                 },
             ],
         };
-        let admitted = admit(&graph, ALICE, &chain, &TestHasher).unwrap();
+        let admitted = admit_leaf(&graph, ALICE, &chain, &TestHasher).unwrap();
         let first = per_shard(&admitted, &resolver());
         let second = per_shard(&admitted, &resolver());
         assert_eq!(first, second);

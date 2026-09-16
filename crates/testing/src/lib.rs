@@ -59,9 +59,9 @@ pub use hyperscale_vm_effects::{
     package_slot,
 };
 use hyperscale_vm_effects::{
-    CallArg, ChainRecords, Hash32, Hasher, InstanceMeta, NodeCall, PackageHash, PresentedGrants,
-    Records, Value, admit_presenting, child_key, collection_id, declaration_hash, explain_refusal,
-    holdings_collection, issued_record,
+    CallArg, ChainRecords, EnvelopeTree, Hash32, Hasher, InstanceMeta, Intent, IntentHeader,
+    NodeCall, PackageHash, Records, Value, admit_tree, child_key, collection_id, declaration_hash,
+    explain_refusal, holdings_collection, issued_record,
 };
 use hyperscale_vm_kernel::{
     BatchTx, EnvInputs, ExecutionMode, ManifestWalk, MemoryStore, Substates, decode_amount,
@@ -71,7 +71,16 @@ pub use hyperscale_vm_manifest_builder::TypedError;
 use hyperscale_vm_manifest_builder::{Args, TypedBuilder, graph_records};
 use hyperscale_vm_stdlib::{ACCOUNT_MODULE, instantiate};
 pub use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, PrincipalAddr, ResourceAddr};
-use hyperscale_vm_types::{CallTarget, SubstateKey, TxHash, encode_amount};
+use hyperscale_vm_types::{CallTarget, NetworkId, SubstateKey, TxHash, encode_amount};
+
+/// The window every transaction here stands in: any that covers the
+/// chain's clock, since nothing here validates one against it.
+const HEADER: IntentHeader = IntentHeader {
+    network: NetworkId(242),
+    validity_start_ms: 0,
+    validity_end_ms: 3_600_000,
+    discriminator: 0,
+};
 
 mod conclusion;
 mod native;
@@ -733,23 +742,30 @@ impl Chain {
         let written = build(&mut builder)?;
         let graph = builder.build()?;
 
-        // The records the graph's own calls will be resolved against,
-        // found the way a composer finds them rather than handed over.
-        let records = graph_records(&graph, &self.records, &TestHasher);
-        let admitted = admit_presenting(
-            &graph,
-            signer,
-            &[signer],
-            &self.records,
-            &PresentedGrants::from_presented(&TestHasher, &records),
-            &TestHasher,
-        )?;
+        // The tree the chain would carry the graph as: one leaf acting
+        // as `signer`, presenting the records its own calls will be
+        // resolved against — found the way a composer finds them rather
+        // than handed over. The sequence is the discriminator, so the
+        // same graph transacted twice is two intents with two
+        // nullifiers rather than one spent twice.
+        self.sequence += 1;
+        let header = IntentHeader {
+            discriminator: self.sequence,
+            ..HEADER
+        };
+        let resources = graph_records(&graph, &self.records, &TestHasher);
+        let tree = EnvelopeTree {
+            root: Intent::leaf(header, signer, graph),
+            instances: Vec::new(),
+            resources,
+        };
+        let admitted = admit_tree(&tree, tree.hash(&TestHasher), &self.records, &TestHasher)?;
         let declaration = admitted.declaration().clone();
 
-        self.sequence += 1;
         let tx = TxHash(salt(self.sequence));
         let entry = BatchTx::new(tx, declaration, EnvInputs::unsealed(self.clock_ms))
-            .with_calls(admitted.calls().to_vec());
+            .with_calls(admitted.calls().to_vec())
+            .with_nullifiers(admitted.intents().to_vec());
 
         // Execution replaces the chain's store, so it moves out rather
         // than being copied and dropped. Two owned copies are still

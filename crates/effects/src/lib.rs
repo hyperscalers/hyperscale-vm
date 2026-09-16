@@ -44,10 +44,7 @@ pub mod types;
 pub mod vectors;
 pub mod vocabulary;
 
-pub use admission::{
-    AdmissionError, Admitted, Asks, Injected, MAX_SOCKETS, NodeOrigin, Placed, admit,
-    admit_presenting,
-};
+pub use admission::{AdmissionError, Admitted, Asks, Injected, MAX_SOCKETS, NodeOrigin, Placed};
 pub use artifact::{
     ArtifactError, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata, declaration_hash,
     decode_metadata, encode_metadata, extract_metadata, metadata_section,
@@ -62,12 +59,12 @@ pub use dsl::{
     self_child, supports,
 };
 pub use envelope::{
-    AdmittedTree, Binding, COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, ClaimSource, CrossingCell,
-    CrossingSite, ESCROW_CLAIM_SLOT, ESCROW_RECORD_SLOT, EnvelopeTree, Give, Intent, IntentHeader,
-    IntentRecord, MARKER_CELL_BYTES, MAX_ACCOUNTS, MAX_INTENTS, MAX_TREE_DEPTH, Marked, Marker,
-    Member, NULLIFIER_SLOT, Nullifier, SignedIntent, Socket, TREE_WIRE_DEPTH, ValueSource,
-    admit_tree, attest, committed_tx_key, crossing_expiry_ms, decode_tree, encode_tree,
-    escrow_claim_key, escrow_record_key, nullifier_expiry_ms, nullifier_key,
+    Binding, COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, ClaimSource, CrossingCell, CrossingSite,
+    ESCROW_CLAIM_SLOT, ESCROW_RECORD_SLOT, EnvelopeTree, Give, Intent, IntentHeader, IntentRecord,
+    MARKER_CELL_BYTES, MAX_ACCOUNTS, MAX_INTENTS, MAX_TREE_DEPTH, Marked, Marker, Member,
+    NULLIFIER_SLOT, Nullifier, SignedIntent, Socket, TREE_WIRE_DEPTH, ValueSource, admit_tree,
+    attest, committed_tx_key, crossing_expiry_ms, decode_tree, encode_tree, escrow_claim_key,
+    escrow_record_key, nullifier_expiry_ms, nullifier_key,
 };
 pub use explain::{
     address_text, claim_text, explain, explain_admission, explain_admission_tree, explain_method,

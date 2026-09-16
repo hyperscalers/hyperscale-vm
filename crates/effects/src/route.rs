@@ -102,14 +102,17 @@ mod tests {
 
     use hyperscale_vm_types::{
         Address, AddressClass, CallTarget, Effect, EffectConflict, EffectSet, EffectTarget,
-        MAX_MANIFEST_NODES, Mode, Moves, PrincipalAddr,
+        MAX_MANIFEST_NODES, Mode, Moves, NetworkId, PrincipalAddr,
     };
 
     use super::{Admitted, PrefixShardResolver, ShardResolver, per_shard};
-    use crate::admission::{AdmissionError, admit};
+    use crate::admission::AdmissionError;
     use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
+    use crate::envelope::{
+        EnvelopeTree, Intent, IntentHeader, admit_tree, nullifier_expiry_ms, nullifier_key,
+    };
     use crate::graph::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
-    use crate::hash::{Hash32, TestHasher};
+    use crate::hash::{Hash32, Hasher, TestHasher};
     use crate::instance::{InstanceMeta, ResolveError};
     use crate::invoke::CallArg;
     use crate::manifest::Bounds;
@@ -125,6 +128,25 @@ mod tests {
 
     const fn alice() -> PrincipalAddr {
         PrincipalAddr::new([0xAA; 31])
+    }
+
+    /// Any window; nothing here validates one against a clock.
+    const HEADER: IntentHeader = IntentHeader {
+        network: NetworkId(242),
+        validity_start_ms: 0,
+        validity_end_ms: 3_600_000,
+        discriminator: 0,
+    };
+
+    /// Admit `graph` as a tree of one leaf acting as `account`.
+    fn admit_leaf(
+        graph: &ManifestGraph,
+        account: PrincipalAddr,
+        chain: &dyn ChainRecords,
+        hasher: &dyn Hasher,
+    ) -> Result<Admitted, AdmissionError> {
+        let tree = EnvelopeTree::of_one(Intent::leaf(HEADER, account, graph.clone()));
+        admit_tree(&tree, tree.hash(hasher), chain, hasher)
     }
 
     fn node(target: impl Into<CallTarget>, method: &str, args: Vec<GraphArg>) -> GraphNode {
@@ -151,7 +173,7 @@ mod tests {
 
     /// Admit, for the graphs these tests are not about refusing.
     fn routed(graph: &ManifestGraph, chain: &dyn ChainRecords) -> Admitted {
-        admit(graph, alice(), chain, &TestHasher).expect("admits")
+        admit_leaf(graph, alice(), chain, &TestHasher).expect("admits")
     }
 
     /// The corpus resolver's projection of an admitted declaration.
@@ -252,11 +274,22 @@ mod tests {
                     )),
                     mode: Mode::Read,
                 },
+                // And the intent's nullifier creation, the kernel's own,
+                // folded in after every frame.
+                Effect {
+                    target: EffectTarget::Point(nullifier_key(
+                        &TestHasher,
+                        alice(),
+                        Intent::leaf(HEADER, alice(), graph).hash(&TestHasher),
+                        nullifier_expiry_ms(&HEADER),
+                    )),
+                    mode: Mode::Write { moves: Moves::Both },
+                },
             ],
             "each node's clauses in node order, its fence read last — \
              appended, so every clause span an ABI binding names keeps \
-             the position its signature gave it, and the sign-in after \
-             every frame"
+             the position its signature gave it, the sign-in after \
+             every frame, and the nullifier last"
         );
     }
 
@@ -269,7 +302,7 @@ mod tests {
         };
         let a_1_4 = ghost_meta.address(&TestHasher);
         let graph = one_node(a_1_4);
-        let empty = admit(&graph, alice(), &Records::new(), &TestHasher);
+        let empty = admit_leaf(&graph, alice(), &Records::new(), &TestHasher);
         assert_eq!(
             empty.err(),
             Some(AdmissionError::Resolve(ResolveError::UnknownInstance(
@@ -279,7 +312,7 @@ mod tests {
 
         let mut ghost = Records::new();
         ghost.instances.create(&TestHasher, ghost_meta);
-        let missing_pkg = admit(&graph, alice(), &ghost, &TestHasher);
+        let missing_pkg = admit_leaf(&graph, alice(), &ghost, &TestHasher);
         assert_eq!(
             missing_pkg.err(),
             Some(AdmissionError::Resolve(ResolveError::UnknownPackage(pkg(
@@ -293,7 +326,7 @@ mod tests {
         chain
             .packages
             .publish_unchecked(pkg("ghost"), PackageMetadata::default());
-        let missing_method = admit(&graph, alice(), &chain, &TestHasher);
+        let missing_method = admit_leaf(&graph, alice(), &chain, &TestHasher);
         assert_eq!(
             missing_method.err(),
             Some(AdmissionError::Resolve(ResolveError::UnknownMethod {
@@ -372,7 +405,7 @@ mod tests {
                     .map(|_| node(instance_of("wide"), "m", vec![]))
                     .collect(),
             };
-            admit(&graph, alice(), &chain, &TestHasher).map(|admitted| sets(&admitted))
+            admit_leaf(&graph, alice(), &chain, &TestHasher).map(|admitted| sets(&admitted))
         };
 
         // A size well inside the cap, and the cap itself.
@@ -420,7 +453,7 @@ mod tests {
             )
         };
         assert_eq!(
-            admit(
+            admit_leaf(
                 &ManifestGraph {
                     nodes: vec![take(), take()],
                 },
@@ -859,7 +892,8 @@ mod tests {
             Box::new(Expr::Config(0)),
         ));
         let (chain, graph) = spreading_world(spread, vec![judgment]);
-        let admitted = admit(&graph, alice(), &chain, &TestHasher).expect("the judgment binds");
+        let admitted =
+            admit_leaf(&graph, alice(), &chain, &TestHasher).expect("the judgment binds");
         assert_eq!(admitted.calls()[0].args[0], CallArg::Bool(true));
     }
 
@@ -1090,7 +1124,7 @@ mod tests {
                     vec![GraphArg::Literal(Value::Address(victim))],
                 )],
             };
-            admit(&graph, alice(), &chain, &TestHasher)
+            admit_leaf(&graph, alice(), &chain, &TestHasher)
         };
 
         // Every way a frame can name somebody else: what its caller

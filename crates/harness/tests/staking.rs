@@ -306,11 +306,10 @@ fn single_intent(account: PrincipalAddr, graph: ManifestGraph) -> EnvelopeTree {
 fn batch_entry(world: &Records, tree: &EnvelopeTree) -> Result<BatchTx> {
     let identity = tree.hash(&TestHasher);
     let admitted = admit_tree(tree, identity, world, &TestHasher).context("admission")?;
-    let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 0 });
+    let routing = per_shard(&admitted, &PrefixShardResolver { bits: 0 });
     ensure!(routing.len() == 1, "the null resolver routes to one shard");
-    let declaration = admitted.admitted.declaration().clone();
-    Ok(BatchTx::new(TxHash(identity.0), declaration, env())
-        .with_calls(admitted.admitted.calls().to_vec()))
+    let declaration = admitted.declaration().clone();
+    Ok(BatchTx::new(TxHash(identity.0), declaration, env()).with_calls(admitted.calls().to_vec()))
 }
 
 fn seeded_store(token: u128, units: u128) -> MemoryStore {

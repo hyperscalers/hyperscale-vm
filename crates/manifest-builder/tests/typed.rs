@@ -2,9 +2,12 @@
 //! call site, and the edge types it derives so the author does not assert
 //! them.
 
+mod common;
+
+use common::admit_leaf;
 use hyperscale_vm_effects::{
     Constraint, EdgeRef, EvidenceRef, GraphArg, Hash32, Hasher, InstanceMeta, ManifestGraph,
-    PackageHash, Records, TestHasher, Value, admit,
+    PackageHash, Records, TestHasher, Value,
 };
 use hyperscale_vm_fixtures::payouts;
 use hyperscale_vm_manifest_builder::{BuildError, TypedBuilder, TypedError};
@@ -109,7 +112,7 @@ fn a_typed_edge_asserts_its_own_resource() {
     b.call(BOB, "deposit", (funds,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
     assert_eq!(asserted(&graph, 1), vec![Some(RES)]);
-    admit(&graph, ALICE, &chain, &TestHasher).unwrap();
+    admit_leaf(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
 /// An answer is asked of the declaration, where the method is named,
@@ -165,7 +168,7 @@ fn a_split_of_a_typed_edge_is_two_typed_edges() {
             constraints: vec![Constraint::ResourceIs(RES), Constraint::MinAmount(1)],
         }]
     );
-    admit(&graph, ALICE, &chain, &TestHasher).unwrap();
+    admit_leaf(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
 #[test]
@@ -184,7 +187,7 @@ fn a_pool_types_its_units_by_itself() {
     b.call(ALICE, "deposit", (units,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
     assert_eq!(asserted(&graph, 2), vec![Some(unit())]);
-    admit(&graph, ALICE, &chain, &TestHasher).unwrap();
+    admit_leaf(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
 #[test]
@@ -208,7 +211,7 @@ fn an_edge_nothing_typed_stays_untyped() {
     assert_eq!(asserted(&graph, 2), vec![None]);
     // Untyped is not unadmitted: admission evaluates the same output
     // expressions against the graph it can see whole.
-    admit(&graph, ALICE, &chain, &TestHasher).unwrap();
+    admit_leaf(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
 #[test]
@@ -312,7 +315,7 @@ fn a_refused_call_appends_nothing() {
     b.call(BOB, "deposit", (funds,)).unwrap().none().unwrap();
     let graph = b.build().unwrap();
     assert_eq!(graph.nodes.len(), 2);
-    admit(&graph, ALICE, &chain, &TestHasher).unwrap();
+    admit_leaf(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
 #[test]

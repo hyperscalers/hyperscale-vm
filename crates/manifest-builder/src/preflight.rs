@@ -701,23 +701,17 @@ pub fn preflight_tree(
         .iter()
         .map(|intent| intent.attested_by.clone())
         .collect();
-    report(
-        admitted.admitted,
-        admitted.intents,
-        attesting,
-        chain,
-        network,
-    )
+    report(admitted, attesting, chain, network)
 }
 
 /// Assemble the report.
 fn report(
     admitted: Admitted,
-    intents: Vec<IntentRecord>,
     attesting: Vec<Vec<PrincipalAddr>>,
     chain: &dyn ChainRecords,
     network: &str,
 ) -> Result<Report, PreflightError> {
+    let intents = admitted.intents().to_vec();
     // What each call's own method may emit, on the rule the chain
     // applies: a method that states nothing may emit nothing, and the
     // sum is what retention prices. A package this node has not seen

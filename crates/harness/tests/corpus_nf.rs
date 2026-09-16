@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 
 use hyperscale_vm_effects::{
-    Hash32, TestHasher, Value, admit, collection_id, fresh_id, holdings_collection,
-    instance_data_key, order_key,
+    Hash32, TestHasher, Value, collection_id, fresh_id, holdings_collection, instance_data_key,
+    order_key,
 };
 use hyperscale_vm_fixtures::{nf, registry};
 use hyperscale_vm_kernel::{MemoryStore, multiply_held_ids};
@@ -197,7 +197,7 @@ fn a_mint_onto_an_instance_already_there_is_refused() {
         nf::deposit(b, nf_holder(7), minted)
     });
 
-    let admitted = admit(&mint, ALICE, &world, &TestHasher).unwrap();
+    let admitted = admit_here(&mint, ALICE, &world).unwrap();
     let id = fresh_id(&TestHasher, admitted.identity(), 0, 0);
     let data = instance_data_key(&TestHasher, nf_issuer(), nf_resource(), id);
 

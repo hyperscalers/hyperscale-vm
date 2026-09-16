@@ -6,18 +6,19 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, VAULT};
 use hyperscale_vm_effects::{
-    Clause, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta, InstanceRegistry, ManifestHash,
+    AdmissionError, Admitted, ChainRecords, Clause, EnvelopeTree, Expr, GrantedBehaviour, Hash32,
+    Hasher, InstanceMeta, InstanceRegistry, Intent, IntentHeader, ManifestGraph, ManifestHash,
     MetadataCache, MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType,
     PrefixShardResolver, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, ShardId,
-    ShardResolver, SlotId, SlotRef, StoredRule, TargetExpr, TestHasher, Totality, Value, child_key,
-    package_slot,
+    ShardResolver, SlotId, SlotRef, StoredRule, TargetExpr, TestHasher, Totality, Value,
+    admit_tree, child_key, nullifier_expiry_ms, nullifier_key, package_slot,
 };
 pub use hyperscale_vm_fixtures::book::{ASKS, FILL_CAP};
 pub use hyperscale_vm_fixtures::{amm, book, payouts};
 pub use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    Address, ComponentAddr, Effect, EffectSet, Moves, Presence, PrincipalAddr, ResourceAddr,
-    SubstateKey,
+    Address, ComponentAddr, Effect, EffectSet, EffectTarget, Mode, Moves, NetworkId, Presence,
+    PrincipalAddr, ResourceAddr, SubstateKey,
 };
 
 /// Accounts are principals: their class is what resolves them to the
@@ -283,4 +284,77 @@ pub fn wide_account_metadata() -> PackageMetadata {
         },
     );
     methods
+}
+
+/// Any window; nothing here validates one against a clock.
+pub const HEADER: IntentHeader = IntentHeader {
+    network: NetworkId(242),
+    validity_start_ms: 0,
+    validity_end_ms: 3_600_000,
+    discriminator: 0,
+};
+
+/// A tree of one leaf over `graph`: acting as `account`, attested by
+/// `attested_by`, presenting `records`.
+pub fn leaf_tree(
+    graph: &ManifestGraph,
+    account: PrincipalAddr,
+    attested_by: &[PrincipalAddr],
+    records: &[ResourceMeta],
+) -> EnvelopeTree {
+    EnvelopeTree {
+        root: Intent {
+            attested_by: attested_by.to_vec(),
+            ..Intent::leaf(HEADER, account, graph.clone())
+        },
+        instances: Vec::new(),
+        resources: records.to_vec(),
+    }
+}
+
+/// Admit `graph` as a tree of one leaf acting as `account`, attested by
+/// that account's own key and presenting nothing.
+pub fn admit_leaf(
+    graph: &ManifestGraph,
+    account: PrincipalAddr,
+    chain: &dyn ChainRecords,
+    hasher: &dyn Hasher,
+) -> Result<Admitted, AdmissionError> {
+    admit_leaf_presenting(graph, account, &[account], chain, &[], hasher)
+}
+
+/// As [`admit_leaf`], attested by `attested_by` and presenting
+/// `records`.
+pub fn admit_leaf_presenting(
+    graph: &ManifestGraph,
+    account: PrincipalAddr,
+    attested_by: &[PrincipalAddr],
+    chain: &dyn ChainRecords,
+    records: &[ResourceMeta],
+    hasher: &dyn Hasher,
+) -> Result<Admitted, AdmissionError> {
+    let tree = leaf_tree(graph, account, attested_by, records);
+    admit_tree(&tree, tree.hash(hasher), chain, hasher)
+}
+
+/// The nullifier cell a leaf over `graph` acting as `account` spends,
+/// derived as admission derives it: the account, the intent's own hash
+/// and the window's end.
+pub fn leaf_nullifier(account: PrincipalAddr, graph: &ManifestGraph) -> SubstateKey {
+    let intent = Intent::leaf(HEADER, account, graph.clone());
+    nullifier_key(
+        &TestHasher,
+        account,
+        intent.hash(&TestHasher),
+        nullifier_expiry_ms(&HEADER),
+    )
+}
+
+/// The nullifier creation a leaf over `graph` acting as `account`
+/// declares: the kernel's own exclusive write.
+pub fn nullifier_write(account: PrincipalAddr, graph: &ManifestGraph) -> Effect {
+    Effect {
+        target: EffectTarget::Point(leaf_nullifier(account, graph)),
+        mode: Mode::Write { moves: Moves::Both },
+    }
 }

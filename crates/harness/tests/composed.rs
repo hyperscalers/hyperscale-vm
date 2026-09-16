@@ -6,7 +6,7 @@
 use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
-    AdmittedTree, Constraint, EnvelopeTree, Hasher, IntentHeader, Marked, Marker, PackageHash,
+    Admitted, Constraint, EnvelopeTree, Hasher, IntentHeader, Marked, Marker, PackageHash,
     PrefixShardResolver, Records, SignedIntent, TestHasher, admit_tree, per_shard,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
@@ -80,10 +80,10 @@ fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
 
 /// Admit and route one envelope into its batch entry, plus the manifest
 /// its runner walks.
-fn batch_entry(world: &Records, tree: &EnvelopeTree) -> Result<(BatchTx, AdmittedTree)> {
+fn batch_entry(world: &Records, tree: &EnvelopeTree) -> Result<(BatchTx, Admitted)> {
     let identity = tree.hash(&TestHasher);
     let admitted = admit_tree(tree, identity, world, &TestHasher).context("admission")?;
-    let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 0 });
+    let routing = per_shard(&admitted, &PrefixShardResolver { bits: 0 });
     // The null resolver puts every effect on one shard, so the whole
     // declaration is the sole entry — taken as that rather than by naming
     // an id the resolver is free to choose.
@@ -92,10 +92,10 @@ fn batch_entry(world: &Records, tree: &EnvelopeTree) -> Result<(BatchTx, Admitte
     // clause order is what a handle's rep indexes into, so taking the
     // folded set's order instead would hand the guest a table the
     // lowered calls were not resolved against.
-    let declaration = admitted.admitted.declaration().clone();
+    let declaration = admitted.declaration().clone();
     let entry = BatchTx::new(TxHash(identity.0), declaration, env())
-        .with_calls(admitted.admitted.calls().to_vec())
-        .with_nullifiers(admitted.intents.clone());
+        .with_calls(admitted.calls().to_vec())
+        .with_nullifiers(admitted.intents().to_vec());
     Ok((entry, admitted))
 }
 
@@ -126,7 +126,7 @@ fn a_composed_transaction_settles_on_both_runtimes() -> Result<()> {
     let world = world();
     let tree = composed_tree(ALICE, 100);
     let (entry, admitted) = batch_entry(&world, &tree)?;
-    let record = &admitted.intents[1];
+    let record = &admitted.intents()[1];
     let nullifier = record.nullifiers[0].key;
 
     let (outcome, end) = run_both(&seeded_store(), std::slice::from_ref(&entry));
@@ -163,8 +163,8 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
     let (alice_entry, alice_admitted) = batch_entry(&world, &composed_tree(ALICE, 100))?;
     let (carol_entry, carol_admitted) = batch_entry(&world, &composed_tree(CAROL, 120))?;
     assert_eq!(
-        alice_admitted.intents[1].nullifiers,
-        carol_admitted.intents[1].nullifiers
+        alice_admitted.intents()[1].nullifiers,
+        carol_admitted.intents()[1].nullifiers
     );
     let alice_wins = alice_entry.tx < carol_entry.tx;
     let batch = vec![alice_entry.clone(), carol_entry.clone()];
@@ -188,7 +188,7 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
     assert_eq!(
         outcome.receipts[&loser.tx].outcome,
         Outcome::NullifierSpent {
-            key: alice_admitted.intents[1].nullifiers[0].key,
+            key: alice_admitted.intents()[1].nullifiers[0].key,
         }
     );
 
@@ -204,7 +204,7 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
     // The subintent leg settled exactly once.
     assert_eq!(amount_of(&end, vault(BOB, RES_Y)), 20);
     assert_eq!(amount_of(&end, vault(BOB, RES_X)), pay);
-    let record = &alice_admitted.intents[1];
+    let record = &alice_admitted.intents()[1];
     assert_eq!(
         cells(&end).get(&record.nullifiers[0].key),
         Some(
@@ -224,7 +224,7 @@ fn a_spent_nullifier_blocks_the_next_batch() -> Result<()> {
     let world = world();
     let (alice_entry, alice_admitted) = batch_entry(&world, &composed_tree(ALICE, 100))?;
     let (carol_entry, _) = batch_entry(&world, &composed_tree(CAROL, 120))?;
-    let nullifier = alice_admitted.intents[1].nullifiers[0].key;
+    let nullifier = alice_admitted.intents()[1].nullifiers[0].key;
 
     let (_, committed) = run_both(&seeded_store(), std::slice::from_ref(&alice_entry));
 

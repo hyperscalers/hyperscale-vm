@@ -1,7 +1,7 @@
 //! Composition: what a signed form is, before anything is judged.
 //!
-//! Shape-agnostic by design. A bare graph is one intent with no sockets
-//! and nothing offered into it, a tree is several joined through the
+//! Shape-agnostic by design. A leaf is one intent with no sockets and
+//! nothing offered into it, a composition is several joined through the
 //! interfaces they declare and resolved to the nodes that fill them,
 //! and nothing here reads a signature — fills, socket consumption, the
 //! deterministic interleave over the sockets and gives each node names,
@@ -170,7 +170,7 @@ fn check_constraints(
 /// The tree resolves every composer's wiring to this before anything
 /// is ordered or lowered, so the checker below sees a flat list of
 /// intents whose sockets are filled from named nodes — the same view a
-/// bare graph presents with no sockets at all.
+/// leaf presents with no sockets at all.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fill {
     /// The `output`-th edge of node `producer` inside `intent`.
@@ -341,8 +341,8 @@ pub(super) fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), Admission
             // The fill's channel against the socket's declared one. The
             // tree refuses the mismatch where the wiring is read, so
             // every later destructure over the pair holds by
-            // construction; held here too, since a bare graph's view is
-            // built by hand.
+            // construction; held here too, so the checker does not rest
+            // on the resolver alone.
             let declared = &intent.sockets[position];
             let agreed = matches!(
                 (declared, fill),

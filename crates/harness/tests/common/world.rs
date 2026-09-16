@@ -6,11 +6,11 @@ use std::sync::{Arc, LazyLock};
 
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG};
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, AdmittedTree, Claim, EnvelopeTree, Hash32, Hasher, InstanceMeta,
-    Intent, IntentHeader, LegShape, ManifestGraph, PACKAGE_SLOT_BASE, PackageHash,
-    PrefixShardResolver, PresentedGrants, PrincipalRule, Records, RuleBytes, ShardId,
-    ShardResolver, SlotId, Star, StoredRule, TestHasher, Value, admit_presenting, admit_tree,
-    child_key, collection_id, holdings_collection, legs_of, package_slot, per_shard, star_at,
+    AdmissionError, Admitted, Claim, EnvelopeTree, Hash32, Hasher, InstanceMeta, Intent,
+    IntentHeader, LegShape, ManifestGraph, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver,
+    PrincipalRule, Records, RuleBytes, ShardId, ShardResolver, SlotId, Star, StoredRule,
+    TestHasher, Value, admit_tree, child_key, collection_id, holdings_collection, legs_of,
+    nullifier_expiry_ms, nullifier_key, package_slot, per_shard, star_at,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, security, shares};
 use hyperscale_vm_harness::driver::{Lanes, declared_vault, run_lanes, test_hash, vault};
@@ -124,14 +124,13 @@ pub fn account_lanes() -> Lanes {
 pub fn batch_entry(world: &Records, tree: &EnvelopeTree, env: EnvInputs) -> Result<BatchTx> {
     let identity = tree.hash(&TestHasher);
     let admitted = admit_tree(tree, identity, world, &TestHasher).context("admission")?;
-    let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 0 });
+    let routing = per_shard(&admitted, &PrefixShardResolver { bits: 0 });
     ensure!(routing.len() == 1, "the null resolver routes to one shard");
-    Ok(BatchTx::new(
-        TxHash(identity.0),
-        admitted.admitted.declaration().clone(),
-        env,
+    Ok(
+        BatchTx::new(TxHash(identity.0), admitted.declaration().clone(), env)
+            .with_calls(admitted.calls().to_vec())
+            .with_nullifiers(admitted.intents().to_vec()),
     )
-    .with_calls(admitted.admitted.calls().to_vec()))
 }
 
 /// The account's own quarantine vault for a resource — its second
@@ -675,7 +674,8 @@ pub fn execute_manifest(
     ensure!(routing.len() == 1, "the null resolver routes to one shard");
     let declaration = admitted.declaration().clone();
     let entry = BatchTx::new(tx, declaration, EnvInputs { clock_ms, ..env() })
-        .with_calls(admitted.calls().to_vec());
+        .with_calls(admitted.calls().to_vec())
+        .with_nullifiers(admitted.intents().to_vec());
 
     let before = store.clone();
     // A presence requirement and a reservation are both judged here,
@@ -782,9 +782,40 @@ pub fn admit_here_attested(
     attested_by: &[PrincipalAddr],
     world: &Records,
 ) -> Result<Admitted, AdmissionError> {
-    let records = graph_records(graph, world, &TestHasher);
-    let grants = PresentedGrants::from_presented(&TestHasher, &records);
-    admit_presenting(graph, account, attested_by, world, &grants, &TestHasher)
+    let tree = leaf_tree(graph, account, attested_by, world);
+    admit_tree(&tree, tree.hash(&TestHasher), world, &TestHasher)
+}
+
+/// A tree of one leaf over `graph`, acting as `account` and attested by
+/// `attested_by`, presenting the records its own calls need — found the
+/// way a composer finds them rather than handed over.
+pub fn leaf_tree(
+    graph: &ManifestGraph,
+    account: PrincipalAddr,
+    attested_by: &[PrincipalAddr],
+    world: &Records,
+) -> EnvelopeTree {
+    EnvelopeTree {
+        root: Intent {
+            attested_by: attested_by.to_vec(),
+            ..Intent::leaf(HEADER, account, graph.clone())
+        },
+        instances: Vec::new(),
+        resources: graph_records(graph, world, &TestHasher),
+    }
+}
+
+/// The nullifier cell a leaf over `graph` acting as `account` spends,
+/// derived as admission derives it: the account, the intent's own hash
+/// and the window's end.
+pub fn leaf_nullifier(account: PrincipalAddr, graph: &ManifestGraph) -> SubstateKey {
+    let intent = Intent::leaf(HEADER, account, graph.clone());
+    nullifier_key(
+        &TestHasher,
+        account,
+        intent.hash(&TestHasher),
+        nullifier_expiry_ms(&HEADER),
+    )
 }
 
 pub fn sharded_routing(world: &Records, graph: &ManifestGraph) -> Admitted {
@@ -935,16 +966,12 @@ pub fn run_both_tree_admitted(
     world: &Records,
     store: &MemoryStore,
     tree: &EnvelopeTree,
-) -> Result<(BatchOutcome, MemoryStore, AdmittedTree), AdmissionError> {
+) -> Result<(BatchOutcome, MemoryStore, Admitted), AdmissionError> {
     let identity = tree.hash(&TestHasher);
     let admitted = admit_tree(tree, identity, world, &TestHasher)?;
-    let entry = BatchTx::new(
-        TxHash(identity.0),
-        admitted.admitted.declaration().clone(),
-        env(),
-    )
-    .with_calls(admitted.admitted.calls().to_vec())
-    .with_nullifiers(admitted.intents.clone());
+    let entry = BatchTx::new(TxHash(identity.0), admitted.declaration().clone(), env())
+        .with_calls(admitted.calls().to_vec())
+        .with_nullifiers(admitted.intents().to_vec());
     let (outcome, end) = run_lanes(&LANES, store, &[entry]);
     Ok((outcome, end, admitted))
 }

@@ -1,10 +1,10 @@
 //! Admission: the judgement that turns a signed form into a routing
 //! manifest.
 //!
-//! One checker serves both signed forms. A bare graph is the degenerate
-//! envelope — one intent with no sockets and nothing offered into it — and a
-//! composed tree is several intents joined through the sockets they
-//! declare, each carrying a value edge or a proof. So [`admit_intents`]
+//! One checker serves every tree. A leaf is the degenerate tree — one
+//! intent with no sockets and nothing offered into it — and a composition
+//! is several intents joined through the sockets they declare, each
+//! carrying a value edge or a proof. So [`admit_intents`]
 //! takes a slice of [`IntentView`] and everything below it is
 //! shape-agnostic: bindings and socket consumption per intent, a
 //! deterministic interleave over the sockets each node names, then one
@@ -39,21 +39,21 @@ pub(crate) use compose::{IntentView, check_instance_value_depth, check_value_dep
 pub use error::{AdmissionError, Placed};
 use hyperscale_vm_types::{
     Address, CallTarget, Effect, EffectTarget, IntentHash, MAX_MANIFEST_NODES, Mode, Presence,
-    PrincipalAddr, ResourceAddr,
+    ResourceAddr,
 };
 pub use inject::{Asks, Injected};
 use inject::{
     inject_destruction_rules, inject_issuance_rules, inject_movement_rules, inject_reach_rules,
 };
-pub(crate) use tree::{Interface, flatten, resolve_tree};
+pub(crate) use tree::{flatten, resolve_tree};
 
 use crate::claim::Claim;
 use crate::dsl::{
     Condition, Declaration, DeclaredAccess, EvalBudget, EvalInputs, PresentedGrants,
     evaluate_declaration, evaluate_expr,
 };
-use crate::envelope::{MARKER_CELL_BYTES, Socket};
-use crate::graph::{Constraint, EvidenceRef, GiveRef, GraphArg, GraphNode, ManifestGraph};
+use crate::envelope::{IntentRecord, MARKER_CELL_BYTES, Socket};
+use crate::graph::{Constraint, EvidenceRef, GiveRef, GraphArg, GraphNode};
 use crate::hash::{Hash32, Hasher};
 use crate::instance::{InstanceMeta, ResolveError};
 use crate::invoke::{IssuanceGrant, NodeCall};
@@ -74,9 +74,11 @@ use crate::vocabulary::{AUTH, CONFIG};
 /// as a `u32` index by construction rather than by hope.
 pub const MAX_SOCKETS: usize = 32;
 
-/// An admitted transaction: the routing manifest plus the identity that
-/// roots fresh-ID derivation — the signed graph's hash, so distinct
-/// signed transactions never mint the same fresh key.
+/// An admitted tree: the flattened routing manifest, the identity that
+/// roots fresh-ID derivation, and every intent's nullifier record.
+///
+/// The identity is the signed envelope's hash, so distinct signed
+/// transactions never mint the same fresh key.
 ///
 /// Only admission constructs one, so "the declaration comes from the fold
 /// that admitted it" is a fact about the types rather than a convention
@@ -90,6 +92,7 @@ pub struct Admitted {
     calls: Vec<NodeCall>,
     declaration: Declaration,
     origins: Vec<NodeOrigin>,
+    intents: Vec<IntentRecord>,
 }
 
 /// Which signed intent a manifest node came from, where in it, and what
@@ -216,10 +219,23 @@ impl Admitted {
         &self.declaration
     }
 
+    /// One record per intent the tree carries, in tree order: its hash
+    /// and the nullifier keys whose creation writes make it once-only.
+    #[must_use]
+    pub fn intents(&self) -> &[IntentRecord] {
+        &self.intents
+    }
+
+    /// Record the tree's intents beside the manifest they lowered to.
+    pub(crate) fn with_intents(mut self, intents: Vec<IntentRecord>) -> Self {
+        self.intents = intents;
+        self
+    }
+
     /// Declare an effect no signature asked for.
     ///
-    /// The kernel's own writes: today the exclusive nullifier creation
-    /// that makes a bound subintent executable once. It belongs to no
+    /// The kernel's own writes: the exclusive nullifier creation that
+    /// makes an intent executable once. It belongs to no
     /// frame, so it carries no clause and no reach, and it lands in the
     /// declaration admission already folded rather than in a second pass
     /// a caller could skip.
@@ -300,82 +316,6 @@ impl Admitted {
         }
         answered
     }
-}
-
-/// Admit a graph: check well-formedness, linearity, and type agreement
-/// against package metadata, and lower it to the routing manifest.
-///
-/// A bare graph is the degenerate tree: one intent acting as `composer`
-/// and attested by the key that account derives, no interface, no
-/// members, its own hash as the identity. Trees go through
-/// [`crate::envelope::admit_tree`], which supplies the identity from
-/// the signed envelope and the attesting set from its signatures.
-///
-/// The attesting set is the premise rather than a fact, so a caller
-/// whose signatures name somebody else — a delegate's key on this
-/// account's intent — states it at [`admit_presenting`] instead.
-///
-/// # Errors
-///
-/// Any [`AdmissionError`]; verdicts are deterministic and identical on
-/// every node.
-pub fn admit(
-    graph: &ManifestGraph,
-    composer: PrincipalAddr,
-    chain: &dyn ChainRecords,
-    hasher: &dyn Hasher,
-) -> Result<Admitted, AdmissionError> {
-    admit_presenting(
-        graph,
-        composer,
-        &[composer],
-        chain,
-        PresentedGrants::none(),
-        hasher,
-    )
-}
-
-/// The same, over resource records the composer presents.
-///
-/// A bare graph presents nothing, which is what every ungranted flow
-/// needs; a graph reaching a resource whose rules govern needs the
-/// record those rules derive, because the address is the hash of them
-/// and re-derivation is what makes a presented record trustworthy.
-///
-/// # Errors
-///
-/// [`AdmissionError`] on the same terms as [`admit`].
-pub fn admit_presenting(
-    graph: &ManifestGraph,
-    composer: PrincipalAddr,
-    attested_by: &[PrincipalAddr],
-    chain: &dyn ChainRecords,
-    grants: &PresentedGrants,
-    hasher: &dyn Hasher,
-) -> Result<Admitted, AdmissionError> {
-    check_value_depth(graph)?;
-    let identity = graph.hash(hasher);
-    let interface = Interface::default();
-    admit_intents(
-        &[IntentView {
-            graph,
-            sockets: &[],
-            interface: &interface,
-            accounts: std::slice::from_ref(&composer),
-            attested_by,
-            // A bare graph is signed whole by its composer, so what its
-            // signer signed is the graph itself.
-            identity: IntentHash(identity.0),
-            // And it names no window, which is the offer that stands
-            // forever — the same figure a header with no end derives.
-            expiry_ms: u64::MAX,
-        }],
-        identity,
-        chain,
-        &BTreeSet::new(),
-        grants,
-        hasher,
-    )
 }
 
 /// Check every intent's bindings and socket consumption, interleave the
@@ -493,6 +433,7 @@ pub(crate) fn admit_intents(
         calls,
         declaration,
         origins,
+        intents: Vec::new(),
     })
 }
 

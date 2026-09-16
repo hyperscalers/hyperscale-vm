@@ -13,8 +13,9 @@ use std::time::Instant;
 
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
-    Declaration, Hash32, Hasher, ManifestGraph, NodeCall, PackageHash, Records, TestHasher, Value,
-    admit, child_key,
+    AdmissionError, Admitted, ChainRecords, Declaration, EnvelopeTree, Hash32, Hasher, Intent,
+    IntentHeader, ManifestGraph, NodeCall, PackageHash, Records, TestHasher, Value, admit_tree,
+    child_key,
 };
 use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::{
@@ -29,10 +30,30 @@ use hyperscale_vm_runtime::{
 };
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    Address, Outcome, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Address, NetworkId, Outcome, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::error::Context;
 use wasmtime::{Engine, InstancePre, Linker, Module, Result, Store};
+
+/// Any window; nothing here validates one against a clock.
+const HEADER: IntentHeader = IntentHeader {
+    network: NetworkId(242),
+    validity_start_ms: 0,
+    validity_end_ms: 3_600_000,
+    discriminator: 0,
+};
+
+/// Admit `graph` as a tree of one leaf acting as `account`, attested by
+/// that account's own key.
+fn admit_leaf(
+    graph: &ManifestGraph,
+    account: PrincipalAddr,
+    chain: &dyn ChainRecords,
+    hasher: &dyn Hasher,
+) -> Result<Admitted, AdmissionError> {
+    let tree = EnvelopeTree::of_one(Intent::leaf(HEADER, account, graph.clone()));
+    admit_tree(&tree, tree.hash(hasher), chain, hasher)
+}
 
 const RES: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 const RECIPIENT: PrincipalAddr = PrincipalAddr::new([0xFE; 31]);
@@ -101,7 +122,7 @@ struct Routed {
 
 fn routed(world: &Records, from: PrincipalAddr) -> Result<Routed> {
     let graph = transfer_graph(world, from);
-    let admitted = admit(&graph, from, world, &TestHasher)?;
+    let admitted = admit_leaf(&graph, from, world, &TestHasher)?;
     Ok(Routed {
         declaration: admitted.declaration().clone(),
         calls: admitted.calls().to_vec(),
@@ -179,12 +200,12 @@ fn main() -> Result<()> {
             .collect();
         // Warmup.
         for (index, graph) in graphs.iter().enumerate().take(200) {
-            let admitted = admit(graph, sender(u32::try_from(index)?), &chain, &TestHasher)?;
+            let admitted = admit_leaf(graph, sender(u32::try_from(index)?), &chain, &TestHasher)?;
             std::hint::black_box(admitted);
         }
         let start = Instant::now();
         for (index, graph) in graphs.iter().enumerate() {
-            let admitted = admit(graph, sender(u32::try_from(index)?), &chain, &TestHasher)?;
+            let admitted = admit_leaf(graph, sender(u32::try_from(index)?), &chain, &TestHasher)?;
             std::hint::black_box(admitted);
         }
         println!(

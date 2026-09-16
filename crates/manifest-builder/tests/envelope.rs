@@ -744,12 +744,12 @@ fn a_user_composes_across_two_accounts() {
     assert_eq!(tree.root.attested_by, [ALICE, BOB]);
     let admitted = admit_tree(&tree, tree.hash(&TestHasher), &chain, &TestHasher)
         .expect("both sign-ins are the intent's own");
-    let [record] = admitted.intents.as_slice() else {
+    let [record] = admitted.intents() else {
         panic!("one intent");
     };
     assert_eq!(record.accounts().collect::<Vec<_>>(), [ALICE, BOB]);
     // Each withdrawal presents the account it draws from.
-    let manifest = admitted.admitted.manifest();
+    let manifest = admitted.manifest();
     assert!(
         manifest.nodes[0]
             .evidence
@@ -812,10 +812,10 @@ fn a_quote_grouped_into_a_basket_flattens_as_the_quote_does() {
         admit_tree(&tree, tree.hash(&TestHasher), &chain, &TestHasher).expect("the group resolves");
     let flat = swap(100, 10).unwrap();
     let leaf = admit_tree(&flat, flat.hash(&TestHasher), &chain, &TestHasher).unwrap();
-    assert_eq!(grouped.admitted.manifest(), leaf.admitted.manifest());
+    assert_eq!(grouped.manifest(), leaf.manifest());
     assert_eq!(
         grouped
-            .intents
+            .intents()
             .iter()
             .flat_map(IntentRecord::accounts)
             .collect::<Vec<_>>(),
@@ -908,7 +908,6 @@ fn a_regulated_leg_is_granted_by_the_composer() {
     // The withdrawing node carries both claims: the holder's own, and
     // the desk's — which reached it from another intent entirely.
     let withdrawing = admitted
-        .admitted
         .manifest()
         .nodes
         .iter()
@@ -969,7 +968,6 @@ fn a_claim_granted_two_levels_deep_is_regranted_at_every_level() {
     let admitted = admit_tree(&tree, tree.hash(&TestHasher), &chain, &TestHasher)
         .expect("re-granted at every level");
     let withdrawing = admitted
-        .admitted
         .manifest()
         .nodes
         .iter()
