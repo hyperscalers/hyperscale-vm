@@ -52,10 +52,10 @@ use crate::dsl::{
     Condition, Declaration, DeclaredAccess, EvalBudget, EvalInputs, PresentedGrants,
     evaluate_declaration, evaluate_expr,
 };
-use crate::envelope::{IntentRecord, MARKER_CELL_BYTES, Socket};
 use crate::graph::{Constraint, EvidenceRef, GiveRef, GraphArg, GraphNode};
 use crate::hash::{Hash32, Hasher};
 use crate::instance::{InstanceMeta, ResolveError};
+use crate::intent::{IntentRecord, MARKER_CELL_BYTES, Socket};
 use crate::invoke::{IssuanceGrant, NodeCall};
 use crate::manifest::{JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::PackageMetadata;
@@ -1146,7 +1146,7 @@ impl Admission<'_> {
         let mut evidence = Vec::with_capacity(node.evidence.len());
         for reference in &node.evidence {
             match reference {
-                EvidenceRef::IntentSignature => {
+                EvidenceRef::Attestation => {
                     // The accounts' virtual badges. Nobody holds them
                     // and no node proves them: the intent acts as these
                     // accounts, and each account's own shard attests
@@ -1421,8 +1421,8 @@ fn project_outputs(
 /// argument, so publish sees an expression rather than an address and
 /// only the evaluated effect can answer.
 ///
-/// The nullifier a bound subintent spends is not judged here: it sits
-/// under its signer's prefix, no signature declared it, and it reaches
+/// The nullifier an intent spends is not judged here: it sits under
+/// the account's prefix, no signature declared it, and it reaches
 /// the routing view as a kernel effect rather than through any frame.
 fn judge_prefixes(
     declaration: &Declaration,

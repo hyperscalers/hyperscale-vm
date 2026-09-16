@@ -3,7 +3,7 @@
 //! gates badges open.
 
 use hyperscale_vm_effects::{
-    Claim, EnvelopeTree, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta, ManifestGraph,
+    Claim, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta, IntentTree, ManifestGraph,
     Marked, Marker, PrincipalRule, Records, RuleBytes, StoredRule, TestHasher, Value,
     holdings_collection, never,
 };
@@ -177,7 +177,7 @@ fn a_threshold_rule_is_judged_over_the_intents_attesting_set() {
             .expect("a rule within the vocabulary caps")
             .in_cell(),
     );
-    let tx = |tree: &EnvelopeTree| TxHash(tree.hash(&TestHasher).0);
+    let tx = |tree: &IntentTree| TxHash(tree.hash(&TestHasher).0);
 
     let mut both = acting_as(&[ALICE], transfer_graph());
     both.root.attested_by = vec![BOB, MAKER];
@@ -426,7 +426,7 @@ fn a_signature_opens_only_the_account_its_intent_acts_as() {
                 GraphArg::Literal(Value::Address(RES_X.address())),
                 GraphArg::Literal(Value::U128(100)),
             ],
-            evidence: [EvidenceRef::IntentSignature].into(),
+            evidence: [EvidenceRef::Attestation].into(),
         }],
     };
     let (results, _) = run_both_signed(
@@ -1392,7 +1392,7 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
                 GraphArg::Literal(Value::Address(badge.address())),
                 GraphArg::Literal(Value::U64(id)),
             ],
-            evidence: [EvidenceRef::IntentSignature].into(),
+            evidence: [EvidenceRef::Attestation].into(),
         }],
     };
     let (results, store) = run_both_signed(

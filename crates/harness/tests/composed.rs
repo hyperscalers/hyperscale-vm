@@ -1,4 +1,4 @@
-//! The composed-transaction fixture: a two-signer envelope tree —
+//! The composed-transaction fixture: a two-signer intent tree —
 //! composer and subintent trading across yield edges — admitted,
 //! routed, and executed through the batch executor on both runtimes,
 //! with the nullifier making the subintent once-only.
@@ -6,7 +6,7 @@
 use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
-    Admitted, Constraint, EnvelopeTree, Hasher, IntentHeader, Marked, Marker, PackageHash,
+    Admitted, Constraint, Hasher, IntentHeader, IntentTree, Marked, Marker, PackageHash,
     PrefixShardResolver, Records, SignedIntent, TestHasher, admit_tree, per_shard,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
@@ -55,7 +55,7 @@ fn world() -> Records {
 /// socket brings; the composer withdraws its own, wires it into that
 /// socket, and deposits the give. Neither graph names the other; the
 /// tree is the two edges between them.
-fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
+fn composed_tree(account: PrincipalAddr, pay: u128) -> IntentTree {
     let chain = world();
     let mut sub = IntentBuilder::new(&chain, &TestHasher, BOB, TEST_HEADER);
     let taken = sub.declare(RES_X, [Constraint::MinAmount(100)]);
@@ -66,21 +66,21 @@ fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
         .into_decl()
         .expect("the subintent discharges its declaration");
 
-    let mut root = IntentBuilder::new(&chain, &TestHasher, composer, TEST_HEADER);
+    let mut root = IntentBuilder::new(&chain, &TestHasher, account, TEST_HEADER);
     let Interface { sockets, gives } = root
         .adopt(SignedIntent::unsigned(sub))
         .expect("the subintent adopts");
     let wants_x = sockets.one().expect("the subintent declares one socket");
     let paid_y = gives.one().expect("the subintent declares one give");
-    let funds = account::withdraw(&mut root, composer, RES_X, pay).expect("withdraw types");
+    let funds = account::withdraw(&mut root, account, RES_X, pay).expect("withdraw types");
     root.bind(wants_x, funds).expect("the socket takes an edge");
-    account::deposit(&mut root, composer, paid_y.min(10)).expect("deposit types");
+    account::deposit(&mut root, account, paid_y.min(10)).expect("deposit types");
     root.build().expect("every socket is bound")
 }
 
 /// Admit and route one envelope into its batch entry, plus the manifest
 /// its runner walks.
-fn batch_entry(world: &Records, tree: &EnvelopeTree) -> Result<(BatchTx, Admitted)> {
+fn batch_entry(world: &Records, tree: &IntentTree) -> Result<(BatchTx, Admitted)> {
     let identity = tree.hash(&TestHasher);
     let admitted = admit_tree(tree, identity, world, &TestHasher).context("admission")?;
     let routing = per_shard(&admitted, &PrefixShardResolver { bits: 0 });

@@ -20,10 +20,10 @@ use hyperscale_vm_types::{MAX_ATTESTATIONS, ResourceAddr};
 use super::AdmissionError;
 use super::compose::{Fill, Proven};
 use crate::claim::Claim;
-use crate::envelope::{
+use crate::graph::{EdgeRef, GiveRef, GraphNode};
+use crate::intent::{
     Binding, ClaimSource, Give, Intent, MAX_ACCOUNTS, MAX_TREE_DEPTH, Socket, ValueSource,
 };
-use crate::graph::{EdgeRef, GiveRef, GraphNode};
 
 /// One member's give, followed to the node that produces it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

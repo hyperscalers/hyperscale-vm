@@ -454,7 +454,7 @@ fn explicit_evidence_stands_in_for_the_scope() {
     let gated = graph.nodes.last().expect("the gated call is a node");
     assert_eq!(
         gated.evidence,
-        [EvidenceRef::Node(1), EvidenceRef::IntentSignature]
+        [EvidenceRef::Node(1), EvidenceRef::Attestation]
             .into_iter()
             .collect(),
         "the per-call spelling and the signature are the whole of the evidence"

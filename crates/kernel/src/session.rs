@@ -152,7 +152,7 @@ pub struct KernelSession {
     /// The owners this execution judges — what it judged before any body
     /// ran, and so what it may settle after. See [`OwnerSet`].
     judges: OwnerSet,
-    /// The subintent cells committing spends, from the batch entry.
+    /// The nullifier cells committing spends, from the batch entry.
     ///
     /// Held here rather than written by the caller because spending is
     /// part of committing: the write belongs in the layer the rest of
@@ -284,7 +284,7 @@ impl KernelSession {
         self
     }
 
-    /// The subintent cells a commit spends.
+    /// The nullifier cells a commit spends.
     #[must_use]
     pub fn with_nullifiers(mut self, nullifiers: Vec<IntentRecord>) -> Self {
         self.nullifiers = nullifiers;

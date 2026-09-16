@@ -12,9 +12,7 @@
 
 use hyperscale_hbor::EncodeError;
 pub use hyperscale_vm_effects::attest;
-use hyperscale_vm_effects::{
-    EnvelopeTree, Hasher, Intent, IntentHeader, ManifestGraph, encode_tree,
-};
+use hyperscale_vm_effects::{Hasher, Intent, IntentHeader, IntentTree, ManifestGraph, encode_tree};
 pub use hyperscale_vm_types::Terms;
 use hyperscale_vm_types::{AccountSigner, PrincipalAddr, TransactionEnvelope};
 
@@ -24,7 +22,7 @@ use hyperscale_vm_types::{AccountSigner, PrincipalAddr, TransactionEnvelope};
 /// when it was opened. Every member carries its own attestations inside
 /// the tree; the root's are given by [`sign`], one key at a time.
 #[must_use]
-pub fn wrap(tree: &EnvelopeTree, terms: Terms) -> TransactionEnvelope {
+pub fn wrap(tree: &IntentTree, terms: Terms) -> TransactionEnvelope {
     TransactionEnvelope {
         tree: encode_tree(tree),
         terms,
@@ -49,7 +47,7 @@ pub fn wrap_publish(
 ) -> TransactionEnvelope {
     let root = Intent::leaf(header, publisher, ManifestGraph::default());
     TransactionEnvelope {
-        tree: encode_tree(&EnvelopeTree::of_one(root)),
+        tree: encode_tree(&IntentTree::of_one(root)),
         terms,
         artifact: Some(artifact),
         signatures: Vec::new(),

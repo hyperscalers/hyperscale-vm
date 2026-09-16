@@ -53,7 +53,7 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
                     GraphArg::Literal(Value::Address(usdc.address())),
                     GraphArg::Literal(Value::U128(100)),
                 ],
-                evidence: [EvidenceRef::IntentSignature].into(),
+                evidence: [EvidenceRef::Attestation].into(),
             },
             GraphNode {
                 target: BOB.into(),
@@ -114,7 +114,7 @@ fn swap_writes_both_reserves_and_reads_the_config() {
                     GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(500)),
                 ],
-                evidence: [EvidenceRef::IntentSignature].into(),
+                evidence: [EvidenceRef::Attestation].into(),
             },
             GraphNode {
                 target: pool().into(),
@@ -193,7 +193,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
                     GraphArg::Literal(Value::Address(BASE.address())),
                     GraphArg::Literal(Value::U128(10)),
                 ],
-                evidence: [EvidenceRef::IntentSignature].into(),
+                evidence: [EvidenceRef::Attestation].into(),
             },
             GraphNode {
                 target: book().into(),
@@ -257,7 +257,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
                     GraphArg::Literal(Value::Address(QUOTE.address())),
                     GraphArg::Literal(Value::U128(1000)),
                 ],
-                evidence: [EvidenceRef::IntentSignature].into(),
+                evidence: [EvidenceRef::Attestation].into(),
             },
             GraphNode {
                 target: book().into(),
@@ -426,7 +426,7 @@ fn a_presented_record_is_the_whole_of_instantiation() {
                     GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(500)),
                 ],
-                evidence: [EvidenceRef::IntentSignature].into(),
+                evidence: [EvidenceRef::Attestation].into(),
             },
             GraphNode {
                 target: pool().into(),

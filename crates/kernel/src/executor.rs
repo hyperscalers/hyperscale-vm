@@ -78,10 +78,10 @@ pub struct BatchTx {
     /// What this execution does: walk the transaction's manifest, or
     /// settle records without invoking a node.
     pub job: Job,
-    /// The nullifier keys of every subintent the transaction commits.
+    /// The nullifier keys of every intent the transaction commits.
     /// Each must also be declared as an exclusive write,
     /// which [`execute_batch`] enforces: the declaration is what puts
-    /// racing committers of one subintent in a single conflict group,
+    /// racing committers of one intent in a single conflict group,
     /// where the spent check sees the winner's write. An existing cell
     /// at any of them aborts the transaction before it runs; completing
     /// writes them all — once-only by creation conflict.
@@ -136,7 +136,7 @@ pub struct BatchTx {
 }
 
 impl BatchTx {
-    /// A transaction with no bound subintents.
+    /// A transaction committing no intent.
     ///
     /// Takes the whole [`Declaration`] rather than either view, so the two
     /// cannot be paired wrongly on this path. The environment is an
@@ -304,7 +304,7 @@ impl BatchTx {
         }
     }
 
-    /// Bind the subintents this transaction commits. Each key must also be
+    /// Bind the intents this transaction commits. Each key must also be
     /// declared as an exclusive write.
     #[must_use]
     pub fn with_nullifiers(mut self, nullifiers: Vec<IntentRecord>) -> Self {
@@ -473,7 +473,7 @@ pub enum BatchError {
     },
     /// A nullifier key the transaction's effect set does not declare as an
     /// exclusive write. Once-only safety rests on that declaration: it is
-    /// what forces racing committers of one subintent into a single
+    /// what forces racing committers of one intent into a single
     /// conflict group, where the spent check sees the winner's write.
     #[error("transaction {tx:?} commits an undeclared nullifier {key:?}")]
     UndeclaredNullifier {
@@ -856,11 +856,11 @@ fn abort_receipt(outcome: Outcome, fuel_by_node: Vec<u64>) -> Receipt {
 }
 
 /// Every marker cell this execution creates, each with the outcome its
-/// presence beforehand means: the nullifier of each subintent it
+/// presence beforehand means: the nullifier of each intent it
 /// commits, the claims it takes, the records it writes.
 ///
 /// One list for the three families, in the order a caller wants them
-/// read: a spent nullifier says the subintent was already committed —
+/// read: a spent nullifier says the intent was already committed —
 /// by this group, an earlier batch, or the signer's own cancellation; a
 /// claim is the cell another party can write; a record only ever says
 /// this leg already ran. Whichever is found first names the outcome, so
@@ -933,7 +933,7 @@ fn run_group<R: GuestRunner>(
         // A marker already committed aborts before execution: a spent
         // nullifier says some earlier transaction — this group, an
         // earlier batch, or the signer's own cancellation — already
-        // committed the subintent; a crossing cell says this execution
+        // committed the intent; a crossing cell says this execution
         // has already run, or that somebody else took what it came for.
         // Either way the node must not run: a second claim would credit
         // value nobody issued, and a second issue would debit the
@@ -943,11 +943,11 @@ fn run_group<R: GuestRunner>(
         // Only the shard holding the cell can read it; elsewhere the
         // owning shard's verdict arrives through the tick combine.
         // Presence, not presence-and-unexpired. A marker past its
-        // expiry is unreachable rather than ignorable: the subintent a
+        // expiry is unreachable rather than ignorable: the intent a
         // nullifier records stopped being admissible a full grace
         // earlier, so no spend can arrive to read it. Reading it as
         // absent would only matter where one did arrive — a chain whose
-        // committed clock lags far enough to admit a lapsed subintent —
+        // committed clock lags far enough to admit a lapsed intent —
         // and there the cell is the last thing refusing the replay.
         let marked = created_cells(entry)
             .into_iter()

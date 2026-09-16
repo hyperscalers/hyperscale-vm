@@ -70,8 +70,8 @@ pub const MAX_TERMS_BYTES: usize = MAX_MANIFEST_NODES * 9 + MAX_MESSAGE_LEN + 12
 /// How long a transaction-derived artifact outlives the signed window it
 /// was derived from, in milliseconds.
 ///
-/// A subintent stops being admissible at its `validity_end_ms`, so the
-/// last transaction that could have bound it is admitted before then and
+/// An intent stops being admissible at its `validity_end_ms`, so the
+/// last transaction that could have carried it is admitted before then and
 /// has terminated everywhere a bounded stretch later. Past that the
 /// nullifier answers nobody, and no reshape reads it across a cut — it
 /// is state, and state migrates with its owner's prefix at every split

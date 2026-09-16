@@ -59,7 +59,7 @@ pub use hyperscale_vm_effects::{
     package_slot,
 };
 use hyperscale_vm_effects::{
-    CallArg, ChainRecords, EnvelopeTree, Hash32, Hasher, InstanceMeta, Intent, IntentHeader,
+    CallArg, ChainRecords, Hash32, Hasher, InstanceMeta, Intent, IntentHeader, IntentTree,
     NodeCall, PackageHash, Records, Value, admit_tree, child_key, collection_id, declaration_hash,
     explain_refusal, holdings_collection, issued_record,
 };
@@ -754,7 +754,7 @@ impl Chain {
             ..HEADER
         };
         let resources = graph_records(&graph, &self.records, &TestHasher);
-        let tree = EnvelopeTree {
+        let tree = IntentTree {
             root: Intent::leaf(header, signer, graph),
             instances: Vec::new(),
             resources,

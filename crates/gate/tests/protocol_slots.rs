@@ -6,7 +6,7 @@
 //! only thing that reads a hand-authored declaration before a block
 //! carries it is this gate.
 
-use hyperscale_vm_effects::envelope::NULLIFIER_SLOT;
+use hyperscale_vm_effects::intent::NULLIFIER_SLOT;
 use hyperscale_vm_effects::vocabulary::{AUTH, INSTANCE, RESOURCE};
 use hyperscale_vm_effects::{
     AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, RuleExpr,

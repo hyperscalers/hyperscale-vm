@@ -1414,7 +1414,7 @@ mod tests {
     use super::super::fixtures::{a_resource, one_clause, own_interval, own_point};
     use super::*;
     use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
-    use crate::envelope::NULLIFIER_SLOT;
+    use crate::intent::NULLIFIER_SLOT;
     use crate::metadata::PACKAGE_SLOT;
     use crate::resource::{GrantsExpr, ResourceKind};
     use crate::rule::{GrantRuleExpr, GrantSubject, RuleExpr, RuleLeaf};

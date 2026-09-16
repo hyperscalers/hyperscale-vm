@@ -303,7 +303,7 @@ impl Proof {
         proves[0] = Some(Claim::of_subject(account));
         Self {
             builder,
-            reference: EvidenceRef::IntentSignature,
+            reference: EvidenceRef::Attestation,
             proves,
         }
     }
@@ -1107,7 +1107,7 @@ impl<'a> TypedBuilder<'a> {
             // is most likely to want, and the one no node could prove
             // anyway — so evidence named at the call joins it rather
             // than standing in for it.
-            (true, []) => iter::once(EvidenceRef::IntentSignature)
+            (true, []) => iter::once(EvidenceRef::Attestation)
                 .chain(
                     gated
                         .iter()
@@ -1115,7 +1115,7 @@ impl<'a> TypedBuilder<'a> {
                         .map(|proof| proof.reference()),
                 )
                 .collect(),
-            (true, presented) => iter::once(EvidenceRef::IntentSignature)
+            (true, presented) => iter::once(EvidenceRef::Attestation)
                 .chain(presented.iter().map(|proof| proof.reference()))
                 .collect(),
         };

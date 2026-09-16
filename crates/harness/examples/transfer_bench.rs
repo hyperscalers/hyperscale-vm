@@ -13,8 +13,8 @@ use std::time::Instant;
 
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, ChainRecords, Declaration, EnvelopeTree, Hash32, Hasher, Intent,
-    IntentHeader, ManifestGraph, NodeCall, PackageHash, Records, TestHasher, Value, admit_tree,
+    AdmissionError, Admitted, ChainRecords, Declaration, Hash32, Hasher, Intent, IntentHeader,
+    IntentTree, ManifestGraph, NodeCall, PackageHash, Records, TestHasher, Value, admit_tree,
     child_key,
 };
 use hyperscale_vm_harness::fixtures::build_guest;
@@ -51,7 +51,7 @@ fn admit_leaf(
     chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
 ) -> Result<Admitted, AdmissionError> {
-    let tree = EnvelopeTree::of_one(Intent::leaf(HEADER, account, graph.clone()));
+    let tree = IntentTree::of_one(Intent::leaf(HEADER, account, graph.clone()));
     admit_tree(&tree, tree.hash(hasher), chain, hasher)
 }
 

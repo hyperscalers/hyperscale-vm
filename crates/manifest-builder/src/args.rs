@@ -15,7 +15,7 @@ use hyperscale_vm_types::{
 };
 
 use crate::builder::{Bucket, BuildError, GraphBuilder, SocketRef};
-use crate::envelope::Given;
+use crate::intent::Given;
 
 mod sealed {
     /// The sealing marker for [`Arg`](super::Arg) and

@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, VAULT};
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, ChainRecords, Clause, EnvelopeTree, Expr, GrantedBehaviour, Hash32,
-    Hasher, InstanceMeta, InstanceRegistry, Intent, IntentHeader, ManifestGraph, ManifestHash,
+    AdmissionError, Admitted, ChainRecords, Clause, Expr, GrantedBehaviour, Hash32, Hasher,
+    InstanceMeta, InstanceRegistry, Intent, IntentHeader, IntentTree, ManifestGraph, ManifestHash,
     MetadataCache, MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType,
     PrefixShardResolver, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, ShardId,
     ShardResolver, SlotId, SlotRef, StoredRule, TargetExpr, TestHasher, Totality, Value,
@@ -301,8 +301,8 @@ pub fn leaf_tree(
     account: PrincipalAddr,
     attested_by: &[PrincipalAddr],
     records: &[ResourceMeta],
-) -> EnvelopeTree {
-    EnvelopeTree {
+) -> IntentTree {
+    IntentTree {
         root: Intent {
             attested_by: attested_by.to_vec(),
             ..Intent::leaf(HEADER, account, graph.clone())

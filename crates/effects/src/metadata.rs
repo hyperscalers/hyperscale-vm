@@ -206,7 +206,7 @@ impl SlotWidths {
 /// belong to the package that wrote them, so they are bounded at the cap
 /// here, as is every slot outside the band.
 const fn protocol_width(slot: SlotId) -> u32 {
-    use crate::envelope::{
+    use crate::intent::{
         COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, ESCROW_CLAIM_SLOT, ESCROW_RECORD_SLOT,
         MARKER_CELL_BYTES, NULLIFIER_SLOT,
     };

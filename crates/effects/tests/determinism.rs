@@ -163,7 +163,7 @@ proptest! {
                         GraphArg::Literal(Value::Address(resource)),
                         GraphArg::Literal(Value::U128(amount)),
                     ],
-                    evidence: [EvidenceRef::IntentSignature].into(),
+                    evidence: [EvidenceRef::Attestation].into(),
                 },
                 GraphNode {
                     target: recipient.into(),
@@ -222,7 +222,7 @@ proptest! {
                         GraphArg::Literal(Value::Address(resource)),
                         GraphArg::Literal(Value::U128(1)),
                     ],
-                    evidence: [EvidenceRef::IntentSignature].into(),
+                    evidence: [EvidenceRef::Attestation].into(),
                 },
                 GraphNode {
                     target: recipient.into(),
@@ -302,7 +302,7 @@ mod golden {
                     target: ComponentAddr::new([0x10; 31]).into(),
                     method: "withdraw".into(),
                     args: vec![GraphArg::Literal(Value::U128(7))],
-                    evidence: [EvidenceRef::IntentSignature].into(),
+                    evidence: [EvidenceRef::Attestation].into(),
                 },
                 GraphNode {
                     target: ComponentAddr::new([0x20; 31]).into(),

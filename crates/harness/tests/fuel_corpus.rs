@@ -13,7 +13,7 @@
 //! engines are held to the same total, so a pin that drifts is a
 //! schedule change and should be read as one.
 
-use hyperscale_vm_effects::{EnvelopeTree, Intent, IntentHeader, ManifestGraph};
+use hyperscale_vm_effects::{Intent, IntentHeader, IntentTree, ManifestGraph};
 use hyperscale_vm_fixtures::amm;
 use hyperscale_vm_harness::driver::{declared_vault, vault};
 use hyperscale_vm_kernel::MemoryStore;
@@ -30,8 +30,8 @@ const HEADER: IntentHeader = IntentHeader {
     discriminator: 0,
 };
 
-fn single_intent(account: PrincipalAddr, graph: ManifestGraph) -> EnvelopeTree {
-    EnvelopeTree::of_one(Intent::leaf(HEADER, account, graph))
+fn single_intent(account: PrincipalAddr, graph: ManifestGraph) -> IntentTree {
+    IntentTree::of_one(Intent::leaf(HEADER, account, graph))
 }
 
 /// Run `graph` composed by `signer` over `store`, and report what each

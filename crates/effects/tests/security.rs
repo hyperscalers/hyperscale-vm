@@ -24,9 +24,9 @@ use std::collections::BTreeSet;
 
 use common::{ALICE, BOB, pkg, world};
 use hyperscale_vm_effects::{
-    AdmissionError, Binding, Claim, ClaimSource, EdgeRef, EnvelopeTree, EvidenceRef,
-    GrantedBehaviour, GraphArg, GraphNode, Hash32, InstanceMeta, Intent, IntentHeader, Issuance,
-    JudgedLeaf, LegRole, ManifestGraph, Member, PrefixShardResolver, Records, ResourceMeta, Rule,
+    AdmissionError, Binding, Claim, ClaimSource, EdgeRef, EvidenceRef, GrantedBehaviour, GraphArg,
+    GraphNode, Hash32, InstanceMeta, Intent, IntentHeader, IntentTree, Issuance, JudgedLeaf,
+    LegRole, ManifestGraph, Member, PrefixShardResolver, Records, ResourceMeta, Rule,
     ShardResolver, SignedIntent, Socket, TestHasher, Value, admit_tree, granting_issued_resource,
     holdings_collection, legs_of, star_at,
 };
@@ -128,13 +128,13 @@ fn credential(owner: impl Into<Address>, badge: ResourceAddr) -> EffectTarget {
 
 /// A withdrawal of `resource` from [`ALICE`]'s own account, banked back
 /// into it — an ordinary transfer declaring nothing about any rule.
-fn transfer(resource: ResourceAddr) -> EnvelopeTree {
+fn transfer(resource: ResourceAddr) -> IntentTree {
     transfer_to(resource, ALICE)
 }
 
 /// The same transfer, landing under `recipient`.
-fn transfer_to(resource: ResourceAddr, recipient: PrincipalAddr) -> EnvelopeTree {
-    EnvelopeTree {
+fn transfer_to(resource: ResourceAddr, recipient: PrincipalAddr) -> IntentTree {
+    IntentTree {
         root: Intent::leaf(
             TEST_HEADER,
             ALICE,
@@ -147,7 +147,7 @@ fn transfer_to(resource: ResourceAddr, recipient: PrincipalAddr) -> EnvelopeTree
                             GraphArg::Literal(Value::Address(resource.address())),
                             GraphArg::Literal(Value::U128(40)),
                         ],
-                        evidence: BTreeSet::from([EvidenceRef::IntentSignature]),
+                        evidence: BTreeSet::from([EvidenceRef::Attestation]),
                     },
                     GraphNode {
                         target: recipient.into(),
@@ -387,7 +387,7 @@ fn a_member_presenting_a_granted_claim_is_the_cores_off_the_granters_shard() {
         signed: SignedIntent::unsigned(bobs),
         wiring: vec![Binding::Authority(ClaimSource::Account(REGISTRAR))],
     }];
-    let mut env = EnvelopeTree::of_one(root);
+    let mut env = IntentTree::of_one(root);
     env.resources = vec![record(issuer, b"registered")];
     let admitted = admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher)
         .expect("the registrar grants what Bob's socket asks");

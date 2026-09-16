@@ -103,7 +103,7 @@ fn valid_graph() -> ManifestGraph {
                     GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(100)),
                 ],
-                evidence: [EvidenceRef::IntentSignature].into(),
+                evidence: [EvidenceRef::Attestation].into(),
             },
             GraphNode {
                 target: splitter().into(),
@@ -204,7 +204,7 @@ fn constraint_changes_reach_lowering_and_the_fresh_id_root() {
 fn evidence_is_presented_exactly_where_it_is_required() {
     let chain = setup();
     let mut extra = valid_graph();
-    extra.nodes[1].evidence = [EvidenceRef::IntentSignature].into();
+    extra.nodes[1].evidence = [EvidenceRef::Attestation].into();
     assert_eq!(
         admit_leaf(&extra, ALICE, &chain, &TestHasher),
         Err(AdmissionError::UnexpectedEvidence { node: 1 })
@@ -231,7 +231,7 @@ fn proof_graph() -> ManifestGraph {
                     GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(100)),
                 ],
-                evidence: [EvidenceRef::IntentSignature].into(),
+                evidence: [EvidenceRef::Attestation].into(),
             },
             GraphNode {
                 target: BOB.into(),
@@ -385,7 +385,7 @@ fn custodian_graph(custodian: ComponentAddr) -> ManifestGraph {
                 target: custodian.into(),
                 method: "present".into(),
                 args: vec![],
-                evidence: [EvidenceRef::IntentSignature].into(),
+                evidence: [EvidenceRef::Attestation].into(),
             },
             GraphNode {
                 target: custodian.into(),
@@ -1195,7 +1195,7 @@ fn a_halted_non_fungible_class_fences_the_interval_movement() {
                     GraphArg::Literal(Value::Address(seat.address())),
                     GraphArg::Literal(Value::List(vec![Value::U64(7)])),
                 ],
-                evidence: [EvidenceRef::IntentSignature].into(),
+                evidence: [EvidenceRef::Attestation].into(),
             },
             GraphNode {
                 target: BOB.into(),
@@ -1285,7 +1285,7 @@ fn a_double_destruction_asks_the_burn_question_once() {
             GraphArg::Literal(Value::Address(shreddable.address())),
             GraphArg::Literal(Value::U128(amount)),
         ],
-        evidence: [EvidenceRef::IntentSignature].into(),
+        evidence: [EvidenceRef::Attestation].into(),
     };
     let edge = |producer: u32| GraphArg::Edge {
         edge: EdgeRef {
@@ -1302,7 +1302,7 @@ fn a_double_destruction_asks_the_burn_question_once() {
                 target: shredder.into(),
                 method: "shred".into(),
                 args: vec![edge(0), edge(1)],
-                evidence: [EvidenceRef::IntentSignature].into(),
+                evidence: [EvidenceRef::Attestation].into(),
             },
         ],
     };
@@ -1575,7 +1575,7 @@ fn a_signature_presents_the_account_to_any_rule_naming_it() {
             target: target.into(),
             method: "act".into(),
             args: vec![],
-            evidence: [EvidenceRef::IntentSignature].into(),
+            evidence: [EvidenceRef::Attestation].into(),
         }],
     };
     let admitted = admit_leaf(&signed, ALICE, &chain, &TestHasher).expect("admits");
@@ -1602,7 +1602,7 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
             target: target.into(),
             method: "act".into(),
             args: vec![],
-            evidence: [EvidenceRef::IntentSignature].into(),
+            evidence: [EvidenceRef::Attestation].into(),
         }],
     };
     let admitted = admit_leaf(&graph, ALICE, &chain, &TestHasher).expect("admits");
@@ -1707,7 +1707,7 @@ fn evidence_follows_the_conditions_this_call_evaluated() {
     // and the intent's own signature answers for it.
     assert!(
         admit_leaf(
-            &call(true, [EvidenceRef::IntentSignature].into()),
+            &call(true, [EvidenceRef::Attestation].into()),
             ALICE,
             &chain,
             &TestHasher
@@ -1725,7 +1725,7 @@ fn evidence_follows_the_conditions_this_call_evaluated() {
     assert!(admit_leaf(&call(false, BTreeSet::new()), ALICE, &chain, &TestHasher).is_ok());
     assert_eq!(
         admit_leaf(
-            &call(false, [EvidenceRef::IntentSignature].into()),
+            &call(false, [EvidenceRef::Attestation].into()),
             ALICE,
             &chain,
             &TestHasher
@@ -1817,7 +1817,7 @@ fn a_reach_may_not_name_the_prefix_of_the_reaching_instance() {
                     GraphArg::Literal(Value::U64(u64::from(VAULT.0))),
                     GraphArg::Literal(Value::Address(seized.address())),
                 ],
-                evidence: [EvidenceRef::IntentSignature].into(),
+                evidence: [EvidenceRef::Attestation].into(),
             },
             GraphNode {
                 target: ALICE.into(),
@@ -1893,7 +1893,7 @@ fn a_reach_is_admitted_by_the_reached_resource_and_by_nothing_else() {
         ],
     };
     let presented = std::slice::from_ref(&record);
-    let reaching = [EvidenceRef::IntentSignature].into();
+    let reaching = [EvidenceRef::Attestation].into();
 
     // The record's entry names Alice, and her claim is what the frame
     // demands — injected, never declared, so the package says nothing
@@ -1917,7 +1917,7 @@ fn a_reach_is_admitted_by_the_reached_resource_and_by_nothing_else() {
     // absent authority withholds.
     assert_eq!(
         admit_leaf_presenting(
-            &graph([EvidenceRef::IntentSignature].into()),
+            &graph([EvidenceRef::Attestation].into()),
             ALICE,
             &[ALICE],
             &chain,

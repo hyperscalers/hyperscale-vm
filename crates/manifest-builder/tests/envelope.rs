@@ -8,14 +8,13 @@
 //! it crosses.
 
 use hyperscale_vm_effects::{
-    AdmissionError, Binding, Claim, ClaimSource, Constraint, EdgeRef, EnvelopeTree, EvidenceRef,
-    Give, GiveRef, GrantedBehaviour, GraphArg, Hash32, Hasher, InstanceMeta, Intent, IntentHeader,
-    IntentRecord, MAX_VALUE_DEPTH, PackageHash, Records, ResourceGrants, ResourceKind,
-    ResourceMeta, RuleBytes, SignedIntent, Socket, StoredRule, TestHasher, Value, ValueSource,
-    admit_tree,
+    AdmissionError, Binding, Claim, ClaimSource, Constraint, EdgeRef, EvidenceRef, Give, GiveRef,
+    GrantedBehaviour, GraphArg, Hash32, Hasher, InstanceMeta, Intent, IntentHeader, IntentRecord,
+    IntentTree, MAX_VALUE_DEPTH, PackageHash, Records, ResourceGrants, ResourceKind, ResourceMeta,
+    RuleBytes, SignedIntent, Socket, StoredRule, TestHasher, Value, ValueSource, admit_tree,
 };
 use hyperscale_vm_manifest_builder::{
-    BuildError, EnvelopeError, IntentBuilder, Interface, Offered, TypedError,
+    BuildError, IntentBuilder, IntentError, Interface, Offered, TypedError,
 };
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{Address, AddressClass, NetworkId, PrincipalAddr, ResourceAddr};
@@ -49,7 +48,7 @@ fn world() -> Records {
     chain
 }
 
-fn admits(tree: &EnvelopeTree) {
+fn admits(tree: &IntentTree) {
     let chain = world();
     let identity = tree.hash(&TestHasher);
     admit_tree(tree, identity, &chain, &TestHasher).expect("a composed tree admits");
@@ -57,7 +56,7 @@ fn admits(tree: &EnvelopeTree) {
 
 /// Bob's side of a trade, written before any composer exists: whoever
 /// hands him at least `pay_x` of X gets the `pay_y` of Y he gives.
-fn quote(pay_x: u128, pay_y: u128) -> Result<Intent, EnvelopeError> {
+fn quote(pay_x: u128, pay_y: u128) -> Result<Intent, IntentError> {
     let chain = world();
     let mut bob = IntentBuilder::new(&chain, &TestHasher, BOB, TEST_HEADER);
     let taken_x = bob.declare(RES_X, [Constraint::MinAmount(pay_x)]);
@@ -70,7 +69,7 @@ fn quote(pay_x: u128, pay_y: u128) -> Result<Intent, EnvelopeError> {
 /// The two-sided trade: Alice composes Bob's quote, withdraws what she
 /// pays into his socket, and banks what he gives. Neither graph mentions
 /// the other; the tree is the two edges between them.
-fn swap(pay_x: u128, pay_y: u128) -> Result<EnvelopeTree, EnvelopeError> {
+fn swap(pay_x: u128, pay_y: u128) -> Result<IntentTree, IntentError> {
     let chain = world();
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     let Interface { sockets, gives } = root.adopt(SignedIntent::unsigned(quote(pay_x, pay_y)?))?;
@@ -200,7 +199,7 @@ fn a_grant_of_an_account_the_composer_is_not_is_refused() {
         .expect_err("Carol's intent does not act as Alice");
     assert_eq!(
         refusal.cause,
-        EnvelopeError::GrantNotHeld {
+        IntentError::GrantNotHeld {
             intent: 1,
             socket: 0,
             account: ALICE,
@@ -226,7 +225,7 @@ fn a_grant_does_not_fill_a_value_socket() {
         .expect_err("a value socket takes an edge");
     assert_eq!(
         refusal.cause,
-        EnvelopeError::ProofForValueSocket {
+        IntentError::ProofForValueSocket {
             intent: 1,
             socket: 0
         }
@@ -257,7 +256,7 @@ fn a_refused_edge_comes_back_unspent() {
         .expect_err("an authority socket takes no edge");
     assert_eq!(
         refusal.cause,
-        EnvelopeError::EdgeForAuthoritySocket {
+        IntentError::EdgeForAuthoritySocket {
             intent: 1,
             socket: 0
         }
@@ -319,7 +318,7 @@ fn a_presented_hole_the_composition_never_bound_is_refused() {
     account::deposit(&mut root, ALICE, funds).unwrap();
     assert_eq!(
         root.build(),
-        Err(EnvelopeError::UnfilledSocket {
+        Err(IntentError::UnfilledSocket {
             intent: 1,
             socket: 0
         })
@@ -339,7 +338,7 @@ fn a_give_the_composition_never_took_is_refused() {
     root.bind(sockets.one().unwrap(), funds).unwrap();
     assert_eq!(
         root.build(),
-        Err(EnvelopeError::UnconsumedGive { intent: 1, give: 0 })
+        Err(IntentError::UnconsumedGive { intent: 1, give: 0 })
     );
 }
 
@@ -374,7 +373,7 @@ fn an_adopted_socket_consumed_from_the_other_channel_is_refused() {
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert_eq!(
         root.adopt(SignedIntent::unsigned(request)).map(|_| ()),
-        Err(EnvelopeError::SocketChannelMismatch {
+        Err(IntentError::SocketChannelMismatch {
             intent: 1,
             socket: 0
         })
@@ -386,7 +385,7 @@ fn an_adopted_socket_consumed_from_the_other_channel_is_refused() {
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert_eq!(
         root.adopt(SignedIntent::unsigned(request)).map(|_| ()),
-        Err(EnvelopeError::SocketChannelMismatch {
+        Err(IntentError::SocketChannelMismatch {
             intent: 1,
             socket: 0
         })
@@ -415,7 +414,7 @@ fn a_presented_record_too_deep_to_encode_refuses_at_build() {
     let refused = root
         .build()
         .expect_err("a record the wire could not carry never becomes a tree");
-    assert_eq!(refused, EnvelopeError::InstanceValueTooDeep { instance: 0 });
+    assert_eq!(refused, IntentError::InstanceValueTooDeep { instance: 0 });
 }
 
 /// Records ride the tree beside the root, so an intent finished as a
@@ -431,7 +430,7 @@ fn records_registered_on_a_member_are_refused() {
         config: Vec::new(),
         salt: Hash32([3; 32]),
     });
-    assert_eq!(member.into_decl(), Err(EnvelopeError::RecordsOnMember));
+    assert_eq!(member.into_decl(), Err(IntentError::RecordsOnMember));
 }
 
 #[test]
@@ -445,7 +444,7 @@ fn handles_unpacked_at_the_wrong_arity_are_refused() {
     // declaration's answer, not theirs.
     assert_eq!(
         sockets.none(),
-        Err(EnvelopeError::SocketArity {
+        Err(IntentError::SocketArity {
             intent: 1,
             declared: 1,
             claimed: 0
@@ -453,7 +452,7 @@ fn handles_unpacked_at_the_wrong_arity_are_refused() {
     );
     assert_eq!(
         gives.into_array::<2>().map(|_| ()),
-        Err(EnvelopeError::GiveArity {
+        Err(IntentError::GiveArity {
             intent: 1,
             declared: 1,
             claimed: 2
@@ -475,7 +474,7 @@ fn a_presented_declaration_that_discharges_nothing_is_refused() {
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert!(matches!(
         root.adopt(SignedIntent::unsigned(malformed)),
-        Err(EnvelopeError::UnconsumedSocket {
+        Err(IntentError::UnconsumedSocket {
             intent: 1,
             socket: 1
         })
@@ -495,7 +494,7 @@ fn a_presented_declaration_giving_what_it_does_not_hold_is_refused() {
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert!(matches!(
         root.adopt(SignedIntent::unsigned(malformed)),
-        Err(EnvelopeError::UnknownGive { intent: 1, give: 0 })
+        Err(IntentError::UnknownGive { intent: 1, give: 0 })
     ));
 }
 
@@ -510,7 +509,7 @@ fn a_hole_the_graph_never_consumes_is_refused() {
     account::deposit(&mut root, ALICE, funds).unwrap();
     assert!(matches!(
         root.into_decl(),
-        Err(EnvelopeError::UnconsumedSocket {
+        Err(IntentError::UnconsumedSocket {
             intent: 0,
             socket: 0
         })
@@ -529,7 +528,7 @@ fn a_hole_two_arguments_consume_is_refused() {
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert!(matches!(
         root.adopt(SignedIntent::unsigned(malformed)),
-        Err(EnvelopeError::SocketReused {
+        Err(IntentError::SocketReused {
             intent: 1,
             socket: 0
         })
@@ -548,7 +547,7 @@ fn a_parameter_the_intent_never_declared_is_refused() {
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert!(matches!(
         root.adopt(SignedIntent::unsigned(malformed)),
-        Err(EnvelopeError::UnknownSocket {
+        Err(IntentError::UnknownSocket {
             intent: 1,
             socket: 3
         })
@@ -565,7 +564,7 @@ fn a_root_declaring_an_interface_is_refused() {
     account::deposit(&mut root, ALICE, taken).unwrap();
     assert_eq!(
         root.build(),
-        Err(EnvelopeError::UnfilledSocket {
+        Err(IntentError::UnfilledSocket {
             intent: 0,
             socket: 0
         })
@@ -576,7 +575,7 @@ fn a_root_declaring_an_interface_is_refused() {
     root.give(funds);
     assert_eq!(
         root.build(),
-        Err(EnvelopeError::UnconsumedGive { intent: 0, give: 0 })
+        Err(IntentError::UnconsumedGive { intent: 0, give: 0 })
     );
 }
 
@@ -598,7 +597,7 @@ fn a_handle_from_another_builder_is_refused() {
     let refused = mine
         .bind(wants, elsewhere)
         .expect_err("an edge from another builder");
-    assert_eq!(refused.cause, EnvelopeError::ForeignBinding);
+    assert_eq!(refused.cause, IntentError::ForeignBinding);
 
     let mut theirs = IntentBuilder::new(&chain, &TestHasher, CAROL, TEST_HEADER);
     let Interface { sockets, gives } = theirs
@@ -609,8 +608,8 @@ fn a_handle_from_another_builder_is_refused() {
     let refused = theirs
         .bind(sockets.one().unwrap(), held)
         .expect_err("a proof from another builder");
-    assert_eq!(refused.cause, EnvelopeError::ForeignBinding);
-    assert_eq!(theirs.give_on(given), Err(EnvelopeError::ForeignBinding));
+    assert_eq!(refused.cause, IntentError::ForeignBinding);
+    assert_eq!(theirs.give_on(given), Err(IntentError::ForeignBinding));
 }
 
 /// The same fence for the tokens a graph consumes: a socket position
@@ -628,7 +627,7 @@ fn a_token_from_another_intent_cannot_be_consumed() {
     account::deposit(&mut root, ALICE, theirs).unwrap();
     assert_eq!(
         root.into_decl().expect_err("a foreign socket"),
-        EnvelopeError::Intent(TypedError::Build(BuildError::ForeignSocket)),
+        IntentError::Intent(TypedError::Build(BuildError::ForeignSocket)),
     );
 
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
@@ -642,7 +641,7 @@ fn a_token_from_another_intent_cannot_be_consumed() {
     account::deposit(&mut root, ALICE, theirs).unwrap();
     assert_eq!(
         root.into_decl().expect_err("a foreign give"),
-        EnvelopeError::Intent(TypedError::Build(BuildError::ForeignGive)),
+        IntentError::Intent(TypedError::Build(BuildError::ForeignGive)),
     );
 }
 
@@ -662,7 +661,7 @@ fn a_member_filled_from_its_own_give_is_refused_at_the_wiring() {
         .expect_err("a member cannot fill its own socket");
     assert_eq!(
         refused.cause,
-        EnvelopeError::SelfFilledSocket {
+        IntentError::SelfFilledSocket {
             intent: 1,
             socket: 0
         }
@@ -688,7 +687,7 @@ fn a_constrained_handle_is_not_wired_into_a_socket() {
         .expect_err("the socket bounds what fills it");
     assert_eq!(
         refused.cause,
-        EnvelopeError::ConstrainedOffering {
+        IntentError::ConstrainedOffering {
             intent: 1,
             socket: 0
         }
@@ -762,7 +761,7 @@ fn a_user_composes_across_two_accounts() {
 /// quote and presents its interface as her own — a socket for the X Bob
 /// wants, passed through, and a give of the Y he produces, given on —
 /// and Alice composes Carol's basket without ever seeing Bob.
-fn basket(pay_x: u128, pay_y: u128) -> Result<EnvelopeTree, EnvelopeError> {
+fn basket(pay_x: u128, pay_y: u128) -> Result<IntentTree, IntentError> {
     let chain = world();
     let mut carol = IntentBuilder::new(&chain, &TestHasher, CAROL, TEST_HEADER);
     let Interface { sockets, gives } = carol.adopt(SignedIntent::unsigned(quote(pay_x, pay_y)?))?;
@@ -872,7 +871,7 @@ fn note_request(approver: Claim) -> Intent {
 
 /// The composition that fills it: the desk grants the account its own
 /// intent acts as.
-fn approved(request: Intent) -> Result<EnvelopeTree, EnvelopeError> {
+fn approved(request: Intent) -> Result<IntentTree, IntentError> {
     let chain = world();
     let mut root = IntentBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
     let wants = root.adopt(SignedIntent::unsigned(request))?.sockets.one()?;
@@ -939,7 +938,7 @@ fn a_claim_granted_two_levels_deep_is_regranted_at_every_level() {
         .expect_err("Carol does not act as the desk");
     assert_eq!(
         refused.cause,
-        EnvelopeError::GrantNotHeld {
+        IntentError::GrantNotHeld {
             intent: 1,
             socket: 0,
             account: DESK,
@@ -1051,7 +1050,7 @@ fn an_edge_offered_to_an_authority_socket_is_refused() {
         .expect_err("an edge does not fill an authority socket");
     assert_eq!(
         refused.cause,
-        EnvelopeError::EdgeForAuthoritySocket {
+        IntentError::EdgeForAuthoritySocket {
             intent: 1,
             socket: 0
         }

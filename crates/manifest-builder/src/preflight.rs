@@ -23,7 +23,7 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, ChainRecords, Claim, EnvelopeTree, Hasher, IntentRecord, JudgedLeaf,
+    AdmissionError, Admitted, ChainRecords, Claim, Hasher, IntentRecord, IntentTree, JudgedLeaf,
     Manifest, ManifestHash, Rule, admit_tree, footprint,
 };
 use hyperscale_vm_types::{
@@ -357,8 +357,8 @@ pub struct IntentCost {
 /// The per-intent breakdown beside what no one intent owns.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ByIntent {
-    /// One entry per signed intent: the root first, then each bound
-    /// subintent in envelope order.
+    /// One entry per signed intent: the root first, then each member
+    /// in tree order.
     pub intents: Vec<IntentCost>,
     /// The cells more than one intent declares, ascending.
     ///
@@ -496,8 +496,7 @@ impl Report {
     /// What each signed intent contributes, in the dimensions that are
     /// its own, beside the cells no single intent owns.
     ///
-    /// The composer's root intent first, then each bound subintent in
-    /// envelope order.
+    /// The root intent first, then each member in tree order.
     ///
     /// **Three dimensions are deliberately absent.** A declaration is a
     /// set keyed by target — two intents naming one cell are one access,
@@ -689,7 +688,7 @@ impl Report {
 /// refuse, and [`PreflightError::Network`] for a network word no address
 /// can be named under.
 pub fn preflight_tree(
-    tree: &EnvelopeTree,
+    tree: &IntentTree,
     chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
     network: &str,

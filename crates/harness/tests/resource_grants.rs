@@ -12,7 +12,7 @@
 use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
-    AdmissionError, EnvelopeTree, GrantedBehaviour, Holding, IntentHeader, Records, ResourceGrants,
+    AdmissionError, GrantedBehaviour, Holding, IntentHeader, IntentTree, Records, ResourceGrants,
     ResourceKind, ResourceMeta, RuleBytes, StoredRule, TestHasher, Totality, admit_tree,
     holdings_collection, never,
 };
@@ -59,7 +59,7 @@ fn world() -> Records {
     account_world()
 }
 
-fn batch_entry(tree: &EnvelopeTree) -> Result<BatchTx> {
+fn batch_entry(tree: &IntentTree) -> Result<BatchTx> {
     common::world::batch_entry(&world(), tree, env())
 }
 
@@ -96,7 +96,7 @@ fn governed(entry: RuleBytes) -> ResourceAddr {
 /// The holder moves the governed resource out of their own account and
 /// banks it back — an ordinary transfer, declaring nothing about any
 /// rule, which is the whole point.
-fn governed_tree(entry: RuleBytes) -> Result<EnvelopeTree> {
+fn governed_tree(entry: RuleBytes) -> Result<IntentTree> {
     let chain = world();
     let mut root = IntentBuilder::new(&chain, &TestHasher, HOLDER, TEST_HEADER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
@@ -452,7 +452,7 @@ fn admitting(entry: RuleBytes) -> ResourceAddr {
 
 /// [`HOLDER`] sends the deposit-governed resource to `recipient`, in the
 /// same ordinary transfer a package that declared nothing composes.
-fn admitted_tree(entry: RuleBytes, recipient: PrincipalAddr) -> Result<EnvelopeTree> {
+fn admitted_tree(entry: RuleBytes, recipient: PrincipalAddr) -> Result<IntentTree> {
     let chain = world();
     let mut root = IntentBuilder::new(&chain, &TestHasher, HOLDER, TEST_HEADER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {

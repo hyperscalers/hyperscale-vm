@@ -6,8 +6,8 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, ChainRecords, Clause, EnvelopeTree, Expr, GraphNode, Hash32, Hasher,
-    InstanceMeta, Intent, IntentHeader, ManifestGraph, MethodSignature, ModeExpr, PackageHash,
+    AdmissionError, Admitted, ChainRecords, Clause, Expr, GraphNode, Hash32, Hasher, InstanceMeta,
+    Intent, IntentHeader, IntentTree, ManifestGraph, MethodSignature, ModeExpr, PackageHash,
     PackageMetadata, PrefixShardResolver, Records, ShardResolver, SlotId, SlotRef, TargetExpr,
     TestHasher, Totality, Value, admit_tree, collection_id, fresh_id, fresh_local,
 };
@@ -32,7 +32,7 @@ fn admit_leaf(
     chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
 ) -> Result<Admitted, AdmissionError> {
-    let tree = EnvelopeTree::of_one(Intent::leaf(HEADER, account, graph.clone()));
+    let tree = IntentTree::of_one(Intent::leaf(HEADER, account, graph.clone()));
     admit_tree(&tree, tree.hash(hasher), chain, hasher)
 }
 

@@ -8,7 +8,7 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    EnvelopeTree, Hash32, Hasher, InstanceMeta, Intent, IntentHeader, ManifestGraph, PackageHash,
+    Hash32, Hasher, InstanceMeta, Intent, IntentHeader, IntentTree, ManifestGraph, PackageHash,
     PrefixShardResolver, Records, ResourceKind, ShardId, ShardResolver, TestHasher, Value,
     issued_resource,
 };
@@ -215,7 +215,7 @@ fn main() {
 /// The preflight report, as a wallet would read it out: the graph under
 /// the header a wallet would sign it with, as the one intent of a tree.
 fn summarise(graph: &ManifestGraph, chain: &Records) {
-    let tree = EnvelopeTree::of_one(Intent::leaf(
+    let tree = IntentTree::of_one(Intent::leaf(
         IntentHeader {
             network: NetworkId(1),
             validity_start_ms: 0,

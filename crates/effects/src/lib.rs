@@ -22,12 +22,12 @@ pub mod artifact;
 pub mod auth;
 pub mod claim;
 pub mod dsl;
-pub mod envelope;
 pub mod explain;
 pub mod footprint;
 pub mod graph;
 pub mod hash;
 pub mod instance;
+pub mod intent;
 pub mod invoke;
 pub mod manifest;
 pub mod metadata;
@@ -58,14 +58,6 @@ pub use dsl::{
     evaluate_declaration, evaluate_effects, evaluate_expr, fresh_id, fresh_local, keying_resource,
     self_child, supports,
 };
-pub use envelope::{
-    Binding, COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, ClaimSource, CrossingCell, CrossingSite,
-    ESCROW_CLAIM_SLOT, ESCROW_RECORD_SLOT, EnvelopeTree, Give, Intent, IntentHeader, IntentRecord,
-    MARKER_CELL_BYTES, MAX_ACCOUNTS, MAX_INTENTS, MAX_TREE_DEPTH, Marked, Marker, Member,
-    NULLIFIER_SLOT, Nullifier, SignedIntent, Socket, TREE_WIRE_DEPTH, ValueSource, admit_tree,
-    attest, committed_tx_key, crossing_expiry_ms, decode_tree, encode_tree, escrow_claim_key,
-    escrow_record_key, nullifier_expiry_ms, nullifier_key,
-};
 pub use explain::{
     address_text, claim_text, explain, explain_admission, explain_admission_tree, explain_method,
     explain_refusal, explain_requirements, explain_resource, grants_read_config,
@@ -88,6 +80,14 @@ pub use hyperscale_vm_types::{
     VERIFY_WEIGHT, ValueEdge, entry_leaf_key, signature_bytes, signature_compute,
 };
 pub use instance::{InstanceMeta, InstanceRegistry, ResolveError};
+pub use intent::{
+    Binding, COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, ClaimSource, CrossingCell, CrossingSite,
+    ESCROW_CLAIM_SLOT, ESCROW_RECORD_SLOT, Give, Intent, IntentHeader, IntentRecord, IntentTree,
+    MARKER_CELL_BYTES, MAX_ACCOUNTS, MAX_INTENTS, MAX_TREE_DEPTH, Marked, Marker, Member,
+    NULLIFIER_SLOT, Nullifier, SignedIntent, Socket, TREE_WIRE_DEPTH, ValueSource, admit_tree,
+    attest, committed_tx_key, crossing_expiry_ms, decode_tree, encode_tree, escrow_claim_key,
+    escrow_record_key, nullifier_expiry_ms, nullifier_key,
+};
 pub use invoke::{CallArg, EdgeBound, IssuanceGrant, NodeCall, distinct_ids};
 pub use manifest::{Bounds, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{

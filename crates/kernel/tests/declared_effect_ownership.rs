@@ -19,8 +19,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, ChainRecords, Clause, Declaration, EnvelopeTree, Expr, GraphArg,
-    GraphNode, Hash32, Hasher, InstanceMeta, Intent, IntentHeader, ManifestGraph, MethodSignature,
+    AdmissionError, Admitted, ChainRecords, Clause, Declaration, Expr, GraphArg, GraphNode, Hash32,
+    Hasher, InstanceMeta, Intent, IntentHeader, IntentTree, ManifestGraph, MethodSignature,
     ModeExpr, PackageHash, PackageMetadata, ParamType, Records, SlotId, SlotRef, TargetExpr,
     TestHasher, Totality, Value, admit_tree, child_key,
 };
@@ -46,7 +46,7 @@ fn admit_leaf(
     chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
 ) -> Result<Admitted, AdmissionError> {
-    let tree = EnvelopeTree::of_one(Intent::leaf(HEADER, account, graph.clone()));
+    let tree = IntentTree::of_one(Intent::leaf(HEADER, account, graph.clone()));
     admit_tree(&tree, tree.hash(hasher), chain, hasher)
 }
 

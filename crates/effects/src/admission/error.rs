@@ -133,7 +133,7 @@ pub enum AdmissionError {
     /// value is nobody's to take back.
     #[error("intent {index} declares what an earlier one already did")]
     DuplicateIntent {
-        /// The offending subintent's index.
+        /// The offending intent's index, in tree order.
         index: u32,
     },
     /// A tree nested past [`MAX_TREE_DEPTH`](crate::MAX_TREE_DEPTH).

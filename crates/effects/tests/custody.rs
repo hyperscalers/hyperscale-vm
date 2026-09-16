@@ -21,10 +21,10 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, meta_granting, pkg, world};
 use hyperscale_vm_effects::vocabulary::{HALT, VAULT};
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, Claim, EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour,
-    GraphArg, GraphNode, Hash32, Holding, InstanceMeta, Intent, IntentHeader, JudgedLeaf,
-    ManifestGraph, Records, ResourceGrants, ResourceKind, ResourceMeta, Rule, RuleBytes, SlotRef,
-    StoredRule, TestHasher, Value, admit_tree, child_key,
+    AdmissionError, Admitted, Claim, EdgeRef, EvidenceRef, GrantedBehaviour, GraphArg, GraphNode,
+    Hash32, Holding, InstanceMeta, Intent, IntentHeader, IntentTree, JudgedLeaf, ManifestGraph,
+    Records, ResourceGrants, ResourceKind, ResourceMeta, Rule, RuleBytes, SlotRef, StoredRule,
+    TestHasher, Value, admit_tree, child_key,
 };
 use hyperscale_vm_fixtures::custodian;
 use hyperscale_vm_types::{
@@ -134,8 +134,8 @@ fn credential(owner: impl Into<Address>) -> SubstateKey {
 
 /// The custodian paying `holder`, so the value lands in an account —
 /// which keeps two families of vaults rather than one.
-fn paid_out(custodian: ComponentAddr, holder: PrincipalAddr) -> EnvelopeTree {
-    EnvelopeTree {
+fn paid_out(custodian: ComponentAddr, holder: PrincipalAddr) -> IntentTree {
+    IntentTree {
         root: Intent::leaf(
             TEST_HEADER,
             ALICE,
@@ -173,8 +173,8 @@ fn paid_out(custodian: ComponentAddr, holder: PrincipalAddr) -> EnvelopeTree {
 /// whoever signed has no holding in the transaction at all. Value is
 /// linear, so the withdrawal's edge has to land somewhere — and landing
 /// it back here is what makes the whole movement the custodian's own.
-fn round_trip(custodian: ComponentAddr) -> EnvelopeTree {
-    EnvelopeTree {
+fn round_trip(custodian: ComponentAddr) -> IntentTree {
+    IntentTree {
         root: Intent::leaf(
             TEST_HEADER,
             ALICE,
@@ -212,7 +212,7 @@ fn round_trip(custodian: ComponentAddr) -> EnvelopeTree {
 /// The tree admitted against `chain`, every intent attested by the key
 /// its own account derives — what a fixture means when it says nothing
 /// else about who signed.
-fn admit_env(env: &EnvelopeTree, chain: &Records) -> Result<Admitted, AdmissionError> {
+fn admit_env(env: &IntentTree, chain: &Records) -> Result<Admitted, AdmissionError> {
     admit_tree(env, env.hash(&TestHasher), chain, &TestHasher)
 }
 
@@ -438,7 +438,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
         };
         let target = instance.address(&TestHasher);
         chain.instances.create(&TestHasher, instance);
-        let env = EnvelopeTree {
+        let env = IntentTree {
             root: Intent::leaf(
                 TEST_HEADER,
                 ALICE,
@@ -511,8 +511,8 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
 /// reservation debits and says so, so the withdrawing node earns the
 /// `Withdraw` entry alone; the crediting node is `deposit`, which is
 /// the one method in the corpus carrying the total mark.
-fn transferred(from: PrincipalAddr, to: PrincipalAddr, resource: ResourceAddr) -> EnvelopeTree {
-    EnvelopeTree {
+fn transferred(from: PrincipalAddr, to: PrincipalAddr, resource: ResourceAddr) -> IntentTree {
+    IntentTree {
         root: Intent::leaf(
             TEST_HEADER,
             ALICE,
@@ -525,7 +525,7 @@ fn transferred(from: PrincipalAddr, to: PrincipalAddr, resource: ResourceAddr) -
                             GraphArg::Literal(Value::Address(resource.address())),
                             GraphArg::Literal(Value::U128(40)),
                         ],
-                        evidence: [EvidenceRef::IntentSignature].into(),
+                        evidence: [EvidenceRef::Attestation].into(),
                     },
                     GraphNode {
                         target: to.into(),

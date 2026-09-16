@@ -191,7 +191,7 @@ impl Bucket {
 /// sockets freely, which is why the count is still judged — at the
 /// finish, and by admission over the whole tree.
 ///
-/// [`IntentBuilder::declare`]: crate::envelope::IntentBuilder::declare
+/// [`IntentBuilder::declare`]: crate::intent::IntentBuilder::declare
 #[derive(Debug)]
 pub struct SocketRef {
     /// The builder whose declaration holds the socket. A position means
@@ -327,7 +327,7 @@ impl GraphBuilder {
             target,
             method,
             args,
-            BTreeSet::from([EvidenceRef::IntentSignature]),
+            BTreeSet::from([EvidenceRef::Attestation]),
         )
     }
 
@@ -610,7 +610,7 @@ mod tests {
                             GraphArg::Literal(Value::Address(RES.address())),
                             GraphArg::Literal(Value::U128(100)),
                         ],
-                        evidence: [EvidenceRef::IntentSignature].into(),
+                        evidence: [EvidenceRef::Attestation].into(),
                     },
                     GraphNode {
                         target: BOB.into(),

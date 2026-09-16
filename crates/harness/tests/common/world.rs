@@ -6,8 +6,8 @@ use std::sync::{Arc, LazyLock};
 
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG};
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, Claim, EnvelopeTree, Hash32, Hasher, InstanceMeta, Intent,
-    IntentHeader, LegShape, ManifestGraph, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver,
+    AdmissionError, Admitted, Claim, Hash32, Hasher, InstanceMeta, Intent, IntentHeader,
+    IntentTree, LegShape, ManifestGraph, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver,
     PrincipalRule, Records, RuleBytes, ShardId, ShardResolver, SlotId, Star, StoredRule,
     TestHasher, Value, admit_tree, child_key, collection_id, holdings_collection, legs_of,
     nullifier_expiry_ms, nullifier_key, package_slot, per_shard, star_at,
@@ -69,8 +69,8 @@ pub const HEADER: IntentHeader = IntentHeader {
 /// How a party composes across their own accounts: one declaration,
 /// signed once, signed in on each account's shard and nullified under
 /// each account's prefix.
-pub fn acting_as(accounts: &[PrincipalAddr], graph: ManifestGraph) -> EnvelopeTree {
-    EnvelopeTree::of_one(Intent {
+pub fn acting_as(accounts: &[PrincipalAddr], graph: ManifestGraph) -> IntentTree {
+    IntentTree::of_one(Intent {
         accounts: accounts.to_vec(),
         attested_by: accounts.to_vec(),
         ..Intent::leaf(HEADER, accounts[0], graph)
@@ -121,7 +121,7 @@ pub fn account_lanes() -> Lanes {
 
 /// One admitted, routed batch entry over `world`, under the null
 /// resolver's single shard.
-pub fn batch_entry(world: &Records, tree: &EnvelopeTree, env: EnvInputs) -> Result<BatchTx> {
+pub fn batch_entry(world: &Records, tree: &IntentTree, env: EnvInputs) -> Result<BatchTx> {
     let identity = tree.hash(&TestHasher);
     let admitted = admit_tree(tree, identity, world, &TestHasher).context("admission")?;
     let routing = per_shard(&admitted, &PrefixShardResolver { bits: 0 });
@@ -794,8 +794,8 @@ pub fn leaf_tree(
     account: PrincipalAddr,
     attested_by: &[PrincipalAddr],
     world: &Records,
-) -> EnvelopeTree {
-    EnvelopeTree {
+) -> IntentTree {
+    IntentTree {
         root: Intent {
             attested_by: attested_by.to_vec(),
             ..Intent::leaf(HEADER, account, graph.clone())
@@ -937,7 +937,7 @@ pub fn run_both(
     run_both_signed(world, store, transactions, None)
 }
 
-/// Admit, route and execute one envelope tree on both lanes.
+/// Admit, route and execute one intent tree on both lanes.
 ///
 /// The tree's own path rather than the bare graph's: an envelope carries
 /// its bindings and its records itself, so nothing is attached here, and
@@ -950,7 +950,7 @@ pub fn run_both(
 pub fn run_both_tree(
     world: &Records,
     store: &MemoryStore,
-    tree: &EnvelopeTree,
+    tree: &IntentTree,
 ) -> Result<(BatchOutcome, MemoryStore), AdmissionError> {
     let (outcome, end, _) = run_both_tree_admitted(world, store, tree)?;
     Ok((outcome, end))
@@ -965,7 +965,7 @@ pub fn run_both_tree(
 pub fn run_both_tree_admitted(
     world: &Records,
     store: &MemoryStore,
-    tree: &EnvelopeTree,
+    tree: &IntentTree,
 ) -> Result<(BatchOutcome, MemoryStore, Admitted), AdmissionError> {
     let identity = tree.hash(&TestHasher);
     let admitted = admit_tree(tree, identity, world, &TestHasher)?;

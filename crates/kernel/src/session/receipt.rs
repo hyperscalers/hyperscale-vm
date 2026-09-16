@@ -489,10 +489,10 @@ impl KernelSession {
         Ok(Phase::Produced(settles))
     }
 
-    /// What a nullifier cell holds: the subintent this spend consumed,
+    /// What a nullifier cell holds: the intent this spend consumed,
     /// the transaction that consumed it, and when the record stops being
     /// owed. Self-describing, and keyed by what it says — the cell's own
-    /// key re-derives from the subintent and the expiry.
+    /// key re-derives from the intent and the expiry.
     fn spend_record(&self, record: &IntentRecord) -> Vec<u8> {
         Marker {
             tx: self.tx,

@@ -58,9 +58,9 @@ use crate::admission::{
 };
 use crate::claim::Claim;
 use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr, preorder_len};
-use crate::envelope::{EnvelopeTree, NULLIFIER_SLOT};
 use crate::graph::{GraphArg, GraphNode, ManifestGraph};
 use crate::hash::Hasher;
+use crate::intent::{IntentTree, NULLIFIER_SLOT};
 use crate::manifest::JudgedLeaf;
 use crate::metadata::{LeafForm, PACKAGE_SLOT, PackageMetadata, SlotKind, SlotShape};
 use crate::records::ChainRecords;
@@ -515,7 +515,7 @@ pub fn explain_admission(
     explain_placed(&[graph], None, records, refusal)
 }
 
-/// A refusal at admitting an envelope tree, with the place it points to
+/// A refusal at admitting an intent tree, with the place it points to
 /// spelled out on [`explain_admission`]'s terms.
 ///
 /// A flattened node index numbers the emission order of the same
@@ -526,7 +526,7 @@ pub fn explain_admission(
 /// order.
 #[must_use]
 pub fn explain_admission_tree(
-    tree: &EnvelopeTree,
+    tree: &IntentTree,
     records: &dyn ChainRecords,
     refusal: &AdmissionError,
 ) -> String {

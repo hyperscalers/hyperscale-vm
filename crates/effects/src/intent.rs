@@ -356,7 +356,7 @@ pub struct Member {
 }
 
 const DOMAIN_INTENT: &[u8] = b"hyperscale-vm/intent";
-const DOMAIN_ENVELOPE_TREE: &[u8] = b"hyperscale-vm/envelope-tree";
+const DOMAIN_INTENT_TREE: &[u8] = b"hyperscale-vm/envelope-tree";
 
 impl Intent {
     /// The intent's identity through the hasher seam: the header, the
@@ -525,7 +525,7 @@ pub enum ClaimSource {
 /// attesting sets, the nullifier records, the flattened manifest — is in
 /// that order.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
-pub struct EnvelopeTree {
+pub struct IntentTree {
     /// The intent nobody composes, and beneath it every other intent the
     /// tree holds. Its attestations are the envelope's, since what they
     /// cover is the envelope: the root's hash, the terms and the
@@ -551,7 +551,7 @@ pub struct EnvelopeTree {
     pub resources: Vec<ResourceMeta>,
 }
 
-impl EnvelopeTree {
+impl IntentTree {
     /// Every intent the tree holds, in tree order.
     #[must_use]
     pub fn intents(&self) -> Vec<&Intent> {
@@ -618,7 +618,7 @@ impl EnvelopeTree {
             to_vec(&self.resources).expect("resource records are wire-bounded values"),
         ];
         let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
-        ManifestHash(hasher.hash(DOMAIN_ENVELOPE_TREE, &refs))
+        ManifestHash(hasher.hash(DOMAIN_INTENT_TREE, &refs))
     }
 }
 
@@ -1225,7 +1225,7 @@ impl IntentRecord {
 /// On a tree past the vocabulary's own caps — one no admission path can
 /// have accepted.
 #[must_use]
-pub fn encode_tree(tree: &EnvelopeTree) -> Vec<u8> {
+pub fn encode_tree(tree: &IntentTree) -> Vec<u8> {
     to_vec_with_depth(tree, TREE_WIRE_DEPTH).expect("a tree within its caps encodes")
 }
 
@@ -1236,7 +1236,7 @@ pub fn encode_tree(tree: &EnvelopeTree) -> Vec<u8> {
 ///
 /// [`DecodeError`] for bytes that are not a tree, or one nested past
 /// the depth the vocabulary admits.
-pub fn decode_tree(bytes: &[u8]) -> Result<EnvelopeTree, DecodeError> {
+pub fn decode_tree(bytes: &[u8]) -> Result<IntentTree, DecodeError> {
     from_slice_with_depth(bytes, TREE_WIRE_DEPTH)
 }
 
@@ -1261,7 +1261,7 @@ pub fn decode_tree(bytes: &[u8]) -> Result<EnvelopeTree, DecodeError> {
 /// Only on an index past `u32`, which the [`MAX_INTENTS`] check above it
 /// excludes.
 pub fn admit_tree(
-    tree: &EnvelopeTree,
+    tree: &IntentTree,
     identity: ManifestHash,
     chain: &dyn ChainRecords,
     hasher: &dyn Hasher,

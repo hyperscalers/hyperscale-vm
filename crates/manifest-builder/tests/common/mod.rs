@@ -3,7 +3,7 @@
 #![allow(dead_code)] // shared between test binaries; each uses a subset
 
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, ChainRecords, EnvelopeTree, Hasher, Intent, IntentHeader,
+    AdmissionError, Admitted, ChainRecords, Hasher, Intent, IntentHeader, IntentTree,
     ManifestGraph, ResourceMeta, admit_tree,
 };
 use hyperscale_vm_types::{NetworkId, PrincipalAddr};
@@ -23,8 +23,8 @@ pub fn leaf_tree(
     account: PrincipalAddr,
     attested_by: &[PrincipalAddr],
     records: &[ResourceMeta],
-) -> EnvelopeTree {
-    EnvelopeTree {
+) -> IntentTree {
+    IntentTree {
         root: Intent {
             attested_by: attested_by.to_vec(),
             ..Intent::leaf(HEADER, account, graph.clone())

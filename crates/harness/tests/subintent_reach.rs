@@ -29,7 +29,7 @@
 //! itself is `capability_reach.rs`.
 
 use hyperscale_vm_effects::{
-    Admitted, CallArg, Constraint, EnvelopeTree, Hasher, IntentHeader, PackageHash,
+    Admitted, CallArg, Constraint, Hasher, IntentHeader, IntentTree, PackageHash,
     PrefixShardResolver, Records, SignedIntent, TestHasher, admit_tree, per_shard,
 };
 use hyperscale_vm_embed::abi::{ABI, EVENTS, MEMORY, STATE};
@@ -92,7 +92,7 @@ fn world() -> Records {
 /// deposits what his socket brings; Alice withdraws hers, wires it into
 /// his socket, and deposits his give. Neither graph names the other, and
 /// the tree is the two edges between them.
-fn traded() -> EnvelopeTree {
+fn traded() -> IntentTree {
     let chain = world();
     let mut sub = IntentBuilder::new(&chain, &TestHasher, BOB, TEST_HEADER);
     let taken = sub.declare(RES_X, [Constraint::MinAmount(PAYS)]);
@@ -117,7 +117,7 @@ fn traded() -> EnvelopeTree {
 
 /// Admit and route the tree the way a block would, into the one entry
 /// its runner walks.
-fn routed(world: &Records, tree: &EnvelopeTree) -> Result<(BatchTx, Admitted)> {
+fn routed(world: &Records, tree: &IntentTree) -> Result<(BatchTx, Admitted)> {
     let identity = tree.hash(&TestHasher);
     let admitted = admit_tree(tree, identity, world, &TestHasher).context("admission")?;
     let routing = per_shard(&admitted, &PrefixShardResolver { bits: 0 });

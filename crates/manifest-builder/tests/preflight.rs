@@ -11,8 +11,8 @@ mod common;
 
 use common::admit_leaf;
 use hyperscale_vm_effects::{
-    Claim, Clause, Constraint, EnvelopeTree, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta,
-    Intent, IntentHeader, ManifestGraph, MethodSignature, PackageHash, PackageMetadata,
+    Claim, Clause, Constraint, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta, Intent,
+    IntentHeader, IntentTree, ManifestGraph, MethodSignature, PackageHash, PackageMetadata,
     PrefixShardResolver, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes,
     ShardResolver, SignedIntent, StoredRule, TestHasher, Totality, Value, admit_tree, footprint,
 };
@@ -96,8 +96,8 @@ const SHARDS: PrefixShardResolver = PrefixShardResolver { bits: 2 };
 
 /// The degenerate tree a plain transaction is: one intent under the test
 /// header, no sockets, nothing bound.
-fn one_intent(account: PrincipalAddr, graph: &ManifestGraph) -> EnvelopeTree {
-    EnvelopeTree::of_one(Intent::leaf(TEST_HEADER, account, graph.clone()))
+fn one_intent(account: PrincipalAddr, graph: &ManifestGraph) -> IntentTree {
+    IntentTree::of_one(Intent::leaf(TEST_HEADER, account, graph.clone()))
 }
 
 #[test]

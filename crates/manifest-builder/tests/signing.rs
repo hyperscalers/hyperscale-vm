@@ -14,7 +14,7 @@
 //! accept the result.
 
 use hyperscale_vm_effects::{
-    EnvelopeTree, Hasher, Intent, IntentHeader, PackageHash, Records, TestHasher, decode_tree,
+    Hasher, Intent, IntentHeader, IntentTree, PackageHash, Records, TestHasher, decode_tree,
     encode_tree,
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
@@ -122,7 +122,7 @@ fn a_transaction_signs_and_verifies_inside_this_workspace() {
     account::deposit(&mut builder, BOB, funds).expect("an account is paid");
     let graph = builder.build().expect("every output is consumed");
 
-    let tree = EnvelopeTree::of_one(Intent::leaf(HEADER, ALICE, graph));
+    let tree = IntentTree::of_one(Intent::leaf(HEADER, ALICE, graph));
 
     let key = TestSigner(7);
     let envelope =
@@ -148,7 +148,7 @@ fn the_signature_covers_what_the_envelope_says() {
     let mut builder = TypedBuilder::new(&chain, &TestHasher, ALICE);
     let funds = account::withdraw(&mut builder, ALICE, RES, 100).expect("an account withdraws");
     account::deposit(&mut builder, BOB, funds).expect("an account is paid");
-    let tree = EnvelopeTree::of_one(Intent::leaf(
+    let tree = IntentTree::of_one(Intent::leaf(
         HEADER,
         ALICE,
         builder.build().expect("every output is consumed"),

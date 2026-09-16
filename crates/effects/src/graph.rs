@@ -105,9 +105,9 @@ pub const MAX_EVIDENCE_PER_NODE: usize = 8;
 /// composition answers for what fills it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 pub enum EvidenceRef {
-    /// The proof the enclosing intent's own signature produces, carrying
-    /// the identity of whoever signed that intent.
-    IntentSignature,
+    /// The proof the enclosing intent's own attestation produces: the
+    /// claim of each account that intent acts as.
+    Attestation,
     /// The proof an earlier node of the same intent proved, carrying the
     /// identity of that node's target.
     ///
@@ -169,7 +169,7 @@ impl GraphNode {
             .iter()
             .filter_map(|reference| match reference {
                 EvidenceRef::Socket(socket) => Some(*socket),
-                EvidenceRef::IntentSignature | EvidenceRef::Node(_) => None,
+                EvidenceRef::Attestation | EvidenceRef::Node(_) => None,
             });
         args.chain(presented)
     }
@@ -212,7 +212,7 @@ impl GraphNode {
         args: Vec<GraphArg>,
     ) -> Self {
         Self {
-            evidence: BTreeSet::from([EvidenceRef::IntentSignature]),
+            evidence: BTreeSet::from([EvidenceRef::Attestation]),
             ..Self::new(target, method, args)
         }
     }

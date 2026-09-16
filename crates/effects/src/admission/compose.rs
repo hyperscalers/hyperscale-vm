@@ -12,10 +12,10 @@ use hyperscale_vm_types::{IntentHash, PrincipalAddr, ResourceAddr};
 
 use super::tree::Interface;
 use super::{AdmissionError, MAX_SOCKETS};
-use crate::envelope::Socket;
 use crate::graph::{Constraint, EdgeRef, GraphArg, ManifestGraph};
 use crate::hash::Hash32;
 use crate::instance::InstanceMeta;
+use crate::intent::Socket;
 use crate::manifest::{Bounds, NodeInput};
 use crate::resource::ResourceKind;
 use crate::signature::ParamType;

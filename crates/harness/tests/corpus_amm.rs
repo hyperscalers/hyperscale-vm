@@ -2,13 +2,13 @@
 //! math, output floors, and the share vault's rounding.
 
 use hyperscale_vm_effects::{
-    AdmissionError, Claim, EnvelopeTree, Hash32, Intent, IntentHeader, ManifestGraph, SignedIntent,
+    AdmissionError, Claim, Hash32, Intent, IntentHeader, IntentTree, ManifestGraph, SignedIntent,
     SlotId, TestHasher, Value, child_key, holdings_collection,
 };
 use hyperscale_vm_fixtures::{amm, shares};
 use hyperscale_vm_harness::driver::{amount_of, declared_vault, vault};
 use hyperscale_vm_kernel::MemoryStore;
-use hyperscale_vm_manifest_builder::{EnvelopeError, IntentBuilder};
+use hyperscale_vm_manifest_builder::{IntentBuilder, IntentError};
 use hyperscale_vm_sdk::client::VaultField;
 use hyperscale_vm_sdk::{Declines, DeclinesAs};
 use hyperscale_vm_stdlib::account;
@@ -506,7 +506,7 @@ fn approval_request(approver: Claim) -> Intent {
 
 /// The composition that fills it: the registrar grants the account its
 /// own intent acts as.
-fn approved_composition(request: Intent) -> Result<EnvelopeTree, EnvelopeError> {
+fn approved_composition(request: Intent) -> Result<IntentTree, IntentError> {
     let chain = world();
     let mut root = IntentBuilder::new(&chain, &TestHasher, REGISTRAR, TEST_HEADER);
     let wants = root

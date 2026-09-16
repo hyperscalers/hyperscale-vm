@@ -12,9 +12,9 @@ use common::admit_leaf;
 use hyperscale_vm_effects::vocabulary::AUTH;
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, Binding, Bounds, ChainRecords, Claim, ClaimSource, Constraint,
-    CrossingCell, CrossingSite, ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, EnvelopeTree,
-    EvidenceRef, Give, GiveRef, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, Intent,
-    IntentHash, IntentHeader, IntentRecord, JudgedLeaf, MAX_ACCOUNTS, MAX_SOCKETS, MAX_TREE_DEPTH,
+    CrossingCell, CrossingSite, ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, EvidenceRef, Give,
+    GiveRef, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, Intent, IntentHash, IntentHeader,
+    IntentRecord, IntentTree, JudgedLeaf, MAX_ACCOUNTS, MAX_SOCKETS, MAX_TREE_DEPTH,
     MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, Marked, Marker, Member, NULLIFIER_SLOT,
     NodeInput, PackageHash, PrefixShardResolver, Records, ResourceKind, Rule, ShardResolver,
     SignedIntent, Socket, TREE_WIRE_DEPTH, TestHasher, Value, ValueSource, admit_tree,
@@ -146,8 +146,8 @@ fn compose(mut composer: Intent, members: Vec<(Intent, Vec<Binding>)>) -> Intent
     composer
 }
 
-const fn tree(root: Intent) -> EnvelopeTree {
-    EnvelopeTree::of_one(root)
+const fn tree(root: Intent) -> IntentTree {
+    IntentTree::of_one(root)
 }
 
 /// Bob's offer: withdraw Y, bank whatever X arrives, at least a hundred
@@ -166,7 +166,7 @@ fn bobs_offer() -> Intent {
 
 /// The two-signer swap: the root withdraws X and banks the Y Bob gives;
 /// Bob withdraws Y and banks the X the root wires to him.
-fn composed_tree(pay: u128) -> EnvelopeTree {
+fn composed_tree(pay: u128) -> IntentTree {
     let root = intent(
         ALICE,
         vec![
@@ -185,7 +185,7 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
     ))
 }
 
-fn admit_composed(tree: &EnvelopeTree) -> Result<Admitted, AdmissionError> {
+fn admit_composed(tree: &IntentTree) -> Result<Admitted, AdmissionError> {
     let chain = world();
     let identity = tree.hash(&TestHasher);
     admit_tree(tree, identity, &chain, &TestHasher)
@@ -468,7 +468,7 @@ fn an_intent_acting_as_two_accounts_nullifies_and_signs_in_for_each() {
     );
     root.accounts = vec![ALICE, BOB];
     root.attested_by = vec![ALICE, BOB];
-    let tree = EnvelopeTree::of_one(root);
+    let tree = IntentTree::of_one(root);
     let admitted = admit_composed(&tree).expect("one intent acts as both");
     let [record] = admitted.intents() else {
         panic!("one intent");
@@ -699,7 +699,7 @@ fn an_escrow_key_is_fixed_by_the_intent_its_node_signed() {
     assert_eq!(bob, second.root.members[0].signed.intent.hash(&TestHasher));
 
     let origin_of =
-        |tree: &EnvelopeTree, at: usize| admit_composed(tree).expect("admits").origins()[at];
+        |tree: &IntentTree, at: usize| admit_composed(tree).expect("admits").origins()[at];
     let (one, other) = (origin_of(&first, 1), origin_of(&second, 1));
     assert_eq!(one, other);
     assert_eq!(one.intent, bob);
@@ -1449,7 +1449,7 @@ fn delegated_offer(wants: Claim) -> Intent {
 
 /// A root acting as `composer` composing Bob's delegated offer, banking
 /// what it withdraws, and granting `source` into its socket.
-fn granted_tree(composer: PrincipalAddr, source: ClaimSource, wants: Claim) -> EnvelopeTree {
+fn granted_tree(composer: PrincipalAddr, source: ClaimSource, wants: Claim) -> IntentTree {
     let root = intent(
         composer,
         vec![deposit_give(
@@ -1621,7 +1621,7 @@ fn grouped_tree(
     carol_wires: Vec<Binding>,
     carol_gives: Vec<Give>,
     carol_sockets: Vec<Socket>,
-) -> EnvelopeTree {
+) -> IntentTree {
     let carol = intent(CAROL, Vec::new(), carol_sockets, carol_gives);
     let root = intent(
         ALICE,
@@ -1930,7 +1930,7 @@ fn the_wire_depth_is_pinned_to_the_deepest_admissible_tree() {
     assert_eq!(deepest.root.depth(), MAX_TREE_DEPTH);
     let bytes = encode_tree(&deepest);
     assert!(
-        from_slice_with_depth::<EnvelopeTree>(&bytes, TREE_WIRE_DEPTH - 1).is_err(),
+        from_slice_with_depth::<IntentTree>(&bytes, TREE_WIRE_DEPTH - 1).is_err(),
         "one level under the cap does not hold the deepest tree"
     );
     assert_eq!(decode_tree(&bytes).as_ref(), Ok(&deepest));
@@ -2077,7 +2077,7 @@ fn a_record_stands_for_a_seal_and_for_no_other_call() {
         salt: Hash32([5; 32]),
     };
     let round = meta.address(&TestHasher);
-    let calling = |method: &str, args: Vec<GraphArg>, records: Vec<InstanceMeta>| EnvelopeTree {
+    let calling = |method: &str, args: Vec<GraphArg>, records: Vec<InstanceMeta>| IntentTree {
         root: Intent::leaf(
             TEST_HEADER,
             ALICE,
@@ -2093,7 +2093,7 @@ fn a_record_stands_for_a_seal_and_for_no_other_call() {
         instances: records,
         resources: Vec::new(),
     };
-    let admit_with = |tree: &EnvelopeTree, chain: &dyn ChainRecords| {
+    let admit_with = |tree: &IntentTree, chain: &dyn ChainRecords| {
         admit_tree(tree, tree.hash(&TestHasher), chain, &TestHasher)
     };
 

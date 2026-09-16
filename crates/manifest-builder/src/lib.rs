@@ -35,7 +35,7 @@
 
 pub mod args;
 pub mod builder;
-pub mod envelope;
+pub mod intent;
 pub mod preflight;
 pub mod projection;
 pub mod render;
@@ -45,9 +45,8 @@ pub mod unpack;
 
 pub use args::{AddressArg, Arg, Args, BucketArg};
 pub use builder::{Bucket, BuildError, GraphBuilder, SocketRef};
-pub use envelope::{
-    BindRefusal, EnvelopeError, Given, Gives, IntentBuilder, Interface, Offered, OpenSocket,
-    Sockets,
+pub use intent::{
+    BindRefusal, Given, Gives, IntentBuilder, IntentError, Interface, Offered, OpenSocket, Sockets,
 };
 pub use preflight::{
     Authority, ByIntent, IntentCost, NodeCompute, PreflightError, Report, Required, preflight_tree,

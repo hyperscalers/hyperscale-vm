@@ -108,12 +108,12 @@ mod tests {
     use super::{Admitted, PrefixShardResolver, ShardResolver, per_shard};
     use crate::admission::AdmissionError;
     use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
-    use crate::envelope::{
-        EnvelopeTree, Intent, IntentHeader, admit_tree, nullifier_expiry_ms, nullifier_key,
-    };
     use crate::graph::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
     use crate::hash::{Hash32, Hasher, TestHasher};
     use crate::instance::{InstanceMeta, ResolveError};
+    use crate::intent::{
+        Intent, IntentHeader, IntentTree, admit_tree, nullifier_expiry_ms, nullifier_key,
+    };
     use crate::invoke::CallArg;
     use crate::manifest::Bounds;
     use crate::metadata::{MetadataCache, PackageMetadata, PublishRefusal};
@@ -145,7 +145,7 @@ mod tests {
         chain: &dyn ChainRecords,
         hasher: &dyn Hasher,
     ) -> Result<Admitted, AdmissionError> {
-        let tree = EnvelopeTree::of_one(Intent::leaf(HEADER, account, graph.clone()));
+        let tree = IntentTree::of_one(Intent::leaf(HEADER, account, graph.clone()));
         admit_tree(&tree, tree.hash(hasher), chain, hasher)
     }
 
