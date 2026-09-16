@@ -268,6 +268,13 @@ pub struct Intent {
     /// composes the whole tree can state. Admission reads nothing in it
     /// — what a fee buys is the chain's question — and a chain refuses a
     /// root that states none.
+    ///
+    /// Outside [`Intent::hash`]: the terms say how a transaction is paid
+    /// and not what it does, and the nullifier the hash keys holds one
+    /// declaration to one execution whatever it was paid under — so a
+    /// resubmission at a higher fee contends on the same cell rather
+    /// than running the declaration twice. The envelope's signature
+    /// covers them.
     pub terms: Option<Terms>,
     /// The intent's invocation graph; arguments may reference the
     /// sockets via [`crate::GraphArg::Socket`] and the members' gives
@@ -315,16 +322,17 @@ const DOMAIN_ENVELOPE_TREE: &[u8] = b"hyperscale-vm/envelope-tree";
 
 impl Intent {
     /// The intent's identity through the hasher seam: the header, the
-    /// accounts, the terms, the graph hash, every socket, every give,
-    /// and every member's hash with its wiring, each part carrying its
-    /// canonical encoding.
+    /// accounts, the graph hash, every socket, every give, and every
+    /// member's hash with its wiring, each part carrying its canonical
+    /// encoding. The terms alone stay out, on the terms the field
+    /// states.
     ///
     /// The fields are destructured rather than read one at a time, and
     /// the header enters whole through its own encoding, because
-    /// everything the declaration carries is content its signer signs. A
-    /// field this preimage misses is a field in the format, in the
-    /// encoding, and unsigned — so a new one either fails the build here
-    /// or rides the header's encoding, and never passes silently.
+    /// everything else the declaration carries is content its signer
+    /// signs. A field this preimage misses is a field in the format, in
+    /// the encoding, and unsigned — so a new one either fails the build
+    /// here or rides the header's encoding, and never passes silently.
     ///
     /// # Panics
     ///
@@ -336,7 +344,7 @@ impl Intent {
         let Self {
             header,
             accounts,
-            terms,
+            terms: _,
             graph,
             sockets,
             gives,
@@ -344,10 +352,9 @@ impl Intent {
         } = self;
         let graph = graph.hash(hasher);
         let mut parts: Vec<Vec<u8>> =
-            Vec::with_capacity(4 + sockets.len() + gives.len() + 2 * members.len());
+            Vec::with_capacity(3 + sockets.len() + gives.len() + 2 * members.len());
         parts.push(to_vec(header).expect("a header is scalars"));
         parts.push(to_vec(accounts).expect("accounts are bounded addresses"));
-        parts.push(to_vec(terms).expect("terms are bounded scalars"));
         parts.push(graph.0.0.to_vec());
         for socket in sockets {
             parts.push(to_vec(socket).expect("a socket is shallow"));

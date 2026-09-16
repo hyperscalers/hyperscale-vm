@@ -864,11 +864,12 @@ fn the_intent_hash_covers_the_interface() {
     assert_ne!(decl.hash(&TestHasher), ungiven.hash(&TestHasher));
 }
 
-/// The accounts, the terms, the members and the wiring are signed
-/// content of the intent that states them: moving any is another
-/// intent, and so another nullifier.
+/// The accounts, the members and the wiring are signed content of the
+/// intent that states them: moving any is another intent, and so
+/// another nullifier. The terms are not: one declaration is one
+/// execution whatever it is paid under.
 #[test]
-fn the_intent_hash_covers_accounts_terms_members_and_wiring() {
+fn the_intent_hash_covers_accounts_members_and_wiring_and_not_the_terms() {
     let root = composed_tree(100).root;
     let base = root.hash(&TestHasher);
 
@@ -884,10 +885,10 @@ fn the_intent_hash_covers_accounts_terms_members_and_wiring() {
         priority_bp: 0,
         message: Vec::new(),
     });
-    assert_ne!(base, termed.hash(&TestHasher));
+    assert_eq!(base, termed.hash(&TestHasher));
     let mut repriced = termed.clone();
     repriced.terms.as_mut().unwrap().max_fee = 2;
-    assert_ne!(termed.hash(&TestHasher), repriced.hash(&TestHasher));
+    assert_eq!(termed.hash(&TestHasher), repriced.hash(&TestHasher));
 
     let mut recomposed = root.clone();
     recomposed.members[0].intent.header.discriminator += 1;
