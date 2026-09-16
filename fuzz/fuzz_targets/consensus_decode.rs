@@ -1,6 +1,6 @@
 //! The consensus-critical decode surfaces, fuzzed: the package metadata
 //! every validator decodes off a published artifact, and the manifest
-//! graph a transaction signs. The sibling `hbor_decode` lane proves the
+//! graph a transaction signs. The sibling `hbor-decode` lane proves the
 //! canonicity theorem over a synthetic zoo of shapes; this proves it over
 //! the two `Hbor`-derived types the network actually hands a validator as
 //! bytes, whose recursive clause and expression shapes the zoo does not

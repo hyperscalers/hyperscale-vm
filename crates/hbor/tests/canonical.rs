@@ -98,7 +98,7 @@ proptest! {
 
     /// The fuzz lane's assertion, sampled in CI: an arbitrary byte string
     /// either rejects or decodes to a value that re-encodes to exactly
-    /// itself. The dedicated `hbor_decode` fuzz target runs this unsampled
+    /// itself. The dedicated `hbor-decode` fuzz target runs this unsampled
     /// on the workstation lane.
     #[test]
     fn arbitrary_bytes_reject_or_reencode(bytes in vec(any::<u8>(), 0..64)) {
