@@ -423,7 +423,6 @@ impl<'a> IntentBuilder<'a> {
         Ok(Intent {
             header,
             accounts,
-            terms: None,
             graph,
             sockets,
             gives,

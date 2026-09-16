@@ -155,12 +155,6 @@ pub enum AdmissionError {
         /// The intent, in tree order.
         intent: u32,
     },
-    /// A member stating terms, which only the root can state.
-    #[error("intent {intent} states terms, and only the root may")]
-    TermsOnMember {
-        /// The intent, in tree order.
-        intent: u32,
-    },
     /// An intent whose composer's bindings for it do not match its
     /// sockets.
     #[error("intent {intent} declares {expected} sockets, is wired {found}")]
@@ -857,7 +851,6 @@ impl AdmissionError {
             Self::TreeTooDeep { intent }
             | Self::NoAccount { intent }
             | Self::TooManyAccounts { intent }
-            | Self::TermsOnMember { intent }
             | Self::UnknownGive { intent, .. }
             | Self::UnconsumedGive { intent, .. }
             | Self::GiveReused { intent, .. }

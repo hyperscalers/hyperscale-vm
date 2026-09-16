@@ -119,9 +119,6 @@ pub fn flatten(root: &Intent) -> Result<Flattened<'_>, AdmissionError> {
         if intent.accounts.len() > MAX_ACCOUNTS {
             return Err(AdmissionError::TooManyAccounts { intent: as_u32(at) });
         }
-        if composer.is_some() && intent.terms.is_some() {
-            return Err(AdmissionError::TermsOnMember { intent: as_u32(at) });
-        }
         intents.push(intent);
         parent.push(composer);
         for (position, member) in intent.members.iter().enumerate().rev() {

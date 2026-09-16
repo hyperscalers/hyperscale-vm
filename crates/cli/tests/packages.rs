@@ -349,10 +349,7 @@ fn the_publish_envelope_carries_the_admitted_artifact() {
     let root = &tree.root;
     assert_eq!(root.header.network, NetworkId(7));
     assert_eq!(root.accounts, [payer]);
-    assert_eq!(
-        root.terms.as_ref().map(|terms| terms.fee_payer),
-        Some(payer)
-    );
+    assert_eq!(decoded.terms.fee_payer, payer);
     assert!(root.graph.nodes.is_empty(), "a publish calls nothing");
     assert_eq!(decoded.signer_scheme, SchemeId::NONE, "unsigned");
     let carried = decoded.artifact.expect("a publish carries its artifact");

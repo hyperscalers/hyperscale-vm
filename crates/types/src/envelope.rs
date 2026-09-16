@@ -57,8 +57,15 @@ pub const MAX_MESSAGE_LEN: usize = 1024;
 ///
 /// What a decoder allocates for the envelope as the network carries it,
 /// derived from the caps inside it so it moves when they do.
-pub const MAX_ENVELOPE_BYTES: usize =
-    MAX_CALL_BYTES + MAX_ARTIFACT_BYTES + MAX_INTENTS * (MAX_KEY_BYTES + MAX_SIG_BYTES + 16) + 256;
+pub const MAX_ENVELOPE_BYTES: usize = MAX_CALL_BYTES
+    + MAX_ARTIFACT_BYTES
+    + MAX_TERMS_BYTES
+    + MAX_INTENTS * (MAX_KEY_BYTES + MAX_SIG_BYTES + 16)
+    + 256;
+
+/// The widest the terms encode: one ceiling per manifest node, the
+/// message at its cap, and the scalars.
+pub const MAX_TERMS_BYTES: usize = MAX_MANIFEST_NODES * 9 + MAX_MESSAGE_LEN + 128;
 
 /// How long a transaction-derived artifact outlives the signed window it
 /// was derived from, in milliseconds.
@@ -303,10 +310,14 @@ impl Terms {
 #[hbor(signing_domain = "hyperscale-vm-envelope-v3")]
 pub struct TransactionEnvelope {
     /// The tree, canonically encoded; the effect vocabulary owns the
-    /// encoding. Its root carries the terms. A publish's tree is one
-    /// root that calls nothing.
+    /// encoding. A publish's tree is one root that calls nothing.
     #[hbor(max = MAX_CALL_BYTES)]
     pub tree: Vec<u8>,
+    /// What the transaction is paid and metered under. A function of
+    /// the whole tree, so the composer of the root states them, and
+    /// signed content: a fee ceiling nobody signed is one anybody could
+    /// raise.
+    pub terms: Terms,
     /// A module to publish under the composer's own prefix, its effect
     /// metadata section included. Content addressing covers the whole
     /// artifact, so the code and the signatures it declares cannot
@@ -538,6 +549,7 @@ mod tests {
     fn sample() -> TransactionEnvelope {
         TransactionEnvelope {
             tree: vec![1, 2, 3],
+            terms: terms(),
             artifact: None,
             subintent_sigs: vec![SubintentSig {
                 scheme: SchemeId::ED25519,

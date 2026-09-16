@@ -1,7 +1,7 @@
 //! Wrapping a composed tree in an envelope, and signing it.
 //!
 //! The last step a client takes, and the first one that needs a secret.
-//! Everything below this builds a tree; this puts the terms on its root
+//! Everything below this builds a tree; this puts the terms beside it
 //! and hands the envelope to a key.
 //!
 //! Neither the hash nor the curve is here. What a signature covers is the
@@ -19,10 +19,10 @@ use hyperscale_vm_types::{
     AccountSigner, PrincipalAddr, SchemeId, SubintentSig, TransactionEnvelope,
 };
 
-/// An unsigned envelope around `tree`, its root stating `terms`.
+/// An unsigned envelope around `tree`, stating `terms`.
 ///
-/// The window and the network are the root's own header, stated when
-/// the root was opened. The scheme is [`SchemeId::NONE`] and the
+/// The window and the network are each intent's own header, stated
+/// when it was opened. The scheme is [`SchemeId::NONE`] and the
 /// material is empty: an envelope names no scheme until somebody signs
 /// it, and nothing verifies under none.
 #[must_use]
@@ -31,10 +31,9 @@ pub fn wrap(
     subintent_sigs: Vec<SubintentSig>,
     terms: Terms,
 ) -> TransactionEnvelope {
-    let mut tree = tree.clone();
-    tree.root.terms = Some(terms);
     TransactionEnvelope {
-        tree: encode_tree(&tree),
+        tree: encode_tree(tree),
+        terms,
         artifact: None,
         subintent_sigs,
         signer_scheme: SchemeId::NONE,
@@ -57,10 +56,10 @@ pub fn wrap_publish(
     header: IntentHeader,
     terms: Terms,
 ) -> TransactionEnvelope {
-    let mut root = Intent::leaf(header, publisher, ManifestGraph::default());
-    root.terms = Some(terms);
+    let root = Intent::leaf(header, publisher, ManifestGraph::default());
     TransactionEnvelope {
         tree: encode_tree(&EnvelopeTree::of_one(root)),
+        terms,
         artifact: Some(artifact),
         subintent_sigs: Vec::new(),
         signer_scheme: SchemeId::NONE,

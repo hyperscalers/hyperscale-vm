@@ -173,21 +173,17 @@ fn the_signature_covers_what_the_envelope_says() {
     rekeyed.signer = vec![9; 32];
     assert!(!accepts(&rekeyed));
 
-    // So is everything the composer chose: the terms and the header
-    // sit on the root inside the tree, and the tree is signed content.
-    let reroot = |envelope: &TransactionEnvelope, edit: fn(&mut Intent)| {
-        let mut tree = decode_tree(&envelope.tree).expect("the tree decodes");
-        edit(&mut tree.root);
-        let mut edited = envelope.clone();
-        edited.tree = encode_tree(&tree);
-        edited
-    };
-    let repriced = reroot(&signed, |root| {
-        root.terms.as_mut().expect("the root states terms").max_fee += 1;
-    });
+    // So is everything the composer chose: the terms beside the tree,
+    // and the header on the root inside it, since the tree is signed
+    // content.
+    let mut repriced = signed.clone();
+    repriced.terms.max_fee += 1;
     assert!(!accepts(&repriced));
 
-    let retargeted = reroot(&signed, |root| root.header.network = NetworkId(1));
+    let mut retargeted = signed;
+    let mut tree = decode_tree(&retargeted.tree).expect("the tree decodes");
+    tree.root.header.network = NetworkId(1);
+    retargeted.tree = encode_tree(&tree);
     assert!(!accepts(&retargeted));
 }
 

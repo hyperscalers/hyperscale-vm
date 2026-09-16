@@ -23,7 +23,7 @@ use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     ARTIFACT_GRACE_MS, Address, COMMITTED_GRACE_MS, CROSSING_GRACE_MS, CallTarget, Effect,
     EffectTarget, MAX_INTENTS, Mode, Moves, NetworkId, PrincipalAddr, ResourceAddr,
-    SWEEP_BUCKET_SHIFT, SweepBucket, Terms, TxHash,
+    SWEEP_BUCKET_SHIFT, SweepBucket, TxHash,
 };
 use proptest::prelude::{any, proptest};
 
@@ -926,29 +926,15 @@ fn the_intent_hash_covers_the_interface() {
 
 /// The accounts, the members and the wiring are signed content of the
 /// intent that states them: moving any is another intent, and so
-/// another nullifier. The terms are not: one declaration is one
-/// execution whatever it is paid under.
+/// another nullifier.
 #[test]
-fn the_intent_hash_covers_accounts_members_and_wiring_and_not_the_terms() {
+fn the_intent_hash_covers_accounts_members_and_wiring() {
     let root = composed_tree(100).root;
     let base = root.hash(&TestHasher);
 
     let mut reacted = root.clone();
     reacted.accounts.push(BOB);
     assert_ne!(base, reacted.hash(&TestHasher));
-
-    let mut termed = root.clone();
-    termed.terms = Some(Terms {
-        fee_payer: ALICE,
-        max_fee: 1,
-        gas_limits: vec![1, 1, 1, 1],
-        priority_bp: 0,
-        message: Vec::new(),
-    });
-    assert_eq!(base, termed.hash(&TestHasher));
-    let mut repriced = termed.clone();
-    repriced.terms.as_mut().unwrap().max_fee = 2;
-    assert_eq!(termed.hash(&TestHasher), repriced.hash(&TestHasher));
 
     let mut recomposed = root.clone();
     recomposed.members[0].intent.header.discriminator += 1;
@@ -1817,9 +1803,9 @@ fn a_claim_granted_two_levels_deep_resolves_only_where_every_level_regranted_it(
 
 /// A composer contains its members, so there is no order to keep, no
 /// member to reach and no cycle to close: what is left to refuse is a
-/// tree nested past the bound, and a member stating terms.
+/// tree nested past the bound.
 #[test]
-fn a_tree_is_bounded_in_depth_and_terms_sit_on_the_root_alone() {
+fn a_tree_is_bounded_in_depth() {
     // A chain of intents, each composing the next: `depth` deep, the
     // leaf giving Y up through every level and the root banking it.
     let chain = |depth: usize| {
@@ -1867,20 +1853,6 @@ fn a_tree_is_bounded_in_depth_and_terms_sit_on_the_root_alone() {
         Err(AdmissionError::TreeTooDeep {
             intent: as_u32(MAX_TREE_DEPTH)
         })
-    );
-
-    // A member stating terms.
-    let mut termed = composed_tree(100);
-    termed.root.members[0].intent.terms = Some(Terms {
-        fee_payer: BOB,
-        max_fee: 0,
-        gas_limits: Vec::new(),
-        priority_bp: 0,
-        message: Vec::new(),
-    });
-    assert_eq!(
-        admit_composed(&termed),
-        Err(AdmissionError::TermsOnMember { intent: 1 })
     );
 }
 

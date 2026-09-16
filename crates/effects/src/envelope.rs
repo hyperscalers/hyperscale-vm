@@ -43,7 +43,7 @@ pub use hyperscale_vm_types::MAX_INTENTS;
 use hyperscale_vm_types::{
     ARTIFACT_GRACE_MS, Address, COMMITTED_GRACE_MS, CROSSING_GRACE_MS, Effect, EffectTarget,
     IntentHash, LegShape, MAX_MANIFEST_NODES, Mode, Moves, NetworkId, PrincipalAddr, ResourceAddr,
-    SubstateKey, SweepBucket, Terms, TxHash,
+    SubstateKey, SweepBucket, TxHash,
 };
 
 use crate::PACKAGE_SLOT_BASE;
@@ -269,19 +269,6 @@ pub struct Intent {
     /// consents to which accounts it acts as.
     #[hbor(max = MAX_ACCOUNTS)]
     pub accounts: Vec<PrincipalAddr>,
-    /// The signing-time terms. The root's, and refused on a member: a
-    /// function of the assembled manifest, which only the intent that
-    /// composes the whole tree can state. Admission reads nothing in it
-    /// — what a fee buys is the chain's question — and a chain refuses a
-    /// root that states none.
-    ///
-    /// Outside [`Intent::hash`]: the terms say how a transaction is paid
-    /// and not what it does, and the nullifier the hash keys holds one
-    /// declaration to one execution whatever it was paid under — so a
-    /// resubmission at a higher fee contends on the same cell rather
-    /// than running the declaration twice. The envelope's signature
-    /// covers them.
-    pub terms: Option<Terms>,
     /// The intent's invocation graph; arguments may reference the
     /// sockets via [`crate::GraphArg::Socket`] and the members' gives
     /// via [`crate::GraphArg::Give`].
@@ -350,7 +337,6 @@ impl Intent {
         let Self {
             header,
             accounts,
-            terms: _,
             graph,
             sockets,
             gives,
@@ -395,7 +381,6 @@ impl Intent {
         Self {
             header,
             accounts: vec![account],
-            terms: None,
             graph,
             sockets: Vec::new(),
             gives: Vec::new(),
