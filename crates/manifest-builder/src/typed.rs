@@ -165,11 +165,10 @@ pub enum TypedError {
     },
     /// A gated call on another party's target composed without a proof,
     /// naming nothing the composer could prove from the signer's own
-    /// account — admission's
-    /// [`SignatureForGuarded`](hyperscale_vm_effects::AdmissionError::SignatureForGuarded)
-    /// verdict, reached at the call site. A signature signs in at the
-    /// signer's own account; what it proves there is what any other
-    /// gate takes.
+    /// account. The builder's own refusal: admission now resolves a
+    /// signature to the account it acts as and lets any rule naming that
+    /// account take it, so what this keeps is the composer from shipping
+    /// a graph whose gate nothing in it answers.
     #[error("`{method}` takes a proven claim; a signature only signs in")]
     SignatureForGuarded {
         /// The method called.
@@ -992,9 +991,9 @@ impl<'a> TypedBuilder<'a> {
         } else {
             Vec::new()
         };
-        // A signature signs in, so it reaches only a rule cell under the
-        // signer's own prefix: the signer's own target. Everything else
-        // takes a proof — a claim a declaration names is proven from the
+        // The builder presents the signature at the signer's own target
+        // and nowhere else. Everything else takes a proof — a claim a
+        // declaration names is proven from the
         // signer's account where the gate names something it can prove,
         // and another party's stored rule is answered with the signer's
         // own sign-in, the one claim the composer can make about a rule
