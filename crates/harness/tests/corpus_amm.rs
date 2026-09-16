@@ -508,7 +508,7 @@ fn approval_request(approver: Claim) -> IntentDecl {
 fn approved_composition(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeError> {
     let chain = world();
     let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, REGISTRAR, TEST_HEADER);
-    let offered = root.grant();
+    let offered = env.grant();
     let wants = env
         .adopt(ALICE, request)?
         .one()

@@ -637,7 +637,7 @@ fn a_disjunction_reports_its_branches_and_names_no_certain_signer() {
 
     // The desk's composition grants the account its own intent acts as.
     let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
-    let offered = root.grant();
+    let offered = env.grant();
     let wants = env.adopt(ALICE, request).unwrap().one().unwrap();
     env.seal(root).unwrap().none().unwrap();
     env.bind(wants, offered).unwrap();
@@ -799,7 +799,7 @@ fn a_conjunction_reports_what_each_branch_asks() {
     let request = request.into_decl().unwrap();
 
     let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
-    let offered = root.grant();
+    let offered = env.grant();
     let wants = env.adopt(BOB, request).unwrap().one().unwrap();
     env.seal(root).unwrap().none().unwrap();
     env.bind(wants, offered).unwrap();

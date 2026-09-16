@@ -137,7 +137,7 @@ fn a_composition_grants_the_account_it_acts_as() {
 
     let chain = world();
     let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
-    let granted = root.grant();
+    let granted = env.grant();
     let wants = env
         .adopt(BOB, request)
         .expect("the request adopts")
@@ -165,7 +165,7 @@ fn a_composition_grants_the_account_it_acts_as() {
 fn a_grant_does_not_fill_a_value_socket() {
     let chain = world();
     let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
-    let granted = root.grant();
+    let granted = env.grant();
     let wants = env
         .adopt(BOB, payment_request(100))
         .expect("the request adopts")
@@ -599,7 +599,7 @@ fn note_request(approver: Claim) -> IntentDecl {
 fn approved(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeError> {
     let chain = world();
     let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
-    let offered = root.grant();
+    let offered = env.grant();
     let wants = env.adopt(BOB, request)?.one()?;
     env.seal(root)?.none()?;
     env.bind(wants, offered)?;

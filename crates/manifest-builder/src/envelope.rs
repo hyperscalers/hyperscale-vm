@@ -38,7 +38,7 @@ use hyperscale_vm_effects::{
     GraphArg, Hasher, InstanceMeta, Intent, IntentDecl, IntentHeader, MAX_SOCKETS, MAX_VALUE_DEPTH,
     ManifestGraph, ResourceMeta, Socket,
 };
-use hyperscale_vm_types::{MAX_SUBINTENTS, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{MAX_INTENTS, PrincipalAddr, ResourceAddr};
 
 use crate::builder::{Bucket, SocketRef, next_space};
 use crate::projection::graph_records;
@@ -165,8 +165,8 @@ pub enum EnvelopeError {
         /// The declaring intent.
         intent: u32,
     },
-    /// More subintents than an envelope may bind.
-    #[error("envelope binds more than {MAX_SUBINTENTS} subintents")]
+    /// More intents than an envelope may hold.
+    #[error("envelope holds more than {MAX_INTENTS} intents")]
     TooManyIntents,
     /// A presented instance record whose configuration nests past what
     /// the vocabulary encodes — the bound admission holds it to, met at
@@ -422,23 +422,6 @@ impl<'a> IntentBuilder<'a> {
     /// Grant the authority of the account this intent acts as, for some
     /// other intent's declared socket.
     ///
-    /// The composition lending its own sign-in downward. Nothing proves
-    /// it and no node carries it: the account's shard attested the keys
-    /// that signed this intent, so the claim stands from the start and
-    /// the socket it fills waits on nothing.
-    ///
-    /// Admission takes it from the composition alone, so a grant offered
-    /// by an adopted intent is refused there — an intent signed before
-    /// the envelope existed has seen nothing it would be consenting to.
-    #[must_use]
-    pub const fn grant(&self) -> Offered {
-        Offered {
-            envelope: self.envelope,
-            intent: self.intent,
-            offering: Offering::Grant,
-        }
-    }
-
     /// Offer a proof this intent's own node minted, for some other
     /// intent's declared socket.
     ///
@@ -487,10 +470,9 @@ pub struct EnvelopeBuilder<'a> {
     chain: &'a dyn ChainRecords,
     hasher: &'a dyn Hasher,
     id: u64,
-    /// The account the composition's own intent acts as.
-    composer: PrincipalAddr,
-    /// The account each further intent acts as, in envelope order.
-    signers: Vec<PrincipalAddr>,
+    /// The account each intent acts as, by slot; the composition's own
+    /// leads.
+    accounts: Vec<PrincipalAddr>,
     /// Sealed declarations by slot — `0` is the composer's — `None`
     /// until the intent is sealed.
     intents: Vec<Option<IntentDecl>>,
@@ -521,8 +503,7 @@ impl<'a> EnvelopeBuilder<'a> {
             chain,
             hasher,
             id,
-            composer: signer,
-            signers: Vec::new(),
+            accounts: vec![signer],
             intents: vec![None],
             bindings: BTreeMap::new(),
             instances: Vec::new(),
@@ -562,11 +543,11 @@ impl<'a> EnvelopeBuilder<'a> {
     ///
     /// # Panics
     ///
-    /// Past a `u32` of intents, far beyond [`MAX_SUBINTENTS`], which
+    /// Past a `u32` of intents, far beyond [`MAX_INTENTS`], which
     /// [`build`](Self::build) enforces as an error.
     pub fn subintent(&mut self, signer: PrincipalAddr, header: IntentHeader) -> IntentBuilder<'a> {
         let intent = u32::try_from(self.intents.len()).expect("intents fit an index");
-        self.signers.push(signer);
+        self.accounts.push(signer);
         self.intents.push(None);
         IntentBuilder {
             graph: TypedBuilder::new(self.chain, self.hasher, signer),
@@ -598,7 +579,7 @@ impl<'a> EnvelopeBuilder<'a> {
     ///
     /// # Panics
     ///
-    /// Past a `u32` of intents, far beyond [`MAX_SUBINTENTS`], which
+    /// Past a `u32` of intents, far beyond [`MAX_INTENTS`], which
     /// [`build`](Self::build) enforces as an error.
     pub fn adopt(
         &mut self,
@@ -612,7 +593,7 @@ impl<'a> EnvelopeBuilder<'a> {
         check_sockets(&decl.graph, &decl.sockets, intent)?;
         let sockets = self.open_sockets(intent, decl.sockets.len());
         self.carry(&decl.graph);
-        self.signers.push(signer);
+        self.accounts.push(signer);
         self.intents.push(Some(decl));
         Ok(sockets)
     }
@@ -662,16 +643,24 @@ impl<'a> EnvelopeBuilder<'a> {
         }
     }
 
-    /// The account intent `index` acts as: the composition's own at `0`,
-    /// and each further intent's at its envelope position.
-    fn account_of(&self, index: u32) -> PrincipalAddr {
-        let slot = usize::try_from(index).expect("minted indices fit");
-        slot.checked_sub(1).map_or(self.composer, |offered| {
-            *self
-                .signers
-                .get(offered)
-                .expect("an offering names an intent the envelope holds")
-        })
+    /// The composition lending the account its own intent acts as
+    /// downward. Nothing proves it and no node carries it: the account's
+    /// shard attests the keys that sign the composition, so the claim
+    /// stands from the start and the socket it fills waits on nothing.
+    ///
+    /// The composition's alone, which is why it is minted here and not
+    /// on an [`IntentBuilder`]: an intent offered into the envelope was
+    /// signed before the envelope existed and has seen nothing it would
+    /// be consenting to, so admission refuses a grant sourced from one —
+    /// and a shape the builder cannot spell is one it never has to
+    /// refuse in admission's coordinates.
+    #[must_use]
+    pub const fn grant(&self) -> Offered {
+        Offered {
+            envelope: self.id,
+            intent: 0,
+            offering: Offering::Grant,
+        }
     }
 
     /// One open socket per socket `intent` declares, in declaration
@@ -749,7 +738,9 @@ impl<'a> EnvelopeBuilder<'a> {
             },
             (Socket::Authority(_), Offering::Grant) => Binding::Authority {
                 intent: offered.intent,
-                from: ClaimSource::Account(self.account_of(offered.intent)),
+                from: ClaimSource::Account(
+                    self.accounts[usize::try_from(offered.intent).expect("minted indices fit")],
+                ),
             },
             (Socket::Value { .. }, Offering::Proof(_) | Offering::Grant) => {
                 let cause = EnvelopeError::ProofForValueSocket {
@@ -789,9 +780,9 @@ impl<'a> EnvelopeBuilder<'a> {
     ///
     /// # Panics
     ///
-    /// Past a `u32` of intents, which [`MAX_SUBINTENTS`] excludes above.
+    /// Past a `u32` of intents, which [`MAX_INTENTS`] excludes above.
     pub fn build(self) -> Result<EnvelopeTree, EnvelopeError> {
-        if self.signers.len() > MAX_SUBINTENTS {
+        if self.accounts.len() > MAX_INTENTS {
             return Err(EnvelopeError::TooManyIntents);
         }
         // Graph literals meet this bound at the call that binds them;
@@ -826,11 +817,12 @@ impl<'a> EnvelopeBuilder<'a> {
             decls.push(decl);
             wired.push(bindings);
         }
-        // The composer's own account leads, so the accounts line up
-        // with the declarations one for one and the tree carries no slot
-        // whose account is implied from outside it.
-        let accounts = std::iter::once(self.composer).chain(self.signers);
-        let intents = accounts
+        // One account per slot, so the accounts line up with the
+        // declarations one for one and the tree carries no slot whose
+        // account is implied from outside it.
+        let intents = self
+            .accounts
+            .into_iter()
             .zip(decls)
             .zip(wired)
             .map(|((account, decl), bindings)| Intent {
