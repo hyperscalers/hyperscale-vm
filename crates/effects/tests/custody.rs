@@ -136,7 +136,7 @@ fn credential(owner: impl Into<Address>) -> SubstateKey {
 /// which keeps two families of vaults rather than one.
 fn paid_out(custodian: ComponentAddr, holder: PrincipalAddr) -> EnvelopeTree {
     EnvelopeTree {
-        intents: vec![Intent::leaf(
+        root: Intent::leaf(
             TEST_HEADER,
             ALICE,
             ManifestGraph {
@@ -161,7 +161,7 @@ fn paid_out(custodian: ComponentAddr, holder: PrincipalAddr) -> EnvelopeTree {
                     },
                 ],
             },
-        )],
+        ),
         instances: Vec::new(),
         resources: Vec::new(),
     }
@@ -175,7 +175,7 @@ fn paid_out(custodian: ComponentAddr, holder: PrincipalAddr) -> EnvelopeTree {
 /// it back here is what makes the whole movement the custodian's own.
 fn round_trip(custodian: ComponentAddr) -> EnvelopeTree {
     EnvelopeTree {
-        intents: vec![Intent::leaf(
+        root: Intent::leaf(
             TEST_HEADER,
             ALICE,
             ManifestGraph {
@@ -200,7 +200,7 @@ fn round_trip(custodian: ComponentAddr) -> EnvelopeTree {
                     },
                 ],
             },
-        )],
+        ),
         instances: Vec::new(),
         resources: vec![governed_meta()],
     }
@@ -445,7 +445,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
         let target = instance.address(&TestHasher);
         chain.instances.create(&TestHasher, instance);
         let env = EnvelopeTree {
-            intents: vec![Intent::leaf(
+            root: Intent::leaf(
                 TEST_HEADER,
                 ALICE,
                 ManifestGraph {
@@ -456,7 +456,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
                         evidence: BTreeSet::default(),
                     }],
                 },
-            )],
+            ),
             instances: Vec::new(),
             resources: vec![meta],
         };
@@ -519,7 +519,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
 /// the one method in the corpus carrying the total mark.
 fn transferred(from: PrincipalAddr, to: PrincipalAddr, resource: ResourceAddr) -> EnvelopeTree {
     EnvelopeTree {
-        intents: vec![Intent::leaf(
+        root: Intent::leaf(
             TEST_HEADER,
             ALICE,
             ManifestGraph {
@@ -547,7 +547,7 @@ fn transferred(from: PrincipalAddr, to: PrincipalAddr, resource: ResourceAddr) -
                     },
                 ],
             },
-        )],
+        ),
         instances: Vec::new(),
         resources: Vec::new(),
     }
@@ -631,11 +631,11 @@ fn one_flag_is_read_once_however_many_directions_the_access_moves_in() {
     let mut env = round_trip(custodian);
     // The withdrawn value goes back through the till, whose one access
     // moves in both directions, and what the till pays out is deposited.
-    env.intents[0].graph.nodes[1].method = "churn".into();
-    env.intents[0].graph.nodes[1]
+    env.root.graph.nodes[1].method = "churn".into();
+    env.root.graph.nodes[1]
         .args
         .push(GraphArg::Literal(Value::U128(15)));
-    env.intents[0].graph.nodes.push(GraphNode {
+    env.root.graph.nodes.push(GraphNode {
         target: custodian.into(),
         method: "deposit".into(),
         args: vec![GraphArg::Edge {

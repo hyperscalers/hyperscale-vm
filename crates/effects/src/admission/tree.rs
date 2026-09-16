@@ -1,26 +1,24 @@
-//! The tree, recovered and resolved: which intent composes which, and
-//! what fills every socket and every give.
+//! The tree, flattened and resolved: every intent in preorder, and what
+//! fills every socket and every give.
 //!
 //! Everything below the interface layer — the interleave, the
 //! node-by-node lowering, the kernel — sees a flat list of intents whose
 //! sockets are filled from named nodes. This is where that list comes
-//! from. The members each intent names are hashes, so the relation is
-//! rebuilt from them; the wiring each composer signs names its own
-//! edges, its members' gives, its own sockets and its own accounts, so
-//! every source is followed to the node or the account that ultimately
-//! stands behind it. Scope is judged on the way: a grant of an account
-//! the granting intent does not act as, or of a claim its own socket
-//! does not carry, is refused here, and nothing downstream can reach an
-//! authority socket by any other path.
+//! from. A composer contains its members, so the walk is the structure;
+//! the wiring each composer signs names its own edges, its members'
+//! gives, its own sockets and its own accounts, so every source is
+//! followed to the node or the account that ultimately stands behind it.
+//! Scope is judged on the way: a grant of an account the granting intent
+//! does not act as, or of a claim its own socket does not carry, is
+//! refused here, and nothing downstream can reach an authority socket by
+//! any other path.
 
-use std::collections::BTreeMap;
-
-use hyperscale_vm_types::{IntentHash, ResourceAddr};
+use hyperscale_vm_types::ResourceAddr;
 
 use super::AdmissionError;
 use super::compose::{Fill, Proven};
 use crate::claim::Claim;
-use crate::envelope::{Binding, ClaimSource, Give, Intent, Socket, ValueSource};
+use crate::envelope::{Binding, ClaimSource, Give, Intent, MAX_TREE_DEPTH, Socket, ValueSource};
 use crate::graph::{EdgeRef, GiveRef, GraphNode};
 
 /// One member's give, followed to the node that produces it.
@@ -71,93 +69,19 @@ impl ResolvedTree {
     }
 }
 
-/// Recover the tree from `intents` and resolve every interface.
-///
-/// `hashes` are the intents' own, in the same order. The list must be
-/// in tree order — the root first, then each member's subtree in the
-/// order its composer named it — and anything else refuses: a member
-/// naming a hash the tree does not carry, a member out of that order
-/// (which is what a cycle, a repeated member and a member named twice
-/// all look like from the walk), and an intent the walk never reaches
-/// (an orphan, or a second root).
-///
-/// # Errors
-///
-/// Any [`AdmissionError`] the structure or the wiring earns.
-pub fn resolve_tree(
-    intents: &[Intent],
-    hashes: &[IntentHash],
-) -> Result<ResolvedTree, AdmissionError> {
-    let structure = Structure::recover(intents, hashes)?;
-    let resolver = Resolver {
-        intents,
-        structure: &structure,
-    };
-    resolver.resolve()
-}
-
-/// The relation the members recover: who composes whom.
-struct Structure {
+/// The tree flattened: every intent in preorder, and which composes
+/// which.
+pub struct Flattened<'a> {
+    intents: Vec<&'a Intent>,
     /// Each intent's composer, and its position among that composer's
     /// members. `None` for the root.
     parent: Vec<Option<(usize, usize)>>,
 }
 
-impl Structure {
-    fn recover(intents: &[Intent], hashes: &[IntentHash]) -> Result<Self, AdmissionError> {
-        let index: BTreeMap<IntentHash, usize> = hashes
-            .iter()
-            .enumerate()
-            .map(|(at, hash)| (*hash, at))
-            .collect();
-        let mut parent = vec![None; intents.len()];
-        let mut next = 1;
-        let mut stack: Vec<(usize, usize)> = vec![(0, 0)];
-        while let Some((at, member)) = stack.last_mut() {
-            let composer = *at;
-            let Some(named) = intents[composer].members.get(*member) else {
-                stack.pop();
-                continue;
-            };
-            let position = *member;
-            *member += 1;
-            let Some(&child) = index.get(named) else {
-                return Err(AdmissionError::UnknownMember {
-                    intent: as_u32(composer),
-                    member: as_u32(position),
-                });
-            };
-            if child != next {
-                return Err(AdmissionError::MemberOutOfOrder {
-                    intent: as_u32(composer),
-                    member: as_u32(position),
-                });
-            }
-            next += 1;
-            parent[child] = Some((composer, position));
-            stack.push((child, 0));
-        }
-        if next != intents.len() {
-            return Err(AdmissionError::UnreachableIntent {
-                intent: as_u32(next),
-            });
-        }
-        for (at, intent) in intents.iter().enumerate() {
-            if intent.accounts.is_empty() {
-                return Err(AdmissionError::NoAccount { intent: as_u32(at) });
-            }
-            if at != 0 && intent.terms.is_some() {
-                return Err(AdmissionError::TermsOnMember { intent: as_u32(at) });
-            }
-            if intent.wiring.len() != intent.members.len() {
-                return Err(AdmissionError::WiringArity {
-                    intent: as_u32(at),
-                    expected: intent.members.len(),
-                    found: intent.wiring.len(),
-                });
-            }
-        }
-        Ok(Self { parent })
+impl<'a> Flattened<'a> {
+    /// The intents, in tree order.
+    pub fn intents(&self) -> &[&'a Intent] {
+        &self.intents
     }
 
     /// The composer of `intent` and `intent`'s position among its
@@ -167,9 +91,57 @@ impl Structure {
     }
 }
 
+/// One step of the preorder walk: the intent, its composer and position,
+/// and its depth.
+type Visit<'a> = (&'a Intent, Option<(usize, usize)>, usize);
+
+/// Walk `root` in preorder, holding every intent to what the tree admits
+/// of it: a depth under [`MAX_TREE_DEPTH`], at least one account, and
+/// terms on the root alone.
+///
+/// # Errors
+///
+/// Any [`AdmissionError`] the structure earns.
+pub fn flatten(root: &Intent) -> Result<Flattened<'_>, AdmissionError> {
+    let mut intents = Vec::new();
+    let mut parent = Vec::new();
+    let mut stack: Vec<Visit<'_>> = vec![(root, None, 1)];
+    while let Some((intent, composer, depth)) = stack.pop() {
+        let at = intents.len();
+        if depth > MAX_TREE_DEPTH {
+            return Err(AdmissionError::TreeTooDeep { intent: as_u32(at) });
+        }
+        if intent.accounts.is_empty() {
+            return Err(AdmissionError::NoAccount { intent: as_u32(at) });
+        }
+        if composer.is_some() && intent.terms.is_some() {
+            return Err(AdmissionError::TermsOnMember { intent: as_u32(at) });
+        }
+        intents.push(intent);
+        parent.push(composer);
+        for (position, member) in intent.members.iter().enumerate().rev() {
+            stack.push((&member.intent, Some((at, position)), depth + 1));
+        }
+    }
+    Ok(Flattened { intents, parent })
+}
+
+/// Resolve every interface of a flattened tree.
+///
+/// # Errors
+///
+/// Any [`AdmissionError`] the wiring earns.
+pub fn resolve_tree(flat: &Flattened<'_>) -> Result<ResolvedTree, AdmissionError> {
+    let resolver = Resolver {
+        intents: &flat.intents,
+        structure: flat,
+    };
+    resolver.resolve()
+}
+
 struct Resolver<'a> {
-    intents: &'a [Intent],
-    structure: &'a Structure,
+    intents: &'a [&'a Intent],
+    structure: &'a Flattened<'a>,
 }
 
 impl Resolver<'_> {
@@ -199,7 +171,7 @@ impl Resolver<'_> {
                 fills.push(self.fill(at, socket)?);
             }
             let mut wired_uses = vec![0u32; intent.sockets.len()];
-            for binding in intent.wiring.iter().flatten() {
+            for binding in intent.members.iter().flat_map(|member| &member.wiring) {
                 let passed = match binding {
                     Binding::Value(ValueSource::Socket(socket))
                     | Binding::Authority(ClaimSource::Socket(socket)) => Some(*socket),
@@ -222,10 +194,7 @@ impl Resolver<'_> {
         Ok(ResolvedTree { interfaces })
     }
 
-    /// The `position`-th member of `composer`. Tree order puts every
-    /// member after its composer, and the walk that recovered the
-    /// structure numbered them, so this is a scan of the composer's
-    /// children rather than a map.
+    /// The `position`-th member of `composer`, as the walk numbered it.
     fn member(&self, composer: usize, position: usize) -> usize {
         self.structure
             .parent
@@ -285,9 +254,9 @@ impl Resolver<'_> {
                 .flat_map(GraphNode::gives)
                 .chain(
                     intent
-                        .wiring
+                        .members
                         .iter()
-                        .flatten()
+                        .flat_map(|member| &member.wiring)
                         .filter_map(|binding| match binding {
                             Binding::Value(ValueSource::Give(give)) => Some(*give),
                             Binding::Value(ValueSource::Edge(_) | ValueSource::Socket(_))
@@ -355,7 +324,7 @@ impl Resolver<'_> {
             // The root: nothing above it fills anything.
             return Err(unknown_binding(at));
         };
-        let wiring = &self.intents[composer].wiring[position];
+        let wiring = &self.intents[composer].members[position].wiring;
         if wiring.len() != self.intents[intent].sockets.len() {
             return Err(AdmissionError::BindingArity {
                 intent: at.0,

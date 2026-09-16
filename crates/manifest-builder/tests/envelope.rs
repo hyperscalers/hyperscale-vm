@@ -88,13 +88,15 @@ fn swap(pay_x: u128, pay_y: u128) -> Result<EnvelopeTree, EnvelopeError> {
 #[test]
 fn a_composed_swap_admits() {
     let tree = swap(100, 10).unwrap();
-    assert_eq!(tree.intents.len(), 2);
-    assert_eq!(tree.intents[1].accounts, [BOB]);
+    assert_eq!(tree.intents().len(), 2);
+    let root = &tree.root;
+    let [bob] = root.members.as_slice() else {
+        panic!("the root composes Bob alone");
+    };
+    assert_eq!(bob.intent.accounts, [BOB]);
     // The wiring the author never wrote: the root composes Bob's intent,
     // takes his give as the argument its own socket stood for, and wires
     // its own exported edge into his socket.
-    let root = &tree.intents[0];
-    assert_eq!(root.members, [tree.intents[1].hash(&TestHasher)]);
     assert!(
         root.sockets.is_empty(),
         "the root's socket became a give argument"
@@ -111,14 +113,14 @@ fn a_composed_swap_admits() {
         })
     }));
     assert_eq!(
-        root.wiring,
-        [vec![Binding::Value(ValueSource::Edge(EdgeRef {
+        bob.wiring,
+        [Binding::Value(ValueSource::Edge(EdgeRef {
             producer: 0,
             output: 0,
-        }))]]
+        }))]
     );
     assert_eq!(
-        tree.intents[1].gives,
+        bob.intent.gives,
         [Give::Edge(EdgeRef {
             producer: 0,
             output: 0
@@ -181,7 +183,7 @@ fn a_composition_grants_the_account_it_acts_as() {
         .expect("the composition grants its own account");
     let tree = env.build().expect("every socket is filled");
     assert_eq!(
-        tree.intents[1].hash(&TestHasher),
+        tree.root.members[0].intent.hash(&TestHasher),
         signed,
         "nothing the composition did moved what Bob signed",
     );
@@ -235,14 +237,17 @@ fn a_presented_declaration_is_carried_verbatim() {
     env.bind(wants, paid).unwrap();
     let tree = env.build().unwrap();
 
-    assert_eq!(tree.intents[1].hash(&TestHasher), signed);
-    assert_eq!(tree.intents[1].accounts, [BOB]);
+    let [bob] = tree.root.members.as_slice() else {
+        panic!("the root composes Bob alone");
+    };
+    assert_eq!(bob.intent.hash(&TestHasher), signed);
+    assert_eq!(bob.intent.accounts, [BOB]);
     assert_eq!(
-        tree.intents[0].wiring,
-        [vec![Binding::Value(ValueSource::Edge(EdgeRef {
+        bob.wiring,
+        [Binding::Value(ValueSource::Edge(EdgeRef {
             producer: 0,
             output: 0,
-        }))]]
+        }))]
     );
     admits(&tree);
 }
@@ -664,7 +669,7 @@ fn a_declared_hole_carries_a_proof_across_an_intent_boundary() {
     let tree = approved(request).expect("the desk composes the approval");
 
     assert_eq!(
-        tree.intents[1].hash(&TestHasher),
+        tree.root.members[0].intent.hash(&TestHasher),
         signed,
         "nothing the composition did moved what the holder signed",
     );

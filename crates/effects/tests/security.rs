@@ -134,7 +134,7 @@ fn transfer(resource: ResourceAddr) -> EnvelopeTree {
 /// The same transfer, landing under `recipient`.
 fn transfer_to(resource: ResourceAddr, recipient: PrincipalAddr) -> EnvelopeTree {
     EnvelopeTree {
-        intents: vec![Intent::leaf(
+        root: Intent::leaf(
             TEST_HEADER,
             ALICE,
             ManifestGraph {
@@ -162,7 +162,7 @@ fn transfer_to(resource: ResourceAddr, recipient: PrincipalAddr) -> EnvelopeTree
                     },
                 ],
             },
-        )],
+        ),
         instances: Vec::new(),
         resources: Vec::new(),
     }

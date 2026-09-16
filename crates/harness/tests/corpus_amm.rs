@@ -552,7 +552,7 @@ fn an_approved_trade_settles_through_a_venue_holding_no_credential() {
     let signed = request.hash(&TestHasher);
     let tree = approved_composition(request).expect("the registrar composes the approval");
     assert_eq!(
-        tree.intents[1].hash(&TestHasher),
+        tree.root.members[0].intent.hash(&TestHasher),
         signed,
         "nothing the composition did moved what the buyer signed",
     );

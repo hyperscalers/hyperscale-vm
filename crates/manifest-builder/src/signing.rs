@@ -32,9 +32,7 @@ pub fn wrap(
     terms: Terms,
 ) -> TransactionEnvelope {
     let mut tree = tree.clone();
-    if let Some(root) = tree.intents.first_mut() {
-        root.terms = Some(terms);
-    }
+    tree.root.terms = Some(terms);
     TransactionEnvelope {
         tree: encode_tree(&tree),
         artifact: None,

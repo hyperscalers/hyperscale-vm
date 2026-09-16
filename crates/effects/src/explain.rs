@@ -50,11 +50,11 @@ use std::fmt::Write as _;
 
 use hyperscale_hbor::{ShapeField, ShapeVariant, TypeShape};
 use hyperscale_vm_types::{
-    Address, AddressClass, EffectTarget, IntentHash, Moves, Presence, SubstateKey, UnmetCondition,
+    Address, AddressClass, EffectTarget, Moves, Presence, SubstateKey, UnmetCondition,
 };
 
 use crate::admission::{
-    AdmissionError, Admitted, Asks, Injected, IntentView, Placed, interleave, resolve_tree,
+    AdmissionError, Admitted, Asks, Injected, IntentView, Placed, flatten, interleave, resolve_tree,
 };
 use crate::claim::Claim;
 use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr, preorder_len};
@@ -523,28 +523,23 @@ pub fn explain_admission(
 /// node that consumes its socket, whichever intent wrote it — so the
 /// walk is re-run here over the tree rather than guessed from
 /// concatenation. The intents themselves are the tree's own, in tree
-/// order, and `hasher` is the one the tree names its members by.
+/// order.
 #[must_use]
 pub fn explain_admission_tree(
     tree: &EnvelopeTree,
     records: &dyn ChainRecords,
-    hasher: &dyn Hasher,
     refusal: &AdmissionError,
 ) -> String {
-    let graphs: Vec<&ManifestGraph> = tree.intents.iter().map(|intent| &intent.graph).collect();
+    let intents = tree.intents();
+    let graphs: Vec<&ManifestGraph> = intents.iter().map(|intent| &intent.graph).collect();
     // A tree that does not resolve, or that the interleave cannot
     // order, has no flattened numbering to resolve against, and its
     // refusal says so on its own.
-    let identities: Vec<IntentHash> = tree
-        .intents
-        .iter()
-        .map(|intent| intent.hash(hasher))
-        .collect();
-    let order = resolve_tree(&tree.intents, &identities)
+    let order = flatten(&tree.root)
+        .and_then(|flat| resolve_tree(&flat))
         .ok()
         .and_then(|resolved| {
-            let views: Vec<IntentView<'_>> = tree
-                .intents
+            let views: Vec<IntentView<'_>> = intents
                 .iter()
                 .zip(resolved.views())
                 .map(|(intent, interface)| {

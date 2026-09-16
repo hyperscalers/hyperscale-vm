@@ -40,7 +40,7 @@ use std::ops::{Deref, DerefMut};
 use hyperscale_vm_effects::{
     Binding, ChainRecords, Claim, ClaimSource, Constraint, EdgeRef, EnvelopeTree, EvidenceRef,
     Give, GiveRef, GraphArg, Hasher, InstanceMeta, Intent, IntentHeader, MAX_SOCKETS,
-    MAX_VALUE_DEPTH, ManifestGraph, ResourceMeta, Socket, ValueSource,
+    MAX_VALUE_DEPTH, ManifestGraph, Member, ResourceMeta, Socket, ValueSource,
 };
 use hyperscale_vm_types::{MAX_INTENTS, PrincipalAddr, ResourceAddr};
 
@@ -428,7 +428,6 @@ impl<'a> IntentBuilder<'a> {
             sockets,
             gives,
             members: Vec::new(),
-            wiring: Vec::new(),
         })
     }
 
@@ -843,7 +842,7 @@ impl<'a> EnvelopeBuilder<'a> {
             let intent = u32::try_from(slot).expect("minted indices fit");
             intents.push(sealed.ok_or(EnvelopeError::UnsealedIntent { intent })?);
         }
-        let mut members = intents.drain(1..).collect::<Vec<Intent>>();
+        let members = intents.drain(1..).collect::<Vec<Intent>>();
         let mut root = intents.pop().expect("the root is slot 0");
 
         // A member's index among the root's members is one under its
@@ -894,8 +893,8 @@ impl<'a> EnvelopeBuilder<'a> {
         root.sockets.clear();
 
         // The members' sockets, wired from what the root holds.
-        let mut wiring = Vec::with_capacity(members.len());
-        for (index, member) in members.iter().enumerate() {
+        let mut composed = Vec::with_capacity(members.len());
+        for (index, member) in members.into_iter().enumerate() {
             let intent = u32::try_from(index + 1).expect("minted indices fit");
             let mut bindings = Vec::with_capacity(member.sockets.len());
             for position in 0..member.sockets.len() {
@@ -915,19 +914,14 @@ impl<'a> EnvelopeBuilder<'a> {
                     Offering::Grant => Binding::Authority(ClaimSource::Account(self.composer)),
                 });
             }
-            wiring.push(bindings);
+            composed.push(Member {
+                intent: member,
+                wiring: bindings,
+            });
         }
-        root.members = members
-            .iter()
-            .map(|member| member.hash(self.hasher))
-            .collect();
-        root.wiring = wiring;
-
-        let mut intents = Vec::with_capacity(1 + members.len());
-        intents.push(root);
-        intents.append(&mut members);
+        root.members = composed;
         Ok(EnvelopeTree {
-            intents,
+            root,
             instances: self.instances,
             resources: self.grants,
         })

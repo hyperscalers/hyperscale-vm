@@ -18,8 +18,8 @@
 //! What stays here is the walk: one pass over the flattened node order,
 //! and the lowered form it produces. The five subjects beside it are
 //! [`error`] (the verdict vocabulary and where each refusal points),
-//! [`tree`] (the tree recovered from the members each intent names, and
-//! every interface resolved to the node that fills it), [`compose`]
+//! [`tree`] (the tree flattened in preorder and every interface resolved
+//! to the node that fills it), [`compose`]
 //! (what a signed form is, before any signature is read), [`inject`]
 //! (the entries a resource's own rules put on a frame), and [`abi`]
 //! (what a judged frame lowers to for the engine).
@@ -45,7 +45,7 @@ pub use inject::{Asks, Injected};
 use inject::{
     inject_destruction_rules, inject_issuance_rules, inject_movement_rules, inject_reach_rules,
 };
-pub(crate) use tree::{Interface, resolve_tree};
+pub(crate) use tree::{Interface, flatten, resolve_tree};
 
 use crate::claim::Claim;
 use crate::dsl::{

@@ -4,8 +4,8 @@
 //!
 //! An intent's signer signs an [`Intent`] whole: its calls, the accounts
 //! it acts as, the interface it presents — [`Socket`]s for what it needs
-//! and [`Give`]s for the value it offers — the members it composes, by
-//! hash, and the wiring that fills every member's sockets. Two things
+//! and [`Give`]s for the value it offers — and the members it composes,
+//! each nested inside it with the wiring that fills its sockets. Two things
 //! cross an intent boundary: a value edge, which exactly one node
 //! argument consumes, and a claim, which as many of the intent's nodes
 //! present as ask for it. Value flows both ways — a composer wires its
@@ -14,19 +14,19 @@
 //! down only: a composer grants a claim it holds into a member's socket,
 //! and nothing a member proves reaches its composer.
 //!
-//! Signing an intent commits to every member's hash, and so to the whole
-//! subtree beneath it. That is what makes a grant safe: an account's
-//! claim is wired into a member only by an intent that names the account
-//! or received the claim in a socket of its own, and that intent signed
-//! the member it grants to. Nothing about the tree is renegotiated at
+//! An intent's hash covers every member's hash, and so the whole subtree
+//! beneath it. That is what makes a grant safe: an account's claim is
+//! wired into a member only by an intent that names the account or
+//! received the claim in a socket of its own, and that intent signed the
+//! member it grants to. Nothing about the tree is renegotiated at
 //! admission.
 //!
-//! [`admit_tree`] recovers the tree from the members each intent names,
-//! resolves every socket and every give to the node that fills it, and
-//! flattens the tree into one routing manifest: intents keep tree order
-//! and their sockets interleave them deterministically, so a node lands
-//! after whatever fills every socket and every give it reaches. A tree
-//! admitting no such order is rejected.
+//! [`admit_tree`] walks the tree in preorder, resolves every socket and
+//! every give to the node that fills it, and flattens the tree into one
+//! routing manifest: intents keep tree order and their sockets interleave
+//! them deterministically, so a node lands after whatever fills every
+//! socket and every give it reaches. A tree admitting no such order is
+//! rejected.
 //!
 //! Committing an intent writes a kernel nullifier substate under each
 //! account it acts as, bucketed by the intent's expiry and keyed by its
@@ -36,7 +36,9 @@
 
 use std::collections::BTreeSet;
 
-use hyperscale_hbor::{Hbor, from_slice, to_vec};
+use hyperscale_hbor::{
+    DecodeError, Hbor, from_slice, from_slice_with_depth, to_vec, to_vec_with_depth,
+};
 pub use hyperscale_vm_types::MAX_INTENTS;
 use hyperscale_vm_types::{
     ARTIFACT_GRACE_MS, Address, COMMITTED_GRACE_MS, CROSSING_GRACE_MS, Effect, EffectTarget,
@@ -47,7 +49,7 @@ use hyperscale_vm_types::{
 use crate::PACKAGE_SLOT_BASE;
 use crate::admission::{
     AdmissionError, Admitted, IntentView, MAX_SOCKETS, admit_intents, check_instance_value_depth,
-    check_value_depth, resolve_tree,
+    check_value_depth, flatten, resolve_tree,
 };
 use crate::claim::Claim;
 use crate::dsl::PresentedGrants;
@@ -57,7 +59,7 @@ use crate::instance::InstanceMeta;
 use crate::manifest::ManifestHash;
 use crate::records::{ChainRecords, Composed};
 use crate::resource::ResourceMeta;
-use crate::types::{SlotId, bucketed_child_key, child_key};
+use crate::types::{MAX_VALUE_WIRE_DEPTH, SlotId, bucketed_child_key, child_key};
 
 /// The kernel-reserved role of intent nullifier substates under an
 /// account's prefix.
@@ -112,6 +114,29 @@ pub const CROSSING_CELL_BYTES: u32 = 256;
 /// many shards. Eight admits every shape a party composes across its
 /// own accounts and holds the wait to a handful.
 pub const MAX_ACCOUNTS: usize = 8;
+
+/// The bound on how deep a tree nests: a root alone is one, and each
+/// member sits one deeper than its composer.
+///
+/// Depth costs placement rather than correctness — every account of
+/// every intent is judged on a shard the core waits on, and every node
+/// presenting a granted claim is the core's, so a deep tree increasingly
+/// runs whole — and it costs a nullifier per account per intent against
+/// the sweepable budget. Eight admits a group assembled from groups a
+/// few times over and holds the wire's nesting to a figure a decoder
+/// walks without a stack of its own.
+pub const MAX_TREE_DEPTH: usize = 8;
+
+/// The codec nesting cost of the deepest admissible tree.
+///
+/// A tree at [`MAX_TREE_DEPTH`] carrying a literal at the value depth
+/// bound costs exactly this many codec levels: three from the tree down
+/// to a literal in one of the root's arguments beyond the literal's own,
+/// and three per nested member — its list, the member, and the intent
+/// inside it. Pinned by test at both boundaries, and the cap
+/// [`decode_tree`] decodes under, so a tree past the depth bound is
+/// refused by the decoder before anything walks it.
+pub const TREE_WIRE_DEPTH: usize = 3 + MAX_VALUE_WIRE_DEPTH + 3 * MAX_TREE_DEPTH;
 
 // Held at compile time rather than by a test: every side is a constant,
 // so a kernel cell colliding with a package's own — or with another
@@ -219,8 +244,8 @@ pub struct IntentHeader {
 /// depth. The root is the one nobody composes — it carries the terms
 /// and declares no sockets, since nothing above it could fill one. Its
 /// signer signs exactly this, so [`Intent::hash`] is the intent's
-/// identity whatever tree later carries it, and since `members` are
-/// hashes the identity commits to the whole subtree.
+/// identity whatever tree later carries it, and since the hash covers
+/// every member's the identity commits to the whole subtree.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct Intent {
     /// What the intent is admissible under, as against what it does.
@@ -261,17 +286,28 @@ pub struct Intent {
     /// to.
     #[hbor(max = MAX_SOCKETS)]
     pub gives: Vec<Give>,
-    /// The intents this one composes, by hash. Signed, so the signature
-    /// commits to every member and transitively to the whole subtree.
+    /// The intents this one composes, each with the wiring that fills
+    /// its sockets. Nested rather than named: a composer contains its
+    /// members, so which intent composes which is the shape of the
+    /// value and not a relation admission has to recover.
     #[hbor(max = MAX_INTENTS)]
-    pub members: Vec<IntentHash>,
-    /// How this intent fills its members' sockets: one list per member
-    /// in `members` order, one binding per socket that member declares.
-    /// Every source is this intent's own — its graph, its members'
-    /// gives, its own sockets and its own accounts — which is what
-    /// confines a grant to what the granting intent holds.
-    #[hbor(max = MAX_INTENTS)]
-    pub wiring: Vec<Vec<Binding>>,
+    pub members: Vec<Member>,
+}
+
+/// One member of a composing intent: the intent, and how its composer
+/// fills its sockets.
+///
+/// The wiring travels with the member it fills — one binding per socket
+/// the member declares. Every source is the composer's own: its graph,
+/// its members' gives, its own sockets and its own accounts, which is
+/// what confines a grant to what the granting intent holds.
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+pub struct Member {
+    /// The composed intent, whole.
+    pub intent: Intent,
+    /// One binding per socket `intent` declares, in declaration order.
+    #[hbor(max = MAX_SOCKETS)]
+    pub wiring: Vec<Binding>,
 }
 
 const DOMAIN_INTENT: &[u8] = b"hyperscale-vm/intent";
@@ -280,7 +316,7 @@ const DOMAIN_ENVELOPE_TREE: &[u8] = b"hyperscale-vm/envelope-tree";
 impl Intent {
     /// The intent's identity through the hasher seam: the header, the
     /// accounts, the terms, the graph hash, every socket, every give,
-    /// every member's hash and the wiring, each part carrying its
+    /// and every member's hash with its wiring, each part carrying its
     /// canonical encoding.
     ///
     /// The fields are destructured rather than read one at a time, and
@@ -305,11 +341,10 @@ impl Intent {
             sockets,
             gives,
             members,
-            wiring,
         } = self;
         let graph = graph.hash(hasher);
         let mut parts: Vec<Vec<u8>> =
-            Vec::with_capacity(5 + sockets.len() + gives.len() + members.len());
+            Vec::with_capacity(4 + sockets.len() + gives.len() + 2 * members.len());
         parts.push(to_vec(header).expect("a header is scalars"));
         parts.push(to_vec(accounts).expect("accounts are bounded addresses"));
         parts.push(to_vec(terms).expect("terms are bounded scalars"));
@@ -321,11 +356,23 @@ impl Intent {
             parts.push(to_vec(give).expect("a give is two indices"));
         }
         for member in members {
-            parts.push(member.0.0.to_vec());
+            parts.push(member.intent.hash(hasher).0.0.to_vec());
+            parts.push(to_vec(&member.wiring).expect("wiring is bounded indices"));
         }
-        parts.push(to_vec(wiring).expect("wiring is bounded indices"));
         let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
         IntentHash(hasher.hash(DOMAIN_INTENT, &refs))
+    }
+
+    /// How deep this intent nests: one for a leaf, one more than the
+    /// deepest member otherwise.
+    #[must_use]
+    pub fn depth(&self) -> usize {
+        1 + self
+            .members
+            .iter()
+            .map(|member| member.intent.depth())
+            .max()
+            .unwrap_or(0)
     }
 
     /// A leaf acting as `account` under `header`: a graph, no interface,
@@ -340,7 +387,6 @@ impl Intent {
             sockets: Vec::new(),
             gives: Vec::new(),
             members: Vec::new(),
-            wiring: Vec::new(),
         }
     }
 }
@@ -400,21 +446,19 @@ pub enum ClaimSource {
     Socket(u32),
 }
 
-/// The tree an envelope carries and admission runs over: every intent,
-/// in tree order, and the creation-fixed records their calls resolve
-/// against.
+/// The tree an envelope carries and admission runs over: the root, with
+/// every intent it composes nested inside it, and the creation-fixed
+/// records their calls resolve against.
 ///
 /// Tree order is preorder: the root first, then each member's subtree in
-/// the order its composer named it. Admission recovers the tree from
-/// the members each intent names and refuses a list in any other order
-/// — one walk, and a cycle, a repeated hash, an orphan and a second
-/// root all fall out of it.
+/// the order its composer holds it. Every flat reading of the tree — the
+/// attesting sets, the nullifier records, the flattened manifest — is in
+/// that order.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct EnvelopeTree {
-    /// The intents, in tree order. Never empty: a tree is at least its
-    /// root.
-    #[hbor(max = MAX_INTENTS)]
-    pub intents: Vec<Intent>,
+    /// The intent nobody composes, which carries the terms, and beneath
+    /// it every other intent the tree holds.
+    pub root: Intent,
     /// The creation-fixed records of the component targets the tree
     /// names beyond what the genesis registry serves — each registered,
     /// at derivation, at exactly the address it derives.
@@ -436,7 +480,20 @@ pub struct EnvelopeTree {
 }
 
 impl EnvelopeTree {
-    /// Each intent attested by the keys its own accounts derive.
+    /// Every intent the tree holds, in tree order.
+    #[must_use]
+    pub fn intents(&self) -> Vec<&Intent> {
+        let mut intents = Vec::new();
+        let mut stack = vec![&self.root];
+        while let Some(intent) = stack.pop() {
+            intents.push(intent);
+            stack.extend(intent.members.iter().rev().map(|member| &member.intent));
+        }
+        intents
+    }
+
+    /// Each intent attested by the keys its own accounts derive, in tree
+    /// order.
     ///
     /// A premise, not a fact: what the chain judges is the set the
     /// envelope's signatures actually carry, and that is the envelope's
@@ -447,8 +504,8 @@ impl EnvelopeTree {
     /// admit a key no rule was asked about.
     #[must_use]
     pub fn assume_self_attested(&self) -> Vec<Vec<PrincipalAddr>> {
-        self.intents
-            .iter()
+        self.intents()
+            .into_iter()
             .map(|intent| intent.accounts.clone())
             .collect()
     }
@@ -459,30 +516,20 @@ impl EnvelopeTree {
     /// The shape every transaction that composes with nobody has, which
     /// is most of them.
     #[must_use]
-    pub fn of_one(intent: Intent) -> Self {
+    pub const fn of_one(root: Intent) -> Self {
         Self {
-            intents: vec![intent],
+            root,
             instances: Vec::new(),
             resources: Vec::new(),
         }
-    }
-
-    /// The root: the intent nobody composes, which carries the terms.
-    ///
-    /// # Panics
-    ///
-    /// On an empty tree, which no admission path accepts.
-    #[must_use]
-    pub fn root(&self) -> &Intent {
-        self.intents.first().expect("a tree is at least its root")
     }
 
     /// How many nodes the tree lowers to, over every intent it carries
     /// — the count of compute ceilings the root's terms sign.
     #[must_use]
     pub fn node_count(&self) -> usize {
-        self.intents
-            .iter()
+        self.intents()
+            .into_iter()
             .map(|intent| intent.graph.nodes.len())
             .sum()
     }
@@ -492,6 +539,9 @@ impl EnvelopeTree {
     /// its identity from the full signed form and passes that to
     /// [`admit_tree`] instead.
     ///
+    /// The root's hash covers every intent beneath it, so what the tree
+    /// adds is the records.
+    ///
     /// # Panics
     ///
     /// Hashed trees pass the depth gate first, as
@@ -499,14 +549,14 @@ impl EnvelopeTree {
     /// requires of the literals the graph hashes feed on.
     #[must_use]
     pub fn hash(&self, hasher: &dyn Hasher) -> ManifestHash {
-        let mut parts: Vec<Vec<u8>> = Vec::with_capacity(2 + self.intents.len());
-        for intent in &self.intents {
-            parts.push(intent.hash(hasher).0.0.to_vec());
-        }
-        // What the tree's calls resolve against is part of what was
-        // composed, so two trees differing only here are two identities.
-        parts.push(to_vec(&self.instances).expect("instance records are wire-bounded values"));
-        parts.push(to_vec(&self.resources).expect("resource records are wire-bounded values"));
+        let parts: [Vec<u8>; 3] = [
+            self.root.hash(hasher).0.0.to_vec(),
+            // What the tree's calls resolve against is part of what was
+            // composed, so two trees differing only here are two
+            // identities.
+            to_vec(&self.instances).expect("instance records are wire-bounded values"),
+            to_vec(&self.resources).expect("resource records are wire-bounded values"),
+        ];
         let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
         ManifestHash(hasher.hash(DOMAIN_ENVELOPE_TREE, &refs))
     }
@@ -1116,8 +1166,9 @@ pub struct AdmittedTree {
 
 /// The tree's canonical bytes — what an envelope carries.
 ///
-/// The vocabulary owns its own codec: a tree is an ordinary HBOR value,
-/// and the encoding a composer writes is the one admission decodes.
+/// The vocabulary owns its own codec: a tree is an ordinary HBOR value
+/// under [`TREE_WIRE_DEPTH`], and the encoding a composer writes is the
+/// one [`decode_tree`] reads.
 ///
 /// # Panics
 ///
@@ -1125,15 +1176,25 @@ pub struct AdmittedTree {
 /// have accepted.
 #[must_use]
 pub fn encode_tree(tree: &EnvelopeTree) -> Vec<u8> {
-    to_vec(tree).expect("a tree within its caps encodes")
+    to_vec_with_depth(tree, TREE_WIRE_DEPTH).expect("a tree within its caps encodes")
+}
+
+/// A tree read back off the bytes an envelope carries, under
+/// [`TREE_WIRE_DEPTH`].
+///
+/// # Errors
+///
+/// [`DecodeError`] for bytes that are not a tree, or one nested past
+/// the depth the vocabulary admits.
+pub fn decode_tree(bytes: &[u8]) -> Result<EnvelopeTree, DecodeError> {
+    from_slice_with_depth(bytes, TREE_WIRE_DEPTH)
 }
 
 /// Admit a tree.
 ///
-/// Validates every intent, recovers the tree from the members each
-/// names, resolves every interface to the nodes that fill it,
-/// interleaves the tree into one flattened manifest, and derives the
-/// nullifier records.
+/// Validates every intent, resolves every interface to the nodes that
+/// fill it, interleaves the tree into one flattened manifest, and
+/// derives the nullifier records.
 ///
 /// `identity` is the signed envelope's hash — the root of every fresh
 /// derivation. Distinct signed envelopes never mint the same fresh key,
@@ -1163,28 +1224,29 @@ pub fn admit_tree(
     // the default that suggests itself — an account attesting itself —
     // is what an unwritten cell admits, so a caller that forgot would
     // weaken every sign-in silently.
-    if attested_by.len() != tree.intents.len() {
+    let flat = flatten(&tree.root)?;
+    let intents = flat.intents();
+    if attested_by.len() != intents.len() {
         return Err(AdmissionError::AttestationArity {
-            expected: tree.intents.len(),
+            expected: intents.len(),
             found: attested_by.len(),
         });
     }
-    if tree.intents.len() > MAX_INTENTS {
+    if intents.len() > MAX_INTENTS {
         return Err(AdmissionError::TooManyIntents);
     }
     // Ahead of every intent hash, for the reason `admit` checks ahead
     // of the graph hash.
-    for intent in &tree.intents {
+    for intent in intents {
         check_value_depth(&intent.graph)?;
     }
     check_instance_value_depth(&tree.instances)?;
     // The intent hash alone. It is what names every escrow record and
-    // claim the tree derives, and it is what a composer names a member
-    // by — so two intents that hash alike derive one key for two edges
-    // and one member for two intents.
+    // claim the tree derives — so two intents that hash alike derive one
+    // key for two edges.
     let mut seen = BTreeSet::new();
-    let mut identities = Vec::with_capacity(tree.intents.len());
-    for (index, intent) in tree.intents.iter().enumerate() {
+    let mut identities = Vec::with_capacity(intents.len());
+    for (index, intent) in intents.iter().enumerate() {
         let hash = intent.hash(hasher);
         if !seen.insert(hash) {
             return Err(AdmissionError::DuplicateIntent {
@@ -1193,9 +1255,8 @@ pub fn admit_tree(
         }
         identities.push(hash);
     }
-    let resolved = resolve_tree(&tree.intents, &identities)?;
-    let records: Vec<IntentRecord> = tree
-        .intents
+    let resolved = resolve_tree(&flat)?;
+    let records: Vec<IntentRecord> = intents
         .iter()
         .zip(&identities)
         .map(|(intent, hash)| {
@@ -1215,8 +1276,7 @@ pub fn admit_tree(
         })
         .collect();
 
-    let views: Vec<IntentView<'_>> = tree
-        .intents
+    let views: Vec<IntentView<'_>> = intents
         .iter()
         .zip(&records)
         .zip(attested_by)

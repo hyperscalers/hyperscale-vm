@@ -135,30 +135,10 @@ pub enum AdmissionError {
         /// The offending subintent's index.
         index: u32,
     },
-    /// A member naming a hash the tree does not carry.
-    #[error("intent {intent} composes member {member}, which the tree does not carry")]
-    UnknownMember {
-        /// The composing intent, in tree order.
-        intent: u32,
-        /// The member's position among that intent's members.
-        member: u32,
-    },
-    /// A member out of tree order: the tree lists intents in preorder,
-    /// the root first and each member's subtree where its composer
-    /// names it, and this member sits elsewhere. What a cycle, a
-    /// member named twice and a member naming the root all look like
-    /// from the walk that recovers the tree.
-    #[error("intent {intent} composes member {member} out of tree order")]
-    MemberOutOfOrder {
-        /// The composing intent, in tree order.
-        intent: u32,
-        /// The member's position among that intent's members.
-        member: u32,
-    },
-    /// An intent no composer names: an orphan, or a second root.
-    #[error("intent {intent} is composed by nobody and is not the root")]
-    UnreachableIntent {
-        /// The intent, in tree order.
+    /// A tree nested past [`MAX_TREE_DEPTH`](crate::MAX_TREE_DEPTH).
+    #[error("intent {intent} sits deeper than a tree may nest")]
+    TreeTooDeep {
+        /// The first intent past the bound, in tree order.
         intent: u32,
     },
     /// An intent acting as no account, which would have no nullifier and
@@ -173,17 +153,6 @@ pub enum AdmissionError {
     TermsOnMember {
         /// The intent, in tree order.
         intent: u32,
-    },
-    /// An intent whose wiring does not match its members: one list of
-    /// bindings per member, in member order.
-    #[error("intent {intent} composes {expected} members, wires {found}")]
-    WiringArity {
-        /// The composing intent, in tree order.
-        intent: u32,
-        /// How many members it composes.
-        expected: usize,
-        /// How many members its wiring fills.
-        found: usize,
     },
     /// An intent whose composer's bindings for it do not match its
     /// sockets.
@@ -878,12 +847,9 @@ impl AdmissionError {
                 abi: None,
             },
             // About the intent rather than any one of its nodes.
-            Self::UnknownMember { intent, .. }
-            | Self::MemberOutOfOrder { intent, .. }
-            | Self::UnreachableIntent { intent }
+            Self::TreeTooDeep { intent }
             | Self::NoAccount { intent }
             | Self::TermsOnMember { intent }
-            | Self::WiringArity { intent, .. }
             | Self::UnknownGive { intent, .. }
             | Self::UnconsumedGive { intent, .. }
             | Self::GiveReused { intent, .. }

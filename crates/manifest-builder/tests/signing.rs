@@ -13,9 +13,9 @@
 //! questions can sign an envelope, and a verifier that agrees with it can
 //! accept the result.
 
-use hyperscale_hbor::from_slice;
 use hyperscale_vm_effects::{
-    EnvelopeTree, Hasher, Intent, IntentHeader, PackageHash, Records, TestHasher, encode_tree,
+    EnvelopeTree, Hasher, Intent, IntentHeader, PackageHash, Records, TestHasher, decode_tree,
+    encode_tree,
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_manifest_builder::signing::{Terms, sign, wrap, wrap_publish};
@@ -176,8 +176,8 @@ fn the_signature_covers_what_the_envelope_says() {
     // So is everything the composer chose: the terms and the header
     // sit on the root inside the tree, and the tree is signed content.
     let reroot = |envelope: &TransactionEnvelope, edit: fn(&mut Intent)| {
-        let mut tree: EnvelopeTree = from_slice(&envelope.tree).expect("the tree decodes");
-        edit(&mut tree.intents[0]);
+        let mut tree = decode_tree(&envelope.tree).expect("the tree decodes");
+        edit(&mut tree.root);
         let mut edited = envelope.clone();
         edited.tree = encode_tree(&tree);
         edited

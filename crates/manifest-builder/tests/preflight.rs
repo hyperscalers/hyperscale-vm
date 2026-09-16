@@ -533,7 +533,10 @@ fn the_compute_column_sums_to_the_terms_and_splits_per_intent() {
         .filter(|row| row.intent == sub_hash)
         .map(|row| row.node)
         .collect();
-    assert_eq!(sub_nodes.len(), tree.intents[1].graph.nodes.len());
+    assert_eq!(
+        sub_nodes.len(),
+        tree.root.members[0].intent.graph.nodes.len()
+    );
     assert!(
         sub_nodes.iter().any(|node| *node > 0),
         "the interleave puts a subintent node after a root node"

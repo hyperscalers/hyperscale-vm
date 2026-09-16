@@ -335,7 +335,7 @@ fn a_manifest_without_the_module_key_names_the_key_to_add() {
 fn the_publish_envelope_carries_the_admitted_artifact() {
     use hyperscale_hbor::from_slice as decode;
     use hyperscale_vm_cli::{NetworkId, PrincipalAddr, publish_envelope};
-    use hyperscale_vm_effects::EnvelopeTree;
+    use hyperscale_vm_effects::decode_tree;
     use hyperscale_vm_gate::admit_package;
     use hyperscale_vm_types::{SchemeId, TransactionEnvelope};
 
@@ -345,8 +345,8 @@ fn the_publish_envelope_carries_the_admitted_artifact() {
     let intent = publish_envelope(bytes.clone(), payer, NetworkId(7)).expect("the intent encodes");
 
     let decoded: TransactionEnvelope = decode(&intent).expect("the intent round-trips");
-    let tree: EnvelopeTree = decode(&decoded.tree).expect("the tree round-trips");
-    let root = tree.root();
+    let tree = decode_tree(&decoded.tree).expect("the tree round-trips");
+    let root = &tree.root;
     assert_eq!(root.header.network, NetworkId(7));
     assert_eq!(root.accounts, [payer]);
     assert_eq!(
