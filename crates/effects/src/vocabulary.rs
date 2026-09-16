@@ -30,8 +30,9 @@ use crate::types::SlotId;
 pub const VAULT: SlotId = SlotId(1);
 /// A creation-fixed configuration leaf.
 pub const CONFIG: SlotId = SlotId(2);
-/// An account's stored authority: the cell `authorize` reads and
-/// `securify` creates. Absent for a virtual account.
+/// An account's stored authority: the cell its shard judges the keys
+/// attesting an intent against, and `securify` creates. Absent for a
+/// virtual account.
 pub const AUTH: SlotId = SlotId(3);
 /// A resource's record cell under its issuer: kind and display
 /// quantization, keyed by the resource's own address.
@@ -68,14 +69,6 @@ pub const HALT: SlotId = SlotId(7);
 /// metadata. This is where value a composition did not route comes to
 /// rest.
 pub const DEPOSIT_METHOD: &str = "deposit";
-
-/// The method that mints a principal's own identity as a claim.
-///
-/// What a composer reaches for when an injected entry names the party
-/// signing the intent: the entry is the resource's, so nothing about the
-/// method being called says a proof is wanted, and the claim has to come
-/// from somewhere.
-pub const AUTHORIZE_METHOD: &str = "authorize";
 
 /// The method that mints a claim on a badge its caller holds.
 pub const PRESENT_BADGE_METHOD: &str = "present-badge";

@@ -1369,7 +1369,7 @@ fn lower_method(
     }
 
     let gate = parse_gate(method, declared, &params, serves)?;
-    client::check_names(&idents, client::Shape::of(&gate), serves)?;
+    client::check_names(&idents, serves)?;
     let yields = Yields::of(&method.sig.output);
     let claims_total = total_attr(method).is_some();
     let lowered = Lowerer::new(declared, &params, yields, claims_total, seal)

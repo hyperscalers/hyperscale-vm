@@ -153,12 +153,7 @@ fn only_the_founder_brings_the_registry_up() {
     });
     let refused = chain
         .try_transact(SUCCESSOR, |b| {
-            instantiate(
-                b,
-                SUCCESSOR,
-                instance.address(),
-                (admin_rule(instance, 0), DELAY_MS),
-            )
+            instantiate(b, instance.address(), (admin_rule(instance, 0), DELAY_MS))
         })
         .err();
     assert!(

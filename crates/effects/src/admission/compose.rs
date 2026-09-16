@@ -192,7 +192,7 @@ pub struct IntentView<'a> {
     /// on [`intent_expiry_ms`](crate::intent_expiry_ms)'s terms. The
     /// other half of the material a node's cells are keyed by, and
     /// carried here for the reason the identity is.
-    pub expiry_ms: u64,
+    pub(crate) expiry_ms: u64,
 }
 
 impl<'a> IntentView<'a> {

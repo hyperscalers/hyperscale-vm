@@ -21,17 +21,18 @@
 
 use hyperscale_vm_effects::ResourceKind;
 use hyperscale_vm_manifest_builder::{Args, TypedBuilder, TypedError};
-use hyperscale_vm_types::{ComponentAddr, PrincipalAddr};
+use hyperscale_vm_types::ComponentAddr;
 
 use crate::account;
 
-/// Append the instantiation of the component at `address`, as
-/// `founder`, over `args`.
+/// Append the instantiation of the component at `address`, over `args`.
 ///
 /// The seal is called, and the supply it yields — where the package
-/// declares one — is filed in the founder's own account. What the
-/// package asks for is read off its own declaration, so a caller states
-/// only what is theirs to state: who is bringing it up, where, and the
+/// declares one — is filed in the account the intent acts as: the
+/// seal's gate is answered by that intent's signature, so who brings a
+/// package up is the builder's own account and not a second thing to
+/// state. What the package asks for is read off its own declaration,
+/// so a caller states only what is theirs to state: where, and the
 /// arguments its bring-up takes — bound at the call the way every other
 /// method's are, and `()` for a package whose bring-up takes none.
 ///
@@ -41,18 +42,18 @@ use crate::account;
 /// answers for no such address, a package that declares no seal, or a
 /// seal the builder cannot shape.
 pub fn instantiate(
-    root: &mut TypedBuilder<'_>,
-    founder: PrincipalAddr,
+    b: &mut TypedBuilder<'_>,
     address: ComponentAddr,
     args: impl Args,
 ) -> Result<(), TypedError> {
+    let founder = b.signer();
     // Which method seals is the declaration's answer, not a name this
     // crate knows.
-    let (seal, signature) = root.seal_of(address)?;
+    let (seal, signature) = b.seal_of(address)?;
     // A gated seal reads the intent's own signature, which the call
     // carries whether or not the seal asks for one — so there is nothing
     // to compose ahead of it and no branch on what its gate says.
-    let outputs = root.call(address, &seal, args)?;
+    let outputs = b.call(address, &seal, args)?;
     // One edge per supply the package states, and the kind decides which
     // door each is filed through: a balance lands in a vault and an
     // instance in the holdings interval, and the two share no accessor.
@@ -70,8 +71,8 @@ pub fn instantiate(
     }
     for (issuance, edge) in signature.issues.iter().zip(edges) {
         match issuance.kind {
-            ResourceKind::NonFungible => account::deposit_nf(root, founder, edge)?,
-            ResourceKind::Fungible => account::deposit(root, founder, edge)?,
+            ResourceKind::NonFungible => account::deposit_nf(b, founder, edge)?,
+            ResourceKind::Fungible => account::deposit(b, founder, edge)?,
         }
     }
     Ok(())

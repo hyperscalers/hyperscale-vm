@@ -337,7 +337,7 @@ impl Chain {
             .expect("an instance's record encodes");
         // The bring-up, composed where what the package asks for is read
         // off its own declaration rather than restated here.
-        let concluded = self.transact(founder, |b| instantiate(b, founder, address, args));
+        let concluded = self.transact(founder, |b| instantiate(b, address, args));
         if concluded.completed() {
             assert_eq!(
                 self.store.cell(leaf),

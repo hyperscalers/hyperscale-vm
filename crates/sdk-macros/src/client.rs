@@ -86,8 +86,7 @@ impl Shape {
 /// binding the body reads — a type error inside generated code, spanning
 /// nothing. Rust convention already frowns on `__` identifiers, so
 /// reserving the prefix costs an author nothing.
-pub fn check_names(params: &[syn::Ident], shape: Shape, serves: Serves) -> syn::Result<()> {
-    let _ = shape;
+pub fn check_names(params: &[syn::Ident], serves: Serves) -> syn::Result<()> {
     let injects = |name: &str| match name {
         "builder" => true,
         "who" => serves == Serves::Principals,

@@ -1058,8 +1058,7 @@ pub fn graph_signed(
     signer: PrincipalAddr,
     write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>,
 ) -> ManifestGraph {
-    TypedBuilder::compose(&world(), &TestHasher, signer, write)
-        .expect("every call types and every output is consumed")
+    graph_signed_in(&world(), signer, write)
 }
 
 pub fn transfer_graph() -> ManifestGraph {
