@@ -101,8 +101,7 @@ fn a_swap_reads_as_the_surface_syntax_names_it() {
     // knows none of these words until the caller supplies them.
     assert_eq!(
         render(&graph, &chain, &TestHasher, NETWORK, &vocabulary()).unwrap(),
-        "alice.authorize();\n\
-         let token = alice.withdraw(@token, 100);\n\
+        "let token = alice.withdraw(@token, 100);\n\
          let usdc = pool.swap(token, 1);\n\
          alice.deposit(usdc);\n"
     );
@@ -125,8 +124,7 @@ fn an_unnamed_address_renders_as_itself_and_types_its_binding() {
     assert_eq!(
         text,
         format!(
-            "{alice}.authorize();\n\
-             let v1: {token} = {alice}.withdraw(@{token}, 100);\n\
+            "let v1: {token} = {alice}.withdraw(@{token}, 100);\n\
              {bob}.deposit(v1);\n"
         )
     );
@@ -149,8 +147,7 @@ fn a_split_binds_both_halves_and_numbers_the_repeat() {
     // the author asserted rides its own use site.
     assert_eq!(
         render(&graph, &chain, &TestHasher, NETWORK, &vocabulary()).unwrap(),
-        "alice.authorize();\n\
-         let token = alice.withdraw(@token, 100);\n\
+        "let token = alice.withdraw(@token, 100);\n\
          let token2, token3 = splitter.in-lots(token, 30);\n\
          bob.deposit(token2{>= 1});\n\
          alice.deposit(token3);\n"

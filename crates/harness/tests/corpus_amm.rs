@@ -467,7 +467,7 @@ fn an_unadmitted_venue_cannot_trade_the_restricted_class() {
                     cap: 1,
                 },
                 required: Presence::Present,
-                node: Some(2),
+                node: Some(1),
             },
         }),
         "a venue off the register moves none of the class",
@@ -589,7 +589,7 @@ fn an_unapproved_trade_never_becomes_a_transaction() {
     });
     assert_eq!(
         admit_here(&graph, ALICE, &world),
-        Err(AdmissionError::MissingEvidence { node: 2 }),
+        Err(AdmissionError::MissingEvidence { node: 1 }),
         "the swap's debit is the pool's, and no claim on the registrar reached it",
     );
 }

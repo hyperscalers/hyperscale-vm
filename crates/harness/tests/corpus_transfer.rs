@@ -188,7 +188,7 @@ fn a_missed_edge_bound_aborts_identically_on_both_runtimes() {
         assert_eq!(
             results[0],
             TxResult::Refused(Outcome::ConstraintUnmet {
-                node: 2,
+                node: 1,
                 param: 0,
                 amount: 100,
             }),

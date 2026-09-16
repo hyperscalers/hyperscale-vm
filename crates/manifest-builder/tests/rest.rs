@@ -90,16 +90,16 @@ fn a_policy_deposits_what_nothing_claimed() {
     account::deposit(&mut b, BOB, taken).unwrap();
     let graph = b.build().unwrap();
 
-    // The split's other half went home, as a fourth node nobody wrote.
-    assert_eq!(graph.nodes.len(), 5);
-    assert_eq!(graph.nodes[4].target, CallTarget::Principal(ALICE));
-    assert_eq!(graph.nodes[4].method, "deposit");
+    // The split's other half went home, as a third node nobody wrote.
+    assert_eq!(graph.nodes.len(), 4);
+    assert_eq!(graph.nodes[3].target, CallTarget::Principal(ALICE));
+    assert_eq!(graph.nodes[3].method, "deposit");
     // And it went home typed: the splitter's signature typed the slot,
     // so the appended argument asserts the resource like any other.
-    let GraphArg::Edge { edge, constraints } = &graph.nodes[4].args[0] else {
+    let GraphArg::Edge { edge, constraints } = &graph.nodes[3].args[0] else {
         panic!("a rest edge binds an edge");
     };
-    assert_eq!(edge.producer, 2);
+    assert_eq!(edge.producer, 1);
     assert_eq!(edge.output, 1);
     assert_eq!(constraints, &vec![Constraint::ResourceIs(RES)]);
     admit(&graph, ALICE, &chain, &TestHasher).unwrap();
@@ -120,8 +120,8 @@ fn explicit_consumption_wins() {
 
     // Both halves were routed, so the policy saw nothing and appended
     // nothing — and the second half went where the author sent it.
-    assert_eq!(graph.nodes.len(), 5);
-    assert_eq!(graph.nodes[4].target, CallTarget::Principal(BOB));
+    assert_eq!(graph.nodes.len(), 4);
+    assert_eq!(graph.nodes[3].target, CallTarget::Principal(BOB));
     admit(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
 
@@ -140,8 +140,8 @@ fn every_rest_edge_is_routed_not_just_the_first() {
     let graph = b.build().unwrap();
 
     // Three halves nothing claimed, three deposits appended in node order.
-    assert_eq!(graph.nodes.len(), 7);
-    for node in &graph.nodes[4..] {
+    assert_eq!(graph.nodes.len(), 6);
+    for node in &graph.nodes[3..] {
         assert_eq!(node.target, CallTarget::Principal(ALICE));
         assert_eq!(node.method, "deposit");
     }

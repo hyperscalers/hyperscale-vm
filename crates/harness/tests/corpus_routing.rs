@@ -5,6 +5,7 @@
 use hyperscale_vm_effects::{LegRole, ManifestGraph};
 use hyperscale_vm_fixtures::{lottery, nf};
 use hyperscale_vm_stdlib::account;
+use hyperscale_vm_types::PrincipalAddr;
 
 mod common;
 #[allow(clippy::wildcard_imports)] // the shared world is the binary's prelude
@@ -103,14 +104,13 @@ use common::world::*;
 /// propose reach only principals, which have no creation to finish and
 /// take no fence.
 ///
-/// Transfer, swap and fill moved when the account's deposit stopped
-/// declaring its two credits by hand: the arms declare them, so the
-/// quarantine's clause precedes the vault's in the deposit frame, and
-/// the rebuilt artifacts reseat every package hash and every instance
-/// address derived from one. The leaves, their modes and the shards
-/// asked for them are the ones already pinned — what renumbered is one
-/// frame's clause order and the addresses under it. Propose alone stood
-/// still, because its manifest never deposits.
+/// Transfer, swap and fill moved when the sign-in stopped being a node:
+/// an account's own claim is carried by the intent's signature, so each
+/// manifest lost its leading `authorize` and every later node renumbered
+/// behind it. The leaves and their modes are the ones already pinned,
+/// plus the read of the account's `auth` cell that the sign-in condition
+/// declares. Propose alone stood still, because its only node always
+/// gated on the account composing it and never took a node ahead of it.
 ///
 /// The fingerprint is over the routing's `Debug` rendering, so it is
 /// sensitive to more than routing: renaming a type the declaration holds
@@ -123,14 +123,14 @@ use common::world::*;
 fn the_catalogue_routes_to_pinned_vectors() {
     let world = world();
     let pinned = [
-        ("transfer", transfer_graph(), PIN_TRANSFER),
-        ("swap", swap_graph(300), PIN_SWAP),
-        ("fill", fill_graph(), PIN_FILL),
-        ("propose", propose_graph(), PIN_PROPOSE),
+        ("transfer", transfer_graph(), ALICE, PIN_TRANSFER),
+        ("swap", swap_graph(300), ALICE, PIN_SWAP),
+        ("fill", fill_graph(), TAKER, PIN_FILL),
+        ("propose", propose_graph(), ALICE, PIN_PROPOSE),
     ];
     let mut drifted = Vec::new();
-    for (name, graph, pin) in pinned {
-        let routing = sharded_routing(&world, &graph);
+    for (name, graph, account, pin) in pinned {
+        let routing = sharded_routing_for(&world, account, &graph);
         let fingerprint = routing_fingerprint(&routing);
         if fingerprint != pin {
             // The witness the digest is over, printed beside the new hex —
@@ -149,11 +149,11 @@ fn the_catalogue_routes_to_pinned_vectors() {
     );
 }
 
-const PIN_TRANSFER: &str = "109102ac53842fe240a0fb76b805a8e8ea73fd5f1616b461735324ef229916f4";
+const PIN_TRANSFER: &str = "edca73ecef3ef55c44d43e2676f90e9c78a096ba6f098d47e1adf7c927ad9e60";
 
-const PIN_SWAP: &str = "ce529d7744dec488442d48fd22b33523fcb0498bbe383188a15aa9bcce3d058a";
+const PIN_SWAP: &str = "96b71001953ceeea23c701867442228c0e763cb66706b94fb8848914188ed398";
 
-const PIN_FILL: &str = "5cf4558bcad714e879b389aad31a4a644defcbabb2a643ff373123ff0a63a713";
+const PIN_FILL: &str = "4c265eea1130d4924a0783b8f0f51b1dab9c1ddc213185f939f8e87c1635e1fe";
 
 const PIN_PROPOSE: &str = "6cb64854621b0e573240f6a8e98ff8b66a95ec025daf0da08df4c1cad803e446";
 
@@ -161,6 +161,11 @@ const PIN_PROPOSE: &str = "6cb64854621b0e573240f6a8e98ff8b66a95ec025daf0da08df4c
 struct Shape {
     name: &'static str,
     graph: ManifestGraph,
+    /// The account the intent acts as, and so the payer whose home
+    /// seeds a core that would otherwise be empty. Stated here because
+    /// the manifest does not carry it: the intent's signature rides
+    /// every gated call, so no node says whose graph this is.
+    account: PrincipalAddr,
     /// Where each node sits, in node order.
     roles: Vec<LegRole>,
     /// How many shards the core's nodes sit on.
@@ -189,29 +194,27 @@ struct Shape {
 fn every_pattern_takes_the_star_its_shape_implies() {
     let world = world();
     let shapes = vec![
-        // A core issuing one delivery and no venue between them. The
-        // sign-in is the only node that commits nothing *and* has nothing
-        // beside it in the core, so it bears the verdict; the withdrawal
-        // on its shard is the core's with it, so the core issues.
+        // A core issuing one delivery and no venue between them. No node
+        // attests, so the core would be empty and the shape would run
+        // whole; the payer's home seeds it instead, and the withdrawal
+        // standing on that shard is folded in, so the core issues.
         Shape {
             name: "transfer",
             graph: transfer_graph(),
-            roles: vec![LegRole::Core, LegRole::Core, LegRole::Outbound],
+            account: ALICE,
+            roles: vec![LegRole::Core, LegRole::Outbound],
             core: 1,
             edges: 1,
             decomposes: true,
         },
-        // The venue star: the sign-in and the withdrawal on the caller's
-        // shard, the pool the whole core, the delivery outbound.
+        // The venue star: the withdrawal on the caller's shard, the pool
+        // the whole core, the delivery outbound. The core is the venue's
+        // rather than the payer's, so nothing is seeded.
         Shape {
             name: "swap",
             graph: swap_graph(300),
-            roles: vec![
-                LegRole::Attesting,
-                LegRole::Inbound,
-                LegRole::Core,
-                LegRole::Outbound,
-            ],
+            account: ALICE,
+            roles: vec![LegRole::Inbound, LegRole::Core, LegRole::Outbound],
             core: 1,
             edges: 2,
             decomposes: true,
@@ -223,8 +226,8 @@ fn every_pattern_takes_the_star_its_shape_implies() {
         Shape {
             name: "fill",
             graph: fill_graph(),
+            account: TAKER,
             roles: vec![
-                LegRole::Attesting,
                 LegRole::Inbound,
                 LegRole::Core,
                 LegRole::Outbound,
@@ -239,6 +242,7 @@ fn every_pattern_takes_the_star_its_shape_implies() {
         Shape {
             name: "propose",
             graph: propose_graph(),
+            account: ALICE,
             roles: vec![LegRole::Core],
             core: 1,
             edges: 0,
@@ -247,7 +251,7 @@ fn every_pattern_takes_the_star_its_shape_implies() {
     ];
 
     for shape in shapes {
-        let star = star_of(&world, &shape.graph);
+        let star = star_and_shape_for(&world, shape.account, &shape.graph).0;
         let name = shape.name;
         assert_eq!(star.roles, shape.roles, "{name}: star");
         assert_eq!(star.core.len(), shape.core, "{name}: core size");
@@ -269,7 +273,7 @@ fn every_pattern_takes_the_star_its_shape_implies() {
 fn a_grant_declaring_deposit_bears_the_verdict() {
     let world = world();
     let plain = star_of(&world, &transfer_graph());
-    assert_eq!(plain.roles[2], LegRole::Outbound, "RES_X grants nothing");
+    assert_eq!(plain.roles[1], LegRole::Outbound, "RES_X grants nothing");
 
     let restricted = graph(|b| {
         let funds = account::withdraw(b, ALICE, share(), 100)?;
@@ -278,7 +282,7 @@ fn a_grant_declaring_deposit_bears_the_verdict() {
     let star = star_of(&world, &restricted);
     assert_eq!(
         star.roles,
-        vec![LegRole::Attesting, LegRole::Inbound, LegRole::Core],
+        vec![LegRole::Inbound, LegRole::Core],
         "the deposit is the only node that can still refuse",
     );
     assert_eq!(star.core.len(), 1, "and it is the whole core");
@@ -297,13 +301,10 @@ fn a_grant_declaring_deposit_bears_the_verdict() {
 fn a_declaration_reaching_a_non_participant_does_not_decompose() {
     let world = world();
     let recall = graph_signed(REGISTRAR, |b| {
-        let proof = account::sign_in(b)?;
-        let taken = b.presenting(proof, |b| {
-            issuer().recall_shares(b, ALICE.address(), 1, 100)
-        })?;
+        let taken = issuer().recall_shares(b, ALICE.address(), 1, 100)?;
         account::deposit(b, REGISTRAR, taken)
     });
-    let (star, legs) = star_and_shape(&world, &recall);
+    let (star, legs) = star_and_shape_for(&world, REGISTRAR, &recall);
     assert!(
         !legs
             .iter()
@@ -325,15 +326,15 @@ fn two_chain_frontiers_give_one_classification() {
         .packages
         .publish_unchecked(pkg("lottery"), lottery::metadata());
 
-    for (name, graph) in [
-        ("transfer", transfer_graph()),
-        ("swap", swap_graph(300)),
-        ("fill", fill_graph()),
-        ("propose", propose_graph()),
+    for (name, graph, account) in [
+        ("transfer", transfer_graph(), ALICE),
+        ("swap", swap_graph(300), ALICE),
+        ("fill", fill_graph(), TAKER),
+        ("propose", propose_graph(), ALICE),
     ] {
         assert_eq!(
-            star_of(&ahead, &graph),
-            star_of(&behind, &graph),
+            star_and_shape_for(&ahead, account, &graph).0,
+            star_and_shape_for(&behind, account, &graph).0,
             "{name}: the frontier moved the classification",
         );
     }

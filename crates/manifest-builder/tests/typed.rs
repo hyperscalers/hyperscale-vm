@@ -474,8 +474,12 @@ fn explicit_evidence_stands_alone_inside_a_scope() {
 
 /// A gate the signer cannot prove is answered by the scope that covers
 /// it: the pool's seal gates on its configured founder, the signer is
-/// somebody else, and the founder's sign-in rides the span — itself
-/// opened on the signer's own sign-in, composed ahead of it.
+/// somebody else, and the founder's sign-in rides the span.
+///
+/// Nothing is composed ahead of that sign-in. The signer's own claim is
+/// their signature's and needs no node, and it opens the founder's
+/// account only if the founder's own stored rule names it — which is the
+/// account's question, asked where the cell lives.
 #[test]
 fn a_scope_covers_a_gate_the_signer_cannot_prove() {
     let chain = world();
@@ -489,11 +493,11 @@ fn a_scope_covers_a_gate_the_signer_cannot_prove() {
     .unwrap();
     let graph = b.build().unwrap();
 
-    assert_eq!(graph.nodes[0].target, CallTarget::from(BOB));
-    let sealed = &graph.nodes[2];
+    assert_eq!(graph.nodes[0].target, CallTarget::from(OPERATOR));
+    let sealed = &graph.nodes[1];
     assert_eq!(sealed.method, seal);
     assert!(
-        sealed.evidence.contains(&EvidenceRef::Node(1)),
+        sealed.evidence.contains(&EvidenceRef::Node(0)),
         "the founder's sign-in rides the seal: {:?}",
         sealed.evidence
     );

@@ -6,9 +6,9 @@ use std::sync::{Arc, LazyLock};
 
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG};
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, Claim, EnvelopeTree, EvidenceRef, Hash32, Hasher, InstanceMeta,
-    LegShape, ManifestGraph, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver, PresentedGrants,
-    Records, RuleBytes, ShardId, ShardResolver, SlotId, Star, StoredRule, TestHasher, Value,
+    AdmissionError, Admitted, Claim, EnvelopeTree, Hash32, Hasher, InstanceMeta, LegShape,
+    ManifestGraph, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver, PresentedGrants, Records,
+    RuleBytes, ShardId, ShardResolver, SlotId, Star, StoredRule, TestHasher, Value,
     admit_presenting, admit_tree, child_key, collection_id, holdings_collection, legs_of,
     package_slot, per_shard, star_at,
 };
@@ -593,29 +593,15 @@ pub enum TxResult {
     Inadmissible(u32),
 }
 
-/// Whose signature a corpus graph rides.
+/// The account a corpus graph acts as, where the test did not name one.
 ///
-/// An intent carries one signature, so every node presenting it names
-/// the same account — which is a property of these fixtures rather than
-/// of manifests generally, and worth asserting where it is relied on.
-/// Nodes presenting minted proofs contribute nothing: their proofs chain
-/// back to a signature-presenting node of the same graph.
-pub fn composer(graph: &ManifestGraph) -> PrincipalAddr {
-    let mut signer = None;
-    for node in &graph.nodes {
-        if !node.evidence.contains(&EvidenceRef::IntentSignature) {
-            continue;
-        }
-        let principal = PrincipalAddr::try_from(node.target.address())
-            .expect("a signing corpus node targets an account");
-        assert!(
-            signer.is_none_or(|seen| seen == principal),
-            "one intent, one signature: this graph needs two"
-        );
-        signer = Some(principal);
-    }
-    signer.unwrap_or(ALICE)
-}
+/// [`graph`] and [`graph_in`] compose for [`ALICE`], so that is what
+/// their graphs run under; a graph built for somebody else names them at
+/// the call. The manifest itself cannot say: the intent's signature
+/// rides every gated call, so which nodes carry one says nothing about
+/// whose account it is, and the account lives on the intent rather than
+/// in the graph.
+pub const CORPUS_ACCOUNT: PrincipalAddr = ALICE;
 
 /// What one corpus transaction runs under: its hash, its intent signer,
 /// and the transaction clock its block would have committed.
@@ -766,7 +752,17 @@ pub fn admit_here(
 }
 
 pub fn sharded_routing(world: &Records, graph: &ManifestGraph) -> Admitted {
-    let admitted = admit_here(graph, composer(graph), world).expect("admits");
+    sharded_routing_for(world, CORPUS_ACCOUNT, graph)
+}
+
+/// As [`sharded_routing`], for a graph composed by somebody other than
+/// [`CORPUS_ACCOUNT`].
+pub fn sharded_routing_for(
+    world: &Records,
+    account: PrincipalAddr,
+    graph: &ManifestGraph,
+) -> Admitted {
+    let admitted = admit_here(graph, account, world).expect("admits");
     let first = per_shard(&admitted, &PrefixShardResolver { bits: 8 });
     let second = per_shard(&admitted, &PrefixShardResolver { bits: 8 });
     assert_eq!(
@@ -778,8 +774,18 @@ pub fn sharded_routing(world: &Records, graph: &ManifestGraph) -> Admitted {
 
 /// The corpus placement's per-shard projection of a graph's declaration.
 pub fn sharded_sets(world: &Records, graph: &ManifestGraph) -> BTreeMap<ShardId, EffectSet> {
+    sharded_sets_for(world, CORPUS_ACCOUNT, graph)
+}
+
+/// As [`sharded_sets`], for a graph composed by somebody other than
+/// [`CORPUS_ACCOUNT`].
+pub fn sharded_sets_for(
+    world: &Records,
+    account: PrincipalAddr,
+    graph: &ManifestGraph,
+) -> BTreeMap<ShardId, EffectSet> {
     per_shard(
-        &sharded_routing(world, graph),
+        &sharded_routing_for(world, account, graph),
         &PrefixShardResolver { bits: 8 },
     )
 }
@@ -823,22 +829,32 @@ pub fn star_of(world: &Records, graph: &ManifestGraph) -> Star {
 
 /// The star and the legs it was read off.
 pub fn star_and_shape(world: &Records, graph: &ManifestGraph) -> (Star, Vec<LegShape>) {
-    let admitted = admit_here(graph, composer(graph), world).expect("admits");
+    star_and_shape_for(world, CORPUS_ACCOUNT, graph)
+}
+
+/// As [`star_and_shape`], for a graph composed by somebody other than
+/// [`CORPUS_ACCOUNT`].
+pub fn star_and_shape_for(
+    world: &Records,
+    account: PrincipalAddr,
+    graph: &ManifestGraph,
+) -> (Star, Vec<LegShape>) {
+    let admitted = admit_here(graph, account, world).expect("admits");
     let legs = legs_of(&admitted);
     let star = star_at(
         &legs,
-        composer(graph).address(),
-        &route_owners(graph),
+        account.address(),
+        &route_owners(account),
         &PrefixShardResolver { bits: 8 },
         &TestHasher,
     );
     (star, legs)
 }
 
-/// The parties `graph`'s routing declares beyond any node: its composer,
-/// who signs and pays for it.
-pub fn route_owners(graph: &ManifestGraph) -> Vec<Address> {
-    vec![composer(graph).address()]
+/// The parties a routing declares beyond any node: the account the
+/// intent acts as, who signs and pays for it.
+pub fn route_owners(account: PrincipalAddr) -> Vec<Address> {
+    vec![account.address()]
 }
 
 /// Whether the corpus shape `graph` decomposes.
@@ -898,6 +914,16 @@ pub fn run_both_signed(
     run_both_at(world, store, transactions, signer, env().clock_ms)
 }
 
+/// As [`run_both`], with each transaction naming the account its own
+/// intent acts as — how a batch runs two parties' graphs in order.
+pub fn run_both_each(
+    world: &Records,
+    store: &MemoryStore,
+    transactions: &[(&ManifestGraph, TxHash, PrincipalAddr)],
+) -> (Vec<TxResult>, MemoryStore) {
+    run_both_each_at(world, store, transactions, env().clock_ms)
+}
+
 /// As [`run_both_signed`], at an explicit transaction clock — how the
 /// recovery tests move weighted time between transactions.
 pub fn run_both_at(
@@ -907,14 +933,28 @@ pub fn run_both_at(
     signer: Option<PrincipalAddr>,
     clock_ms: u64,
 ) -> (Vec<TxResult>, MemoryStore) {
+    let each: Vec<_> = transactions
+        .iter()
+        .map(|(graph, tx)| (*graph, *tx, signer.unwrap_or(CORPUS_ACCOUNT)))
+        .collect();
+    run_both_each_at(world, store, &each, clock_ms)
+}
+
+/// As [`run_both_each`], at an explicit transaction clock.
+pub fn run_both_each_at(
+    world: &Records,
+    store: &MemoryStore,
+    transactions: &[(&ManifestGraph, TxHash, PrincipalAddr)],
+    clock_ms: u64,
+) -> (Vec<TxResult>, MemoryStore) {
     let mut lanes = Vec::new();
     for backend in LANES.engine_backends() {
         let mut results = Vec::new();
         let mut threaded = store.clone();
-        for (graph, tx) in transactions {
+        for (graph, tx, signer) in transactions {
             let under = Signing {
                 tx: *tx,
-                signer: signer.unwrap_or_else(|| composer(graph)),
+                signer: *signer,
                 clock_ms,
             };
             let (result, next) =
@@ -990,17 +1030,18 @@ pub fn transfer_graph() -> ManifestGraph {
     })
 }
 
-/// The same transfer, signed in rather than signed per call: authorize
-/// mints Alice's identity and the withdrawal presents that proof instead
-/// of the intent's signature.
+/// The same transfer through an explicit sign-in: authorize mints
+/// Alice's identity and the withdrawal presents that proof rather than
+/// the intent's signature, which is what lets a graph composed for her
+/// by somebody else reach a block and refuse inside it.
 pub fn authorized_transfer_graph() -> ManifestGraph {
     authorized_transfer_by(ALICE)
 }
 
-/// As [`authorized_transfer_graph`], composed by `signer`. For anyone
-/// but Alice the builder signs them in at their own account ahead of
-/// hers, so Alice's sign-in is the second node and her gate judges the
-/// proof that sign-in minted.
+/// As [`authorized_transfer_graph`], composed by `signer`. Alice's
+/// sign-in is the first node whoever composes it: the intent's signature
+/// names its own account, and Alice's gate judges that claim — so a
+/// stranger's graph is admissible and her account refuses it.
 pub fn authorized_transfer_by(signer: PrincipalAddr) -> ManifestGraph {
     graph_signed(signer, |b| {
         let proof = account::authorize(b, ALICE)?;
@@ -1044,8 +1085,7 @@ pub fn swap_graph(min_out: u128) -> ManifestGraph {
 
 pub fn fill_graph() -> ManifestGraph {
     graph_signed(TAKER, |b| {
-        let taker = account::authorize(b, TAKER)?;
-        let payment = b.presenting(taker, |b| account::withdraw(b, TAKER, QUOTE, 100))?;
+        let payment = account::withdraw(b, TAKER, QUOTE, 100)?;
         let [bought, refund] = book().fill_asks(b, 3, 5, payment)?;
         account::deposit(b, TAKER, bought)?;
         account::deposit(b, TAKER, refund)

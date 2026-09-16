@@ -15,7 +15,7 @@
 
 use hyperscale_hbor::to_vec;
 use hyperscale_vm_effects::{PackageMetadata, RuleBytes, StoredRule};
-use hyperscale_vm_manifest_builder::{BuildError, Proof, TypedBuilder, TypedError};
+use hyperscale_vm_manifest_builder::{BuildError, TypedBuilder, TypedError};
 use hyperscale_vm_types::PrincipalAddr;
 
 // The package, read from the crate the artifact is built from rather
@@ -28,23 +28,6 @@ mod package;
 /// can read the state a flow passes through rather than only its ends.
 pub use package::account::Pending;
 pub use package::account::client::*;
-
-/// Sign in as the principal the builder declares: [`authorize`], with
-/// the signer the builder already names rather than a second naming of
-/// the same party.
-///
-/// The explicit form stays for a composition signing into another
-/// party's account through that account's own stored rule; this one is
-/// for the intent's own principal, where naming anyone else would only
-/// be the disagreement admission refuses.
-///
-/// # Errors
-///
-/// As [`authorize`].
-pub fn sign_in(builder: &mut TypedBuilder<'_>) -> Result<Proof, TypedError> {
-    let who = builder.signer();
-    authorize(builder, who)
-}
 
 /// One replacement as the cell holds it.
 ///

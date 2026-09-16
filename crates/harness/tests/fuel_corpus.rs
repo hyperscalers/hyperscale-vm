@@ -2,7 +2,7 @@
 //!
 //! The per-node compute ceiling is derived in the fee plan from a
 //! measured rate and an assumed window, and sanity-checked against "a
-//! transfer is about a hundred thousand fuel". This lane is where that
+//! transfer is under a hundred thousand fuel". This lane is where that
 //! figure stops being a remembered one: every shape the shared world
 //! builds is run and its fuel pinned, so the heaviest legitimate
 //! transaction is a number a reviewer can read rather than a guess, and
@@ -87,14 +87,14 @@ fn the_corpus_costs_what_it_costs() {
         (
             "transfer",
             spent(&funded(), transfer_graph(), ALICE),
-            99_053,
+            66_222,
         ),
         (
             "recovery proposal",
             spent(&funded(), propose_graph(), ALICE),
             80_969,
         ),
-        ("swap", spent(&stocked(), swap_graph(1), ALICE), 168_525),
+        ("swap", spent(&stocked(), swap_graph(1), ALICE), 135_694),
     ];
 
     for (name, nodes, pinned) in &priced {

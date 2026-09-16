@@ -23,8 +23,7 @@ const BOOK_QUOTE: SlotId = SlotId(<book::Quote as VaultField>::SLOT);
 
 fn place_graph() -> ManifestGraph {
     graph_signed(MAKER, |b| {
-        let maker = account::authorize(b, MAKER)?;
-        let funds = b.presenting(maker, |b| account::withdraw(b, MAKER, BASE, 50))?;
+        let funds = account::withdraw(b, MAKER, BASE, 50)?;
         book().place_ask(b, 3, funds)
     })
 }
@@ -45,8 +44,7 @@ fn each_side_of_the_book_takes_only_its_own_resource() {
 
     // A maker escrowing quote where the book escrows base.
     let wrong_ask = graph_signed(MAKER, |b| {
-        let maker = account::authorize(b, MAKER)?;
-        let funds = b.presenting(maker, |b| account::withdraw(b, MAKER, QUOTE, 50))?;
+        let funds = account::withdraw(b, MAKER, QUOTE, 50)?;
         book().place_ask(b, 3, funds)
     });
     assert!(
@@ -60,8 +58,7 @@ fn each_side_of_the_book_takes_only_its_own_resource() {
 
     // A taker paying base where the book is paid in quote.
     let wrong_fill = graph_signed(TAKER, |b| {
-        let taker = account::authorize(b, TAKER)?;
-        let payment = b.presenting(taker, |b| account::withdraw(b, TAKER, BASE, 100))?;
+        let payment = account::withdraw(b, TAKER, BASE, 100)?;
         let [bought, refund] = book().fill_asks(b, 3, 5, payment)?;
         account::deposit(b, TAKER, bought)?;
         account::deposit(b, TAKER, refund)
@@ -83,7 +80,7 @@ fn each_side_of_the_book_takes_only_its_own_resource() {
 #[test]
 fn fill_provisions_the_interval_and_the_fence() {
     let world = world();
-    let routing = sharded_sets(&world, &fill_graph());
+    let routing = sharded_sets_for(&world, TAKER, &fill_graph());
     let book_set = &routing[&shard_of(book())];
     // The write interval and the fence's leaf are the provisioned
     // targets: the escrow legs are deltas and carry nothing.
@@ -124,12 +121,12 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() {
 
     let place = place_graph();
     let fill = fill_graph();
-    let (results, final_store) = run_both(
+    let (results, final_store) = run_both_each(
         &world,
         &store,
         &[
-            (&place, TxHash(Hash32([0x04; 32]))),
-            (&fill, TxHash(Hash32([0x05; 32]))),
+            (&place, TxHash(Hash32([0x04; 32])), MAKER),
+            (&fill, TxHash(Hash32([0x05; 32])), TAKER),
         ],
     );
 
@@ -142,7 +139,7 @@ fn the_order_book_matches_by_price_time_priority_on_both_runtimes() {
 
     // The placed ask landed at the declared fresh sequence.
     let admitted = admit(&place, MAKER, &world, &TestHasher).unwrap();
-    let seq = fresh_id(&TestHasher, admitted.identity(), 2, 0);
+    let seq = fresh_id(&TestHasher, admitted.identity(), 1, 0);
     let placed_ask = EntryKey {
         owner: Address::from(book()),
         collection: asks(),
@@ -242,13 +239,16 @@ fn a_finer_tick_prices_between_two_integers_on_both_runtimes() {
     );
 
     let fill = graph_signed(TAKER, |b| {
-        let taker = account::authorize(b, TAKER)?;
-        let payment = b.presenting(taker, |b| account::withdraw(b, TAKER, QUOTE, 60))?;
+        let payment = account::withdraw(b, TAKER, QUOTE, 60)?;
         let [bought, change] = fine_book().fill_asks(b, 1, 9, payment)?;
         account::deposit(b, TAKER, bought)?;
         account::deposit(b, TAKER, change)
     });
-    let (results, final_store) = run_both(&world, &store, &[(&fill, TxHash(Hash32([0x06; 32])))]);
+    let (results, final_store) = run_both_each(
+        &world,
+        &store,
+        &[(&fill, TxHash(Hash32([0x06; 32])), TAKER)],
+    );
 
     let TxResult::Completed(_) = &results[0] else {
         panic!("the fill must complete");

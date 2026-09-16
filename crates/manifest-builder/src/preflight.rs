@@ -57,7 +57,9 @@ pub enum Authority {
     /// Anyone may name this method on this target. What the caller
     /// supplies was gated wherever it was obtained.
     Anyone,
-    /// A signature this principal's address derives.
+    /// This account, acting as itself. Satisfied by an intent the
+    /// account signed — attested by whatever keys its own shard admits,
+    /// so it follows the account's rotations and names no key.
     Signature(PrincipalAddr),
     /// The target's stored rule for this role. While nothing is stored,
     /// that is the identity the target's address derives — its own
@@ -137,22 +139,22 @@ impl Authority {
     /// contributes none. A rule-judged branch contributes the target's
     /// own key — the identity that satisfies the rule while nothing is
     /// stored.
-    fn certain_signers(&self, target: Address, out: &mut BTreeSet<PrincipalAddr>) {
+    fn certain_signers(&self, out: &mut BTreeSet<PrincipalAddr>) {
         match self {
             Self::Signature(principal) => {
                 out.insert(*principal);
             }
-            Self::StoredRule => {
-                if let Ok(principal) = PrincipalAddr::try_from(target) {
-                    out.insert(principal);
-                }
-            }
             Self::Threshold { count, branches } if usize::from(*count) == branches.len() => {
                 for branch in branches {
-                    branch.certain_signers(target, out);
+                    branch.certain_signers(out);
                 }
             }
+            // A stored rule names its accounts in state, which no report
+            // reads. The target's own address governs it only while
+            // nothing is stored, so naming it here would be a guess, and
+            // this set holds none.
             Self::Anyone
+            | Self::StoredRule
             | Self::TargetHasNoKey
             | Self::ProvenInTransaction
             | Self::Held
@@ -664,23 +666,22 @@ impl Report {
         Ok(by_intent)
     }
 
-    /// Every signature the transaction certainly needs: what its nodes'
-    /// declared access requires, plus the signer of every bound
-    /// subintent. A rule-judged node contributes its target's own key,
-    /// which is the identity that satisfies the rule while nothing is
-    /// stored and a guess once something is: a securified target's
-    /// stored rule names its signers in state, which no report reads,
-    /// so the key named here may open nothing. A threshold below its
-    /// width leaves the choice with the holder, so only a conjunction's
-    /// branches contribute.
+    /// Every account the transaction certainly needs an intent for: the
+    /// account each intent already acts as, plus every account a node's
+    /// declared access names outright. Exact, because nothing here is
+    /// guessed — a stored rule names its accounts in state, which no
+    /// report reads, so it contributes nothing rather than its target's
+    /// own address. A threshold below its width leaves the choice with
+    /// the holder, so only a conjunction's branches contribute.
+    ///
+    /// Accounts, not keys: which keys attest an intent is the account's
+    /// own rule to state, and its shard judges that at materialization.
     #[must_use]
     pub fn signers(&self) -> BTreeSet<PrincipalAddr> {
         let mut signers: BTreeSet<PrincipalAddr> =
             self.intents.iter().map(|record| record.account).collect();
         for required in &self.authority {
-            required
-                .authority
-                .certain_signers(required.target, &mut signers);
+            required.authority.certain_signers(&mut signers);
         }
         signers
     }

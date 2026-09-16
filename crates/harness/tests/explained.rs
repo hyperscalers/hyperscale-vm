@@ -101,7 +101,7 @@ fn a_refusal_names_the_resource_and_the_behaviour_behind_it() {
     );
     // The node, the entry, and the question — none of which the verdict
     // carries.
-    assert!(text.contains("node 2"), "{text}");
+    assert!(text.contains("node 1"), "{text}");
     assert!(text.contains("swap"), "{text}");
     assert!(
         text.contains(&format!("withdraw of {}", addr(share()))),
@@ -206,6 +206,6 @@ fn a_refusal_is_read_against_the_node_that_asked_and_no_other() {
 
     // And the node that did ask reads the entry back whole.
     let asked = explain_refusal(&admitted, condition);
-    assert!(asked.contains("node 2"), "{asked}");
+    assert!(asked.contains("node 1"), "{asked}");
     assert!(asked.contains("Nothing declared this"), "{asked}");
 }

@@ -133,20 +133,27 @@ fn account() -> PackageMetadata {
     package
 }
 
+/// A call reading its target's stored rule and moving a badge the
+/// account's own claim governs answers both with the one signature, and
+/// mints nothing to do it.
+///
+/// The two gates ask different questions — what the stored rule names,
+/// and what the resource's entry demands of the mover — and both
+/// answers are the account this intent acts as. No node proves that, so
+/// the graph is the call alone.
 #[test]
-fn a_rule_reading_call_still_presents_what_its_movements_earned() {
+fn a_rule_reading_call_answers_both_gates_with_one_signature() {
     let chain = Principals::new();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     b.call(ALICE, "spend", ())
-        .expect("the sign-in composes")
+        .expect("the call composes")
         .none()
         .expect("spend produces nothing");
     let graph = b.build().expect("the graph builds");
-    assert_eq!(graph.nodes.len(), 2, "one sign-in, then the call");
-    assert_eq!(graph.nodes[0].method, "authorize");
+    assert_eq!(graph.nodes.len(), 1, "the call alone");
     assert_eq!(
-        graph.nodes[1].evidence,
-        [EvidenceRef::IntentSignature, EvidenceRef::Node(0)].into(),
-        "the signature answers the stored rule; the sign-in answers the badge"
+        graph.nodes[0].evidence,
+        [EvidenceRef::IntentSignature].into(),
+        "one signature answers the stored rule and the badge alike"
     );
 }

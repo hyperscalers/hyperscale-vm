@@ -21,7 +21,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_fixtures::{HAND_AUTHORED, amm, book, lottery, nf, payouts, registry};
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_stdlib::{account, staking};
-use hyperscale_vm_types::{CallTarget, ComponentAddr, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{ComponentAddr, PrincipalAddr, ResourceAddr};
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
 const BOB: PrincipalAddr = PrincipalAddr::new([0x20; 31]);
@@ -164,22 +164,7 @@ fn the_account_wrappers_match_their_signatures() {
         account::cancel(b, ALICE)?;
         account::confirm(b, ALICE)
     });
-    assert_eq!(graph.nodes.len(), 8);
-}
-
-/// Signing in without naming a principal signs in as the builder's own
-/// signer: the two spellings compose one graph.
-#[test]
-fn sign_in_is_authorize_as_the_builders_own_signer() {
-    let named = admits(|b| {
-        let funds = account::withdraw(b, ALICE, BASE, 100)?;
-        account::deposit(b, BOB, funds)
-    });
-    let seeded = admits(|b| {
-        let funds = account::withdraw(b, ALICE, BASE, 100)?;
-        account::deposit(b, BOB, funds)
-    });
-    assert_eq!(named, seeded);
+    assert_eq!(graph.nodes.len(), 7);
 }
 
 /// A rule literal is judged by decoding it as the vocabulary — the same
@@ -222,54 +207,16 @@ fn the_empty_threshold_reaches_the_account() {
         .expect("anyone is a rule the vocabulary can carry");
 }
 
-/// A chained sign-in composes and admits: the second authorize draws
-/// the first's proven claim from the enclosing scope and presents
-/// nothing else — another party's stored rule is not one the intent's
-/// signature reaches.
+/// A stored rule can be a threshold, so a gate can take a set of
+/// proofs: a scope holding two carries both to the call, and the
+/// judgment against the stored rule stays where it always is.
+///
+/// The intent's own signature rides beside them, as it rides every
+/// gated call. It costs the graph nothing and names the account this
+/// intent acts as, which is the claim a rule nobody here can read is
+/// most likely to want.
 #[test]
-fn a_chained_sign_in_admits() {
-    let graph = admits(|b| {
-        let alice = account::authorize(b, ALICE)?;
-        let bob = b.presenting(alice, |b| account::authorize(b, BOB))?;
-        let funds = b.presenting(bob, |b| account::withdraw(b, BOB, BASE, 100))?;
-        account::deposit(b, ALICE, funds)
-    });
-    assert_eq!(
-        graph.nodes[1].evidence,
-        BTreeSet::from([EvidenceRef::Node(0)]),
-        "the scope's proof alone rides the chained sign-in"
-    );
-}
-
-/// A sign-in at another party's account composed outside any scope is
-/// answered from the signer's own: the one claim the composer can make
-/// about a rule it cannot read, proven ahead of the call.
-#[test]
-fn a_sign_in_elsewhere_is_answered_from_the_signers_account() {
-    let graph = admits(|b| {
-        let bob = account::authorize(b, BOB)?;
-        let funds = b.presenting(bob, |b| account::withdraw(b, BOB, BASE, 100))?;
-        account::deposit(b, ALICE, funds)
-    });
-    assert_eq!(graph.nodes[0].target, CallTarget::from(ALICE));
-    assert_eq!(
-        graph.nodes[0].evidence,
-        BTreeSet::from([EvidenceRef::IntentSignature])
-    );
-    assert_eq!(graph.nodes[1].target, CallTarget::from(BOB));
-    assert_eq!(
-        graph.nodes[1].evidence,
-        BTreeSet::from([EvidenceRef::Node(0)])
-    );
-}
-
-/// A stored rule can be a threshold, so a sign-in can take a set of
-/// proofs: a scope holding both carries every one to the gate, and the
-/// judgment against the stored rule stays where it always is. The two
-/// sign-ins elsewhere are each answered from the signer's account,
-/// proven once and cited twice.
-#[test]
-fn a_threshold_sign_in_composes() {
+fn a_scope_holding_two_proofs_carries_both_to_the_gate() {
     let graph = admits(|b| {
         let bob = account::authorize(b, BOB)?;
         let carol = account::authorize(b, CAROL)?;
@@ -277,41 +224,40 @@ fn a_threshold_sign_in_composes() {
         let funds = b.presenting(alice, |b| account::withdraw(b, ALICE, BASE, 100))?;
         account::deposit(b, BOB, funds)
     });
-    assert_eq!(
-        graph.nodes[1].evidence,
-        BTreeSet::from([EvidenceRef::Node(0)])
-    );
-    assert_eq!(
-        graph.nodes[2].evidence,
-        BTreeSet::from([EvidenceRef::Node(0)])
-    );
+    let gated = &graph.nodes[2].evidence;
     assert!(
-        graph.nodes[3].evidence.contains(&EvidenceRef::Node(1))
-            && graph.nodes[3].evidence.contains(&EvidenceRef::Node(2)),
-        "both proofs ride the threshold sign-in: {:?}",
-        graph.nodes[3].evidence
+        gated.contains(&EvidenceRef::Node(0)) && gated.contains(&EvidenceRef::Node(1)),
+        "both proofs ride the gate: {gated:?}"
     );
+    assert!(gated.contains(&EvidenceRef::IntentSignature), "{gated:?}");
 }
 
-/// A guarded call composed without a proof is answered from the
-/// signer's own account where its gate names something the composer can
-/// prove: here the signer's own claim, so a sign-in is proven ahead of
-/// the call and presented to it, with nothing written by hand.
+/// A guarded call composed without a proof presents the intent's own
+/// signature, where the gate names the account that intent acts as.
+///
+/// Nothing is written by hand and nothing is composed ahead of it: the
+/// account's claim is its signature's, so the withdrawal is the whole
+/// graph its author asked for.
 #[test]
-fn a_guarded_call_without_a_proof_is_answered_from_the_signers_account() {
+fn a_guarded_call_without_a_proof_presents_the_intents_signature() {
     let graph = admits(|b| {
         let funds = b.call(ALICE, "withdraw", (BASE, 100_u128))?.one()?;
         account::deposit(b, BOB, funds)
     });
+    assert_eq!(graph.nodes.len(), 2, "the withdrawal and the deposit");
     assert_eq!(
-        graph.nodes[1].evidence,
-        BTreeSet::from([EvidenceRef::Node(0)])
+        graph.nodes[0].evidence,
+        BTreeSet::from([EvidenceRef::IntentSignature])
     );
 }
 
-/// A badge gate answered the same way: the composer reads the badge the
+/// A badge gate still takes a node: the composer reads the badge the
 /// gate names off the declaration and presents it from the signer's
 /// account — the present-badge node it proves, then the call citing it.
+///
+/// Possession is the question, and only a call that reads the vault
+/// answers it. What a signature carries is an account's own claim, so
+/// it rides along and settles nothing here.
 #[test]
 fn a_badge_gate_without_a_proof_is_answered_from_the_signers_account() {
     let gated = address("nf", vec![Value::Address(BASE.address())]);
@@ -321,13 +267,13 @@ fn a_badge_gate_without_a_proof_is_answered_from_the_signers_account() {
     });
     assert_eq!(
         graph.nodes[1].evidence,
-        BTreeSet::from([EvidenceRef::Node(0)])
+        BTreeSet::from([EvidenceRef::IntentSignature, EvidenceRef::Node(0)])
     );
 }
 
 /// Misplaced evidence refuses at the call site, mirroring admission: a
-/// proof to a method admitting anyone, a bare signature to a guarded
-/// one, a proof asked of a method that proves nothing.
+/// proof to a method admitting anyone, a gate naming a party this intent
+/// cannot speak for, a proof asked of a method that proves nothing.
 #[test]
 fn misplaced_evidence_is_refused_at_the_call_site() {
     let chain = world();
@@ -340,7 +286,7 @@ fn misplaced_evidence_is_refused_at_the_call_site() {
     ));
     assert!(matches!(
         b.call(BOB, "withdraw", (BASE, 100_u128)),
-        Err(TypedError::SignatureForGuarded { .. })
+        Err(TypedError::UncoveredGate { .. })
     ));
     assert!(matches!(
         b.call_proving(ALICE, "withdraw", ()),
@@ -380,7 +326,7 @@ fn the_staking_wrappers_match_their_signatures() {
             pool.clear_param_vote(b)
         })
     });
-    assert_eq!(graph.nodes.len(), 12);
+    assert_eq!(graph.nodes.len(), 11);
 }
 
 /// The resource a pool issues, which its `stake` output derives from the

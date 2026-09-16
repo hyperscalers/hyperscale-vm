@@ -102,8 +102,9 @@ fn account() -> PackageMetadata {
             ..MethodSignature::default()
         },
     );
-    // Guarded — it requires a claim and reads no stored rule — and it
-    // moves the badge, so the sign-in walk has something it would mint.
+    // Guarded on another party, and it moves the badge — so the walk
+    // that answers a gate has both a claim to read and a movement to
+    // price before it gives up.
     package.methods.insert(
         "grab".into(),
         MethodSignature {
@@ -138,14 +139,21 @@ fn account() -> PackageMetadata {
     package
 }
 
+/// A gate naming another party, with nothing presented and no scope: the
+/// claim is named in the refusal and the graph is left exactly as it was.
+///
+/// An intent's signature names the account it acts as and no other, and
+/// nothing it can compose speaks for a stranger — so the gate is read
+/// whole, nothing answers it, and the refusal lands before the call is
+/// appended.
 #[test]
-fn a_guarded_call_with_nothing_presented_leaves_no_sign_in_behind() {
+fn a_guarded_call_naming_another_party_appends_nothing() {
     let chain = Principals::new();
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     let refused = b
         .call(ALICE, "grab", ())
-        .expect_err("guarded, and nothing was presented");
-    assert!(matches!(refused, TypedError::SignatureForGuarded { .. }));
+        .expect_err("guarded on Bob, and nothing was presented");
+    assert!(matches!(refused, TypedError::UncoveredGate { .. }));
     let graph = b.build().expect("nothing dangles after a refusal");
     assert_eq!(graph.nodes.len(), 0, "the graph is exactly as it was");
 }

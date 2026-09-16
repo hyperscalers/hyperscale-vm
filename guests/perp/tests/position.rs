@@ -154,7 +154,7 @@ fn only_the_oracle_may_mark(chain: &mut Chain) {
     assert!(
         matches!(
             refused,
-            Some(Refused::Typed(TypedError::SignatureForGuarded { .. }))
+            Some(Refused::Typed(TypedError::UncoveredGate { .. }))
         ),
         "a mark nobody may post is not a transaction: {refused:?}"
     );

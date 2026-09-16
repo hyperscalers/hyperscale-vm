@@ -27,9 +27,7 @@ use std::iter;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use hyperscale_vm_effects::vocabulary::{
-    AUTHORIZE_METHOD, PRESENT_BADGE_METHOD, PRESENT_INSTANCE_METHOD,
-};
+use hyperscale_vm_effects::vocabulary::{PRESENT_BADGE_METHOD, PRESENT_INSTANCE_METHOD};
 use hyperscale_vm_effects::{
     ChainRecords, Claim, EdgeRef, EvalBudget, EvidenceRef, GraphArg, Hasher, InstanceMeta,
     MAX_PROVEN_PER_SIGNATURE, ManifestGraph, MethodSignature, PackageHash, PackageMetadata, Value,
@@ -163,17 +161,6 @@ pub enum TypedError {
         /// The method called.
         method: String,
     },
-    /// A gated call on another party's target composed without a proof,
-    /// naming nothing the composer could prove from the signer's own
-    /// account. The builder's own refusal: admission now resolves a
-    /// signature to the account it acts as and lets any rule naming that
-    /// account take it, so what this keeps is the composer from shipping
-    /// a graph whose gate nothing in it answers.
-    #[error("`{method}` takes a proven claim; a signature only signs in")]
-    SignatureForGuarded {
-        /// The method called.
-        method: String,
-    },
     /// A guarded call inside a `presenting` scope none of whose proofs
     /// covers the gate the composer could read whole — admission's
     /// judgment, reached at the call site with the claim named.
@@ -295,6 +282,24 @@ impl Proof {
         Self {
             builder,
             reference: EvidenceRef::Socket(position),
+            proves,
+        }
+    }
+
+    /// The proof the intent's own signature carries: the claim of the
+    /// account it acts as.
+    ///
+    /// No node proves it and none can — the account's shard attests it
+    /// against the rule stored in its `auth` cell, over the keys that
+    /// signed this intent. So it is available from the start, costs the
+    /// graph nothing, and follows the account's rotations wherever a
+    /// rule names it.
+    pub(crate) fn from_signature(builder: u64, account: PrincipalAddr) -> Self {
+        let mut proves = [None; MAX_PROVEN_PER_SIGNATURE];
+        proves[0] = Some(Claim::of_subject(account));
+        Self {
+            builder,
+            reference: EvidenceRef::IntentSignature,
             proves,
         }
     }
@@ -802,39 +807,21 @@ impl<'a> TypedBuilder<'a> {
             .iter()
             .filter_map(|claim| self.present(*claim))
             .collect();
-        if proven.is_empty() && !any_covered {
-            if scoped.is_empty() {
-                return Err(TypedError::SignatureForGuarded {
-                    method: method.to_owned(),
-                });
-            }
-            if complete {
-                let claim = asked.first().map(claim_text).unwrap_or_default();
-                return Err(TypedError::UncoveredGate {
-                    method: method.to_owned(),
-                    claim,
-                });
-            }
+        // A gate read whole that named a claim, and nothing answers any
+        // of them — not the scope, not the account's own custody, not
+        // its signature. A gate naming nothing this could read is left
+        // to admission, since the leaf construction could not evaluate
+        // may be exactly the claim something else answers.
+        if let Some(claim) = asked
+            .first()
+            .filter(|_| complete && proven.is_empty() && !any_covered)
+        {
+            return Err(TypedError::UncoveredGate {
+                method: method.to_owned(),
+                claim: claim_text(claim),
+            });
         }
         Ok(proven)
-    }
-
-    /// What a call to another party's stored rule presents where the
-    /// caller spelled nothing: the signer's own sign-in, composed ahead
-    /// of the call. The rule's contents are state the composer cannot
-    /// read, and the signer's identity is the one claim it can prove
-    /// about itself — so this is the chained sign-in, and the rule
-    /// decides at the call whether that identity is one it names.
-    /// Inside a scope the scope answers, as for any gate.
-    fn rule_proofs(&mut self, method: &str, scoped: &[Proof]) -> Result<Vec<Proof>, TypedError> {
-        if !scoped.is_empty() {
-            return Ok(Vec::new());
-        }
-        self.present(Claim::of_subject(self.signer))
-            .map(|proof| vec![proof])
-            .ok_or_else(|| TypedError::SignatureForGuarded {
-                method: method.to_owned(),
-            })
     }
 
     /// The claims this call proves, filed on the [`Proof`] handed back
@@ -861,19 +848,24 @@ impl<'a> TypedBuilder<'a> {
         filed
     }
 
-    /// The node proving `claim`, composing one where this intent has
-    /// none yet.
+    /// What proves `claim` for this intent: the intent's own signature
+    /// where the claim is the account it acts as, otherwise the node
+    /// proving it, composed where this intent has none yet.
     ///
-    /// Both forms are the account's own and both are satisfied by the
-    /// intent's signature, because both gate on the rule governing the
-    /// signer's own address — so neither takes a proof of its own and
-    /// the composition stays one node deep.
+    /// An account's own claim is its virtual badge, attested by its
+    /// shard and carried by the signature — so it needs no node and the
+    /// graph pays nothing for it. A held badge still needs the custodial
+    /// call that reads the vault.
     ///
     /// Answers `None` for a claim it will not prove, which is what the
-    /// two bounds below and an unprovable subject all come back as: the
-    /// claim is left to whoever can, exactly as one on another party's
-    /// identity always was.
+    /// two bounds below and an unprovable subject all come back as — any
+    /// other party's account included, since nothing this intent can
+    /// compose speaks for them. The claim is left to whoever can: a
+    /// scope, or a grant the composition wires in.
     fn present(&mut self, claim: Claim) -> Option<Proof> {
+        if claim.instance.is_none() && claim.subject == self.signer.address() {
+            return Some(Proof::from_signature(self.graph_id(), self.signer));
+        }
         let key = (claim.subject, claim.instance);
         if let Some(proof) = self.proven.get(&key) {
             return Some(*proof);
@@ -892,9 +884,6 @@ impl<'a> TypedBuilder<'a> {
         }
         let signer = self.signer;
         let proven = match (claim.subject.class(), claim.instance) {
-            (AddressClass::Principal, None) if claim.subject == signer.address() => {
-                self.prove(signer.into(), AUTHORIZE_METHOD, (), &[]).ok()
-            }
             (AddressClass::Resource | AddressClass::Restricted, None) => self
                 .prove(signer.into(), PRESENT_BADGE_METHOD, (claim.subject,), &[])
                 .ok(),
@@ -991,23 +980,15 @@ impl<'a> TypedBuilder<'a> {
         } else {
             Vec::new()
         };
-        // The builder presents the signature at the signer's own target
-        // and nowhere else. Everything else takes a proof — a claim a
-        // declaration names is proven from the
-        // signer's account where the gate names something it can prove,
-        // and another party's stored rule is answered with the signer's
-        // own sign-in, the one claim the composer can make about a rule
-        // it cannot read. Proven ahead of the call, exactly as injected
-        // requirements are; only a gate nothing can answer refuses, and
-        // proving nothing appends nothing, so the refusal leaves the
-        // graph as it was.
-        let signs_in = signature.reads_a_rule() && target.address() == self.signer.address();
-        let gated: Vec<Proof> = if signature.requires_evidence() && proofs.is_empty() && !signs_in {
-            if signature.reads_a_rule() {
-                self.rule_proofs(method, &scoped)?
-            } else {
-                self.gate_proofs(signature, target, meta, &values, &known, method, &scoped)?
-            }
+        // What a gated call answers its gate with, where the caller
+        // spelled nothing: whatever the gate names that this intent can
+        // prove — the account's own claim from the signature, a held
+        // badge from the vault. Proven ahead of the call, exactly as
+        // injected requirements are; only a gate read whole that
+        // nothing answers refuses, and proving nothing appends nothing,
+        // so the refusal leaves the graph as it was.
+        let gated: Vec<Proof> = if signature.requires_evidence() && proofs.is_empty() {
+            self.gate_proofs(signature, target, meta, &values, &known, method, &scoped)?
         } else {
             Vec::new()
         };
@@ -1057,19 +1038,20 @@ impl<'a> TypedBuilder<'a> {
                     method: method.to_owned(),
                 });
             }
-            // The signer's own rule-reading method takes the intent's
-            // signature, and what its movements earned rides beside it —
-            // the stored rule answers the sign-in, never the claim a
-            // moved resource demands. Any other gated method presents
-            // what the walk above proved for it, and was refused there
-            // if that was nothing.
-            (true, []) if signs_in => iter::once(EvidenceRef::IntentSignature)
-                .chain(earned.iter().map(|proof| proof.reference()))
-                .collect(),
-            (true, []) => gated
-                .iter()
-                .chain(earned.iter())
-                .map(|proof| proof.reference())
+            // A gated call presents the intent's signature, whatever the
+            // gate's own claims resolved to, and what its movements
+            // earned. The signature rides every one of them because it
+            // costs the graph nothing and names the account this intent
+            // acts as — which is the claim a stored rule the composer
+            // cannot read is most likely to want, and the one no node
+            // could prove anyway.
+            (true, []) => iter::once(EvidenceRef::IntentSignature)
+                .chain(
+                    gated
+                        .iter()
+                        .chain(earned.iter())
+                        .map(|proof| proof.reference()),
+                )
                 .collect(),
             (true, presented) => presented.iter().map(|proof| proof.reference()).collect(),
         };

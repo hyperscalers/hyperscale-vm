@@ -147,7 +147,7 @@ fn only_the_oracle_may_post_a_price(chain: &mut Chain) {
     assert!(
         matches!(
             refused,
-            Some(Refused::Typed(TypedError::SignatureForGuarded { .. }))
+            Some(Refused::Typed(TypedError::UncoveredGate { .. }))
         ),
         "a price nobody may post is not a transaction: {refused:?}"
     );

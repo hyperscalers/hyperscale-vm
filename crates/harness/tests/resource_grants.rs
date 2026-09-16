@@ -406,7 +406,7 @@ fn a_non_fungible_credential_governs_a_withdrawal_the_same_way() -> Result<()> {
                 required: Presence::Present,
                 // The withdrawing call, which is the frame the entry
                 // was injected onto.
-                node: Some(1),
+                node: Some(0),
             }
         },
         "a holder of none is refused by the interval the injection asked about",
@@ -538,7 +538,7 @@ fn a_deposit_credential_governs_who_may_be_credited() -> Result<()> {
                 required: Presence::Present,
                 // The deposit, which is the frame that credits — the
                 // withdrawal ahead of it earns the other entry.
-                node: Some(2),
+                node: Some(1),
             }
         },
         "the recipient's own credential is what the credit is asked for",

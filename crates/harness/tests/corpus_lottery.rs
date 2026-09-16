@@ -90,8 +90,7 @@ fn the_round_settles_on_the_entrant_its_sealed_draw_picks() {
 
     let enter = |who: PrincipalAddr, stake: u128| {
         graph_signed(who, move |b| {
-            let entrant = account::authorize(b, who)?;
-            let funds = b.presenting(entrant, |b| account::withdraw(b, who, RES_X, stake))?;
+            let funds = account::withdraw(b, who, RES_X, stake)?;
             lottery_addr().enter(b, who, funds)
         })
     };
@@ -119,14 +118,14 @@ fn the_round_settles_on_the_entrant_its_sealed_draw_picks() {
         "an unentered round records its draw and no winner"
     );
 
-    let (results, store) = run_both(
+    let (results, store) = run_both_each(
         &world,
         &store,
         &[
-            (&enter(ALICE, 100), TxHash(Hash32([0x61; 32]))),
-            (&enter(BOB, 40), TxHash(Hash32([0x62; 32]))),
-            (&close, TxHash(Hash32([0x63; 32]))),
-            (&settle, TxHash(Hash32([0x64; 32]))),
+            (&enter(ALICE, 100), TxHash(Hash32([0x61; 32])), ALICE),
+            (&enter(BOB, 40), TxHash(Hash32([0x62; 32])), BOB),
+            (&close, TxHash(Hash32([0x63; 32])), ALICE),
+            (&settle, TxHash(Hash32([0x64; 32])), ALICE),
         ],
     );
     assert!(results.iter().all(|r| matches!(r, TxResult::Completed(_))));
@@ -299,27 +298,26 @@ fn a_settlement_declines_a_page_that_did_not_cover_the_round() {
 
     let enter = |who: PrincipalAddr| {
         graph_signed(who, move |b| {
-            let entrant = account::authorize(b, who)?;
-            let funds = b.presenting(entrant, |b| account::withdraw(b, who, RES_X, 100))?;
+            let funds = account::withdraw(b, who, RES_X, 100)?;
             lottery_addr().enter(b, who, funds)
         })
     };
     let close = graph(|b| lottery_addr().close(b));
     let settle_at = |cap: u64| graph(move |b| lottery_addr().settle(b, cap));
 
-    let (results, store) = run_both(
+    let (results, store) = run_both_each(
         &world,
         &store,
         &[
-            (&enter(ALICE), TxHash(Hash32([0x80; 32]))),
-            (&enter(BOB), TxHash(Hash32([0x81; 32]))),
-            (&close, TxHash(Hash32([0x82; 32]))),
+            (&enter(ALICE), TxHash(Hash32([0x80; 32])), ALICE),
+            (&enter(BOB), TxHash(Hash32([0x81; 32])), BOB),
+            (&close, TxHash(Hash32([0x82; 32])), ALICE),
             // A one-entry page over a two-ticket round leaves a ticket
             // unwalked, and the round declines.
-            (&settle_at(1), TxHash(Hash32([0x83; 32]))),
+            (&settle_at(1), TxHash(Hash32([0x83; 32])), ALICE),
             // A page exactly the round's size covers it: the kernel
             // probes past the page's last entry and finds nothing.
-            (&settle_at(2), TxHash(Hash32([0x84; 32]))),
+            (&settle_at(2), TxHash(Hash32([0x84; 32])), ALICE),
         ],
     );
     assert!(matches!(results[0], TxResult::Completed(_)));

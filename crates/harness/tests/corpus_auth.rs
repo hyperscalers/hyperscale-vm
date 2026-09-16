@@ -41,7 +41,7 @@ fn a_refused_authorization_takes_its_consumers_with_it() {
     assert_eq!(
         results,
         vec![TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 1 },
+            condition: UnmetCondition::Satisfies { node: 0 },
         })]
     );
     assert_eq!(amount_of(&final_store, vault(ALICE, RES_X)), 150);
@@ -130,8 +130,8 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
             condition: UnmetCondition::Holds {
                 target: EffectTarget::Point(auth(ALICE)),
                 required: Presence::Absent,
-                // The securify, not the two sign-ins that precede it.
-                node: Some(2),
+                // The securify, not the sign-in that precedes it.
+                node: Some(1),
             },
         })],
         "a one-way door is a declared precondition, not a guest panic — and \
@@ -213,8 +213,9 @@ fn a_retired_key_is_refused_at_its_own_sign_in_and_reaches_no_other() {
     let world = world();
     let store = chained_store();
 
-    // Composed: the maker's sign-in is answered from Alice's own
-    // account, which her key no longer opens.
+    // Composed: the maker's sign-in is answered by the intent's own
+    // signature, which names Alice's account — the one her key no
+    // longer opens.
     let composed = graph(|b| {
         let maker = account::authorize(b, MAKER)?;
         let funds = b.presenting(maker, |b| account::withdraw(b, MAKER, RES_X, 100))?;
@@ -222,8 +223,8 @@ fn a_retired_key_is_refused_at_its_own_sign_in_and_reaches_no_other() {
     });
     assert_eq!(
         composed.nodes[0].target,
-        ALICE.address(),
-        "the builder signs in at the signer's own account ahead of the maker's"
+        MAKER.address(),
+        "nothing is composed ahead of the maker's: an account's own claim is its signature's"
     );
     let (results, store) = run_both(&world, &store, &[(&composed, TxHash(Hash32([0x65; 32])))]);
     assert_eq!(
@@ -409,7 +410,7 @@ fn assert_acts(
                 account: ALICE.address(),
             }
         } else {
-            UnmetCondition::Satisfies { node: 1 }
+            UnmetCondition::Satisfies { node: 0 }
         };
         assert_eq!(
             results,
@@ -510,7 +511,7 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
     assert_eq!(
         results,
         vec![TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 1 },
+            condition: UnmetCondition::Satisfies { node: 0 },
         })],
         "a stranger's sign-in opens no gate of Alice's"
     );
@@ -915,7 +916,7 @@ fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
                 required: Presence::Absent,
                 // The securify, not the sign-in that precedes it: the
                 // door is the second node's own.
-                node: Some(1),
+                node: Some(0),
             },
         })],
         "securify is a one-way door and the cell is on the far side of it"
@@ -951,7 +952,7 @@ fn confirmation_enacts_a_proposal_early() {
     assert_eq!(
         results,
         vec![TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 1 },
+            condition: UnmetCondition::Satisfies { node: 0 },
         })],
         "recovery is not confirmation"
     );
@@ -1169,7 +1170,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
     assert_eq!(
         results,
         vec![TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 1 },
+            condition: UnmetCondition::Satisfies { node: 0 },
         })],
         "and the branch an absent cell meets names the account, not a caller"
     );
@@ -1252,7 +1253,7 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
     assert_eq!(
         results[0],
         TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 1 },
+            condition: UnmetCondition::Satisfies { node: 0 },
         })
     );
 
@@ -1262,13 +1263,13 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
         let moved = account::withdraw_nf(b, ALICE, badge, &[id])?;
         account::deposit_nf(b, BOB, moved)
     });
-    let (results, _) = run_both(
+    let (results, _) = run_both_each(
         &world,
         &store,
         &[
-            (&transfer, TxHash(Hash32([0x75; 32]))),
-            (&operate_as(BOB, id), TxHash(Hash32([0x76; 32]))),
-            (&operate_as(ALICE, id), TxHash(Hash32([0x77; 32]))),
+            (&transfer, TxHash(Hash32([0x75; 32])), ALICE),
+            (&operate_as(BOB, id), TxHash(Hash32([0x76; 32])), BOB),
+            (&operate_as(ALICE, id), TxHash(Hash32([0x77; 32])), ALICE),
         ],
     );
     assert!(matches!(results[0], TxResult::Completed(_)));
@@ -1376,12 +1377,20 @@ fn distinct_instances_of_one_badge_are_distinct_authorities() {
 
     // The resource-naming gate admits either holder: the instance claim
     // carries the badge it is an instance of.
-    let (results, _) = run_both(
+    let (results, _) = run_both_each(
         &world,
         &store,
         &[
-            (&operate_resource(ALICE, alices), TxHash(Hash32([0x84; 32]))),
-            (&operate_resource(BOB, bobs), TxHash(Hash32([0x85; 32]))),
+            (
+                &operate_resource(ALICE, alices),
+                TxHash(Hash32([0x84; 32])),
+                ALICE,
+            ),
+            (
+                &operate_resource(BOB, bobs),
+                TxHash(Hash32([0x85; 32])),
+                BOB,
+            ),
         ],
     );
     assert!(matches!(results[0], TxResult::Completed(_)));

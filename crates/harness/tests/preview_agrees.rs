@@ -119,7 +119,7 @@ fn a_refused_preview_prints_the_refusal() -> Result<()> {
         Slack::NONE,
     );
 
-    let condition = UnmetCondition::Satisfies { node: 1 };
+    let condition = UnmetCondition::Satisfies { node: 0 };
     assert_eq!(
         report.outcome,
         Outcome::ConditionUnmet {

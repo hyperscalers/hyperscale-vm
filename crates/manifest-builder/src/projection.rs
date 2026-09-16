@@ -276,11 +276,9 @@ pub(crate) fn earned_claims(
 /// The declaration-side counterpart of [`earned_claims`]: those mirror
 /// what admission injects from the resources a call touches, these read
 /// the `Requires` clauses the author wrote. Only `Claim` leaves are
-/// collected — a stored rule takes the intent's signature, and a
-/// presence leaf is answered from the store rather than from evidence —
-/// and only where the expression resolves over what the construction
-/// knows. A claim this cannot evaluate is left to the caller, exactly
-/// as one beyond the composer's reach is.
+/// collected, and only where the expression resolves over what the
+/// construction knows. A claim this cannot evaluate is left to the
+/// caller, exactly as one beyond the composer's reach is.
 pub(crate) fn gated_claims(
     signature: &MethodSignature,
     inputs: &EvalInputs<'_>,
@@ -302,8 +300,20 @@ pub(crate) fn gated_claims(
         });
     for rule in rules {
         for leaf in rule.leaves() {
-            let RuleLeaf::Claim(expr) = leaf else {
-                continue;
+            let expr = match leaf {
+                RuleLeaf::Claim(expr) => expr,
+                // A stored rule is judged against what the caller
+                // presents, and it names its accounts in state nothing
+                // here can read — so a gate carrying one was not read
+                // whole, whatever its claim leaves resolved to, and what
+                // answers it is left to the party who can.
+                RuleLeaf::Stored { .. } => {
+                    complete = false;
+                    continue;
+                }
+                // Answered from the store rather than from evidence, so
+                // it says nothing about what a caller could present.
+                RuleLeaf::Presence { .. } => continue,
             };
             if !resolvable(expr, known, 0) {
                 complete = false;

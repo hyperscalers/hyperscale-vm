@@ -176,7 +176,7 @@ fn only_the_oracle_may_post_a_deviation(chain: &mut Chain) {
     assert!(
         matches!(
             refused,
-            Err(Refused::Typed(TypedError::SignatureForGuarded { .. }))
+            Err(Refused::Typed(TypedError::UncoveredGate { .. }))
         ),
         "a price nobody may post is not a transaction: {refused:?}"
     );

@@ -207,12 +207,12 @@ fn a_withdrawal_names_its_own_signer_and_a_deposit_names_nobody() {
     let report = preflight_tree(&one_intent(ALICE, &graph), &chain, &TestHasher, NETWORK).unwrap();
 
     // Spending is the sender's; being paid is nobody's to refuse, so a
-    // transfer composes under one signature — presented once, at the
-    // sign-in, judged by the account's stored primary rule, and carried
-    // to the withdrawal as its proof.
-    assert_eq!(report.authority[0].authority, Authority::StoredRule);
-    assert_eq!(report.authority[1].authority, Authority::Signature(ALICE));
-    assert_eq!(report.authority[2].authority, Authority::Anyone);
+    // transfer is two nodes and one signature — the withdrawal gated on
+    // the account it draws from, answered by the intent acting as that
+    // account, with nothing composed ahead of it.
+    assert_eq!(report.authority.len(), 2);
+    assert_eq!(report.authority[0].authority, Authority::Signature(ALICE));
+    assert_eq!(report.authority[1].authority, Authority::Anyone);
     assert_eq!(report.signers(), std::iter::once(ALICE).collect());
     assert_eq!(report.unsatisfiable().count(), 0);
 }
