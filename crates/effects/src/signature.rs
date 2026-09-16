@@ -19,13 +19,13 @@ use crate::types::{MAX_IDS_PER_EDGE, Value};
 /// literal outside them. That refusal is what lets a body read the
 /// parameter at the narrow type with no failure arm of its own.
 ///
-/// The variants are grouped — numbers, bytes, addresses widest first,
-/// authority, then the two edge kinds — and the grouping is the wire
-/// format, not a tidying: nothing here carries a discriminant of its
-/// own, so a signature's parameter list is encoded by declaration order.
-/// A new kind goes where it belongs among its neighbours, which moves
-/// the ones below it; appending to dodge that is how a list stops
-/// meaning anything.
+/// The declaration order is the wire format: nothing here carries a
+/// discriminant of its own, so a kind's tag is its position. A package
+/// hash folds the tags its signatures carry and a component's address
+/// folds that hash, so moving a variant moves every instance in every
+/// world onto a different shard. A new kind goes on the end whatever
+/// its neighbours, and a test pins every tag so a reorder fails here
+/// rather than a reshape scenario away.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub enum ParamType {
     /// An unsigned 64-bit integer.
@@ -88,13 +88,8 @@ pub enum ParamType {
     /// ever meet — and a holding is one the judge cannot read at all.
     /// Either would leave an account nobody can open, which is a door
     /// the vocabulary can close at the parameter rather than leave for
-    /// its owner to walk into.
-    ///
-    /// Last rather than beside the kind it narrows: the tag is this
-    /// list's order, a package hash folds the tags its signatures carry,
-    /// and a component's address folds that hash — so an insertion
-    /// anywhere earlier moves every instance in every world onto a
-    /// different shard. Additions go on the end.
+    /// its owner to walk into. A threshold over nothing is the owner's
+    /// own choice — anyone, or nobody — and admitted as such.
     PrincipalRule,
 }
 
@@ -656,6 +651,8 @@ impl MethodSignature {
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_hbor::to_vec;
+
     use super::*;
 
     /// The two integer widths do not stand in for one another.
@@ -729,6 +726,34 @@ mod tests {
                 "{} a non-address",
                 param.name()
             );
+        }
+    }
+
+    /// The tag is the declaration order and a package hash folds it, so
+    /// every kind's tag is pinned: a reorder moves every component in
+    /// every world onto another shard, and this is the test that says so.
+    #[test]
+    fn every_parameter_kind_keeps_its_tag() {
+        let tagged = [
+            (ParamType::U64, 0u8),
+            (ParamType::U128, 1),
+            (ParamType::U256, 2),
+            (ParamType::Bytes, 3),
+            (ParamType::BytesExact(0), 4),
+            (ParamType::Address, 5),
+            (ParamType::CallTarget, 6),
+            (ParamType::Principal, 7),
+            (ParamType::Component, 8),
+            (ParamType::Package, 9),
+            (ParamType::Resource, 10),
+            (ParamType::Rule, 11),
+            (ParamType::Ids, 12),
+            (ParamType::Bucket, 13),
+            (ParamType::NfBucket, 14),
+            (ParamType::PrincipalRule, 15),
+        ];
+        for (kind, tag) in tagged {
+            assert_eq!(to_vec(&kind).unwrap()[0], tag, "{}", kind.name());
         }
     }
 }
