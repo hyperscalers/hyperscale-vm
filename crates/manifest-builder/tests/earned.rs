@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
-    ChainRecords, Claim, Clause, EvidenceRef, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta,
+    ChainRecords, Claim, ClaimRef, Clause, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta,
     MethodSignature, ModeExpr, PackageHash, PackageMetadata, ResourceGrants, ResourceKind,
     ResourceMeta, RuleBytes, RuleExpr, RuleLeaf, SlotRef, StoredRule, TargetExpr, TestHasher,
     Totality, Value,
@@ -152,7 +152,7 @@ fn a_rule_reading_call_answers_both_gates_with_one_signature() {
     assert_eq!(graph.nodes.len(), 1, "the call alone");
     assert_eq!(
         graph.nodes[0].evidence,
-        [EvidenceRef::Account(ALICE)].into(),
+        [ClaimRef::Account(ALICE)].into(),
         "one signature answers the stored rule and the badge alike"
     );
 }

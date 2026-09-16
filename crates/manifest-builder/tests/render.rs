@@ -193,7 +193,7 @@ fn a_socket_renders_as_the_opening_it_is() {
     graph.nodes.push(GraphNode {
         target: ALICE.into(),
         method: "deposit".into(),
-        args: vec![GraphArg::Socket(0)],
+        args: vec![GraphArg::socket(0)],
         evidence: BTreeSet::new(),
     });
 

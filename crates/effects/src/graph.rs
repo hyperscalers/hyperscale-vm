@@ -57,34 +57,103 @@ pub enum Constraint {
     ResourceIs(ResourceAddr),
 }
 
+/// Where a value edge an intent consumes, wires or gives comes from:
+/// one of its own graph's outputs, a give of one of its members, or one
+/// of its own sockets.
+///
+/// The one vocabulary for every place value is named — an argument of
+/// the intent's own call, the wiring that fills a member's socket, and
+/// the gives the intent offers upward — so what an intent may reach is
+/// said once: its own edges, its members' gives and its own sockets, and
+/// nothing inside a member. Each place admits what makes sense there: a
+/// give of a socket routes the composer's value back to it and is
+/// refused; everything else is the intent's to spend once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
+pub enum ValueRef {
+    /// An output of the intent's own graph.
+    Edge(EdgeRef),
+    /// A give of one of the intent's members: value that flows down
+    /// the tree, taken from below.
+    Give(GiveRef),
+    /// One of the intent's own sockets: value that flows up the tree,
+    /// filled from above. Only meaningful inside a tree.
+    Socket(u32),
+}
+
+impl ValueRef {
+    /// The socket this names, where it names one.
+    #[must_use]
+    pub const fn socket(self) -> Option<u32> {
+        match self {
+            Self::Socket(socket) => Some(socket),
+            Self::Edge(_) | Self::Give(_) => None,
+        }
+    }
+
+    /// The give this names, where it names one.
+    #[must_use]
+    pub const fn give(self) -> Option<GiveRef> {
+        match self {
+            Self::Give(give) => Some(give),
+            Self::Edge(_) | Self::Socket(_) => None,
+        }
+    }
+}
+
 /// One bound argument of a graph node.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum GraphArg {
     /// A literal from the signed envelope.
     Literal(Value),
-    /// Consumption of a produced edge, with its constraints.
-    Edge {
-        /// The consumed edge.
-        edge: EdgeRef,
+    /// Consumption of a value edge, with the consumer's constraints on
+    /// it. The edge is the intent's own, a member's give, or the fill
+    /// of one of its sockets; the constraints bind beside whatever the
+    /// edge's own declaration already asks.
+    Value {
+        /// Where the edge comes from.
+        source: ValueRef,
         /// The consumer's declared constraints on it.
         constraints: Vec<Constraint>,
     },
-    /// The edge filling the enclosing intent's `n`-th socket, which the
-    /// intent composing this one wires to something it holds. Only
-    /// meaningful inside a tree; a bare graph declares no sockets.
-    Socket(u32),
-    /// Consumption of an edge a member gives, with its constraints.
-    ///
-    /// The other way value enters an intent from outside its own graph,
-    /// and the one that flows down the tree rather than up: a socket is
-    /// filled by the composer above, a give is taken from a member
-    /// below. Only meaningful inside a tree; a bare graph has no members.
-    Give {
-        /// The give consumed.
-        give: GiveRef,
-        /// The consumer's declared constraints on it.
-        constraints: Vec<Constraint>,
-    },
+}
+
+impl GraphArg {
+    /// Consumption of `edge`, an output of the intent's own graph.
+    #[must_use]
+    pub const fn edge(edge: EdgeRef, constraints: Vec<Constraint>) -> Self {
+        Self::Value {
+            source: ValueRef::Edge(edge),
+            constraints,
+        }
+    }
+
+    /// Consumption of `give`, a member's.
+    #[must_use]
+    pub const fn give(give: GiveRef, constraints: Vec<Constraint>) -> Self {
+        Self::Value {
+            source: ValueRef::Give(give),
+            constraints,
+        }
+    }
+
+    /// Consumption of the edge filling the intent's `socket`-th socket,
+    /// under the socket's own constraints alone.
+    #[must_use]
+    pub const fn socket(socket: u32) -> Self {
+        Self::Value {
+            source: ValueRef::Socket(socket),
+            constraints: Vec::new(),
+        }
+    }
+
+    /// The edge this argument consumes, where it consumes one.
+    #[must_use]
+    pub const fn source(&self) -> Option<ValueRef> {
+        match self {
+            Self::Value { source, .. } => Some(*source),
+            Self::Literal(_) => None,
+        }
+    }
 }
 
 /// The bound on identities one call may present as evidence.
@@ -104,7 +173,7 @@ pub const MAX_EVIDENCE_PER_NODE: usize = 8;
 /// which is why the declaration shapes it and the composition answers
 /// for what fills it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
-pub enum EvidenceRef {
+pub enum ClaimRef {
     /// The claim of an account the enclosing intent acts as. Nobody
     /// holds it and no node proves it: the account's own shard attests
     /// that the keys behind the intent are ones its stored rule admits,
@@ -150,29 +219,29 @@ pub struct GraphNode {
     /// two ways to write. Empty for a method that requires no authority,
     /// and admission refuses either mismatch.
     #[hbor(max = MAX_EVIDENCE_PER_NODE)]
-    pub evidence: BTreeSet<EvidenceRef>,
+    pub evidence: BTreeSet<ClaimRef>,
 }
 
 impl GraphNode {
     /// Every socket this node names, whichever channel names it.
     ///
     /// The two channels a node takes from outside its own graph are
-    /// parallel by construction — an argument is a literal, an edge or a
-    /// socket, and evidence is a signature, a node or a socket — and
+    /// parallel by construction — an argument is a literal or a value
+    /// reference, and evidence is an account, a node or a socket — and
     /// what they share is exactly this: a socket makes the node depend
     /// on whatever the composition bound it to. Ordering and use
     /// counting both ask it, so it is asked in one place.
     pub(crate) fn sockets(&self) -> impl Iterator<Item = u32> + '_ {
-        let args = self.args.iter().filter_map(|arg| match arg {
-            GraphArg::Socket(socket) => Some(*socket),
-            GraphArg::Literal(_) | GraphArg::Edge { .. } | GraphArg::Give { .. } => None,
-        });
+        let args = self
+            .args
+            .iter()
+            .filter_map(|arg| arg.source().and_then(ValueRef::socket));
         let presented = self
             .evidence
             .iter()
             .filter_map(|reference| match reference {
-                EvidenceRef::Socket(socket) => Some(*socket),
-                EvidenceRef::Account(_) | EvidenceRef::Node(_) => None,
+                ClaimRef::Socket(socket) => Some(*socket),
+                ClaimRef::Account(_) | ClaimRef::Node(_) => None,
             });
         args.chain(presented)
     }
@@ -184,10 +253,9 @@ impl GraphNode {
     /// asks [`sockets`](Self::sockets) — a give makes the node depend on
     /// the member's node that produces it.
     pub(crate) fn gives(&self) -> impl Iterator<Item = GiveRef> + '_ {
-        self.args.iter().filter_map(|arg| match arg {
-            GraphArg::Give { give, .. } => Some(*give),
-            GraphArg::Literal(_) | GraphArg::Edge { .. } | GraphArg::Socket(_) => None,
-        })
+        self.args
+            .iter()
+            .filter_map(|arg| arg.source().and_then(ValueRef::give))
     }
 
     /// A call presenting no evidence — what a method admitting anyone
@@ -216,7 +284,7 @@ impl GraphNode {
         args: Vec<GraphArg>,
     ) -> Self {
         Self {
-            evidence: BTreeSet::from([EvidenceRef::Account(account)]),
+            evidence: BTreeSet::from([ClaimRef::Account(account)]),
             ..Self::new(target, method, args)
         }
     }
@@ -231,7 +299,7 @@ impl GraphNode {
         producer: u32,
     ) -> Self {
         Self {
-            evidence: BTreeSet::from([EvidenceRef::Node(producer)]),
+            evidence: BTreeSet::from([ClaimRef::Node(producer)]),
             ..Self::new(target, method, args)
         }
     }
@@ -305,24 +373,24 @@ mod tests {
                 GraphNode::new(
                     ComponentAddr::new([2; 31]),
                     "deposit",
-                    vec![GraphArg::Edge {
-                        edge: EdgeRef {
+                    vec![GraphArg::edge(
+                        EdgeRef {
                             producer: 0,
                             output: 0,
                         },
-                        constraints: vec![Constraint::MinAmount(1)],
-                    }],
+                        vec![Constraint::MinAmount(1)],
+                    )],
                 ),
             ],
         };
         let mut reconstrained = base.clone();
-        reconstrained.nodes[1].args[0] = GraphArg::Edge {
-            edge: EdgeRef {
+        reconstrained.nodes[1].args[0] = GraphArg::edge(
+            EdgeRef {
                 producer: 0,
                 output: 0,
             },
-            constraints: vec![Constraint::MinAmount(2)],
-        };
+            vec![Constraint::MinAmount(2)],
+        );
         let h = |g: &ManifestGraph| g.hash(&TestHasher);
         assert_eq!(h(&base), h(&base));
         assert_ne!(h(&base), h(&reconstrained));

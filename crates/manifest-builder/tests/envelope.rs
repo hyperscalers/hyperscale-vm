@@ -8,10 +8,10 @@
 //! it crosses.
 
 use hyperscale_vm_effects::{
-    AdmissionError, Binding, Claim, ClaimSource, Constraint, EdgeRef, EvidenceRef, Give, GiveRef,
-    GrantedBehaviour, GraphArg, Hash32, Hasher, InstanceMeta, Intent, IntentHeader, IntentRecord,
-    IntentTree, MAX_VALUE_DEPTH, PackageHash, Records, ResourceGrants, ResourceKind, ResourceMeta,
-    RuleBytes, SignedIntent, Socket, StoredRule, TestHasher, Value, ValueSource, admit_tree,
+    AdmissionError, Binding, Claim, ClaimRef, Constraint, EdgeRef, GiveRef, GrantedBehaviour,
+    GraphArg, Hash32, Hasher, InstanceMeta, Intent, IntentHeader, IntentRecord, IntentTree,
+    MAX_VALUE_DEPTH, PackageHash, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes,
+    SignedIntent, Socket, StoredRule, TestHasher, Value, ValueRef, admit_tree,
 };
 use hyperscale_vm_manifest_builder::{
     BuildError, IntentBuilder, IntentError, Interface, Offered, TypedError,
@@ -97,22 +97,22 @@ fn a_composed_swap_admits() {
     assert!(root.gives.is_empty());
     assert!(root.graph.nodes.iter().any(|node| {
         node.args.iter().any(|arg| {
-            *arg == GraphArg::Give {
-                give: GiveRef { member: 0, give: 0 },
-                constraints: vec![Constraint::MinAmount(10)],
-            }
+            *arg == GraphArg::give(
+                GiveRef { member: 0, give: 0 },
+                vec![Constraint::MinAmount(10)],
+            )
         })
     }));
     assert_eq!(
         bob.wiring,
-        [Binding::Value(ValueSource::Edge(EdgeRef {
+        [Binding::Value(ValueRef::Edge(EdgeRef {
             producer: 0,
             output: 0,
         }))]
     );
     assert_eq!(
         bob.signed.intent.gives,
-        [Give::Edge(EdgeRef {
+        [ValueRef::Edge(EdgeRef {
             producer: 0,
             output: 0
         })]
@@ -176,7 +176,7 @@ fn a_composition_grants_the_account_it_acts_as() {
     );
     assert_eq!(
         tree.root.members[0].wiring,
-        [Binding::Authority(ClaimSource::Account(ALICE))]
+        [Binding::Authority(ClaimRef::Account(ALICE))]
     );
     admits(&tree);
 }
@@ -298,7 +298,7 @@ fn a_presented_declaration_is_carried_verbatim() {
     assert_eq!(bob.signed.intent.accounts, [BOB]);
     assert_eq!(
         bob.wiring,
-        [Binding::Value(ValueSource::Edge(EdgeRef {
+        [Binding::Value(ValueRef::Edge(EdgeRef {
             producer: 0,
             output: 0,
         }))]
@@ -367,9 +367,7 @@ fn an_adopted_socket_consumed_from_the_other_channel_is_refused() {
 
     // A value socket, presented as evidence by the consuming node.
     let mut request = payment_request(100);
-    request.graph.nodes[0]
-        .evidence
-        .insert(EvidenceRef::Socket(0));
+    request.graph.nodes[0].evidence.insert(ClaimRef::Socket(0));
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert_eq!(
         root.adopt(SignedIntent::unsigned(request)).map(|_| ()),
@@ -487,7 +485,7 @@ fn a_presented_declaration_that_discharges_nothing_is_refused() {
 fn a_presented_declaration_giving_what_it_does_not_hold_is_refused() {
     let chain = world();
     let mut malformed = quote(100, 10).unwrap();
-    malformed.gives[0] = Give::Edge(EdgeRef {
+    malformed.gives[0] = ValueRef::Edge(EdgeRef {
         producer: 7,
         output: 0,
     });
@@ -540,7 +538,11 @@ fn a_parameter_the_intent_never_declared_is_refused() {
     let chain = world();
     let mut malformed = payment_request(100);
     for arg in &mut malformed.graph.nodes[0].args {
-        if let GraphArg::Socket(socket) = arg {
+        if let GraphArg::Value {
+            source: ValueRef::Socket(socket),
+            ..
+        } = arg
+        {
             *socket = 3;
         }
     }
@@ -821,12 +823,12 @@ fn a_quote_grouped_into_a_basket_flattens_as_the_quote_does() {
     );
     assert_eq!(
         carol.signed.intent.gives,
-        [Give::Member(GiveRef { member: 0, give: 0 })]
+        [ValueRef::Give(GiveRef { member: 0, give: 0 })]
     );
     let [bob] = carol.signed.intent.members.as_slice() else {
         panic!("Carol composes Bob alone");
     };
-    assert_eq!(bob.wiring, [Binding::Value(ValueSource::Socket(0))]);
+    assert_eq!(bob.wiring, [Binding::Value(ValueRef::Socket(0))]);
     assert!(carol.signed.intent.graph.nodes.is_empty());
 
     let chain = world();
@@ -974,7 +976,7 @@ fn a_claim_granted_two_levels_deep_is_regranted_at_every_level() {
     let carol = carol.into_decl().expect("the group's socket is passed on");
     assert_eq!(
         carol.members[0].wiring,
-        [Binding::Authority(ClaimSource::Socket(0))]
+        [Binding::Authority(ClaimRef::Socket(0))]
     );
 
     let mut root = IntentBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
@@ -1018,7 +1020,7 @@ fn a_node_proof_is_granted_into_a_member() {
     let tree = root.build().unwrap();
     assert_eq!(
         tree.root.members[0].wiring,
-        [Binding::Authority(ClaimSource::Node(0))]
+        [Binding::Authority(ClaimRef::Node(0))]
     );
 }
 

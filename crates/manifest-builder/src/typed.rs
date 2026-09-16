@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::vocabulary::{PRESENT_BADGE_METHOD, PRESENT_INSTANCE_METHOD};
 use hyperscale_vm_effects::{
-    ChainRecords, Claim, EdgeRef, EvalBudget, EvidenceRef, GraphArg, Hasher, InstanceMeta,
+    ChainRecords, Claim, ClaimRef, EdgeRef, EvalBudget, GraphArg, Hasher, InstanceMeta,
     MAX_PROVEN_PER_SIGNATURE, ManifestGraph, MethodSignature, PackageHash, PackageMetadata, Value,
     claim_text,
 };
@@ -264,7 +264,7 @@ pub struct Proof {
     builder: u64,
     /// How the presenting node names it: a node of the same intent, or
     /// a socket this intent declared for a proof from outside it.
-    reference: EvidenceRef,
+    reference: ClaimRef,
     /// The claims it proves, as far as construction could read them off
     /// the proving declaration — each proved claim and, for an instance,
     /// the widened subject, exactly as the evaluator widens. What a
@@ -284,7 +284,7 @@ impl Proof {
         proves[1] = claim.widened();
         Self {
             builder,
-            reference: EvidenceRef::Socket(position),
+            reference: ClaimRef::Socket(position),
             proves,
         }
     }
@@ -302,7 +302,7 @@ impl Proof {
         proves[0] = Some(Claim::of_subject(account));
         Self {
             builder,
-            reference: EvidenceRef::Account(account),
+            reference: ClaimRef::Account(account),
             proves,
         }
     }
@@ -321,7 +321,7 @@ impl Proof {
     }
 
     /// How a node presents it.
-    pub(crate) const fn reference(self) -> EvidenceRef {
+    pub(crate) const fn reference(self) -> ClaimRef {
         self.reference
     }
 }
@@ -734,7 +734,7 @@ impl<'a> TypedBuilder<'a> {
         outputs.none()?;
         Ok(Proof {
             builder: self.graph.id(),
-            reference: EvidenceRef::Node(node),
+            reference: ClaimRef::Node(node),
             proves,
         })
     }
@@ -1109,7 +1109,7 @@ impl<'a> TypedBuilder<'a> {
             (true, []) => self
                 .accounts()
                 .iter()
-                .map(|account| EvidenceRef::Account(*account))
+                .map(|account| ClaimRef::Account(*account))
                 .chain(
                     gated
                         .iter()
@@ -1120,7 +1120,7 @@ impl<'a> TypedBuilder<'a> {
             (true, presented) => self
                 .accounts()
                 .iter()
-                .map(|account| EvidenceRef::Account(*account))
+                .map(|account| ClaimRef::Account(*account))
                 .chain(presented.iter().map(|proof| proof.reference()))
                 .collect(),
         };
@@ -1128,7 +1128,7 @@ impl<'a> TypedBuilder<'a> {
         // resolved for itself: presented evidence is a set, so a proof
         // the builder also proved dedups, and one nothing needs says
         // nothing.
-        let evidence: BTreeSet<EvidenceRef> = evidence
+        let evidence: BTreeSet<ClaimRef> = evidence
             .into_iter()
             .chain(scoped.iter().map(|proof| proof.reference()))
             .collect();
@@ -1229,7 +1229,7 @@ mod tests {
         }
         let proof = Proof {
             builder: 1,
-            reference: EvidenceRef::Node(0),
+            reference: ClaimRef::Node(0),
             proves,
         };
         for n in 0..filed {

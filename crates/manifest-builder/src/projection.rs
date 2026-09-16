@@ -16,7 +16,8 @@ use hyperscale_vm_effects::{
     ChainRecords, Claim, Clause, Constraint, EdgeContent, EvalBudget, EvalInputs, Expr,
     GrantedBehaviour, GraphArg, Hash32, Hasher, InstanceMeta, MAX_EXPR_DEPTH, ManifestGraph,
     ManifestHash, MethodSignature, ParamType, PresentedGrants, ResourceGrants, ResourceMeta,
-    RuleLeaf, SealedLeaf, SlotWidths, Value, evaluate_expr, founds_its_resource, keying_resource,
+    RuleLeaf, SealedLeaf, SlotWidths, Value, ValueRef, evaluate_expr, founds_its_resource,
+    keying_resource,
 };
 use hyperscale_vm_types::{Address, CallTarget, ResourceAddr};
 
@@ -82,7 +83,10 @@ fn type_args(
                 }
                 Some(value.clone())
             }
-            GraphArg::Edge { constraints, .. } => {
+            GraphArg::Value {
+                source: ValueRef::Edge(_),
+                constraints,
+            } => {
                 if !param.is_edge() {
                     return Err(TypedError::EdgeForValueParam {
                         method: method(),
@@ -103,7 +107,7 @@ fn type_args(
                     },
                 })
             }
-            GraphArg::Socket(_) | GraphArg::Give { .. } => {
+            GraphArg::Value { .. } => {
                 if !param.is_edge() {
                     return Err(TypedError::SocketForValueParam {
                         method: method(),
@@ -469,8 +473,11 @@ fn governing(
     let destroyed = signature.destroys.iter().filter_map(|param| {
         let arg = usize::try_from(*param).ok().and_then(|at| args.get(at))?;
         let resource = match arg {
-            GraphArg::Edge { constraints, .. } => edge_resource(constraints),
-            GraphArg::Literal(_) | GraphArg::Socket(_) | GraphArg::Give { .. } => None,
+            GraphArg::Value {
+                source: ValueRef::Edge(_),
+                constraints,
+            } => edge_resource(constraints),
+            GraphArg::Literal(_) | GraphArg::Value { .. } => None,
         }?;
         Some((resource, Some(GrantedBehaviour::Burn)))
     });

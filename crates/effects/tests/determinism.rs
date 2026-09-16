@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 use common::{ALICE, account, admit_leaf, pkg, resolver, shard_of, vault};
 use hyperscale_vm_effects::{
-    EdgeContent, EdgeRef, EvalBudget, EvalInputs, EvidenceRef, Expr, GraphArg, GraphNode, Hash32,
+    ClaimRef, EdgeContent, EdgeRef, EvalBudget, EvalInputs, Expr, GraphArg, GraphNode, Hash32,
     InstanceMeta, InstanceRegistry, ManifestGraph, ManifestHash, PresentedGrants, Records, SlotId,
     SlotRef, SlotWidths, TestHasher, Value, evaluate_expr, per_shard,
 };
@@ -163,15 +163,12 @@ proptest! {
                         GraphArg::Literal(Value::Address(resource)),
                         GraphArg::Literal(Value::U128(amount)),
                     ],
-                    evidence: [EvidenceRef::Account(sender)].into(),
+                    evidence: [ClaimRef::Account(sender)].into(),
                 },
                 GraphNode {
                     target: recipient.into(),
                     method: "deposit".into(),
-                    args: vec![GraphArg::Edge {
-                        edge: EdgeRef { producer: 0, output: 0 },
-                        constraints: vec![],
-                    }],
+                    args: vec![GraphArg::edge(EdgeRef { producer: 0, output: 0 }, vec![])],
                     evidence: BTreeSet::new(),
                 },
             ],
@@ -222,15 +219,12 @@ proptest! {
                         GraphArg::Literal(Value::Address(resource)),
                         GraphArg::Literal(Value::U128(1)),
                     ],
-                    evidence: [EvidenceRef::Account(sender)].into(),
+                    evidence: [ClaimRef::Account(sender)].into(),
                 },
                 GraphNode {
                     target: recipient.into(),
                     method: "deposit".into(),
-                    args: vec![GraphArg::Edge {
-                        edge: EdgeRef { producer: 0, output: 0 },
-                        constraints: vec![],
-                    }],
+                    args: vec![GraphArg::edge(EdgeRef { producer: 0, output: 0 }, vec![])],
                     evidence: BTreeSet::new(),
                 },
             ],
@@ -258,7 +252,7 @@ mod golden {
     use std::collections::BTreeSet;
 
     use hyperscale_vm_effects::{
-        EdgeRef, EvidenceRef, GraphArg, GraphNode, ManifestGraph, SlotId, TestHasher, Value,
+        ClaimRef, EdgeRef, GraphArg, GraphNode, ManifestGraph, SlotId, TestHasher, Value,
         child_key, fresh_id, fresh_local,
     };
     use hyperscale_vm_types::{Address, AddressClass, ComponentAddr};
@@ -302,18 +296,18 @@ mod golden {
                     target: ComponentAddr::new([0x10; 31]).into(),
                     method: "withdraw".into(),
                     args: vec![GraphArg::Literal(Value::U128(7))],
-                    evidence: [EvidenceRef::Account(super::ALICE)].into(),
+                    evidence: [ClaimRef::Account(super::ALICE)].into(),
                 },
                 GraphNode {
                     target: ComponentAddr::new([0x20; 31]).into(),
                     method: "deposit".into(),
-                    args: vec![GraphArg::Edge {
-                        edge: EdgeRef {
+                    args: vec![GraphArg::edge(
+                        EdgeRef {
                             producer: 0,
                             output: 0,
                         },
-                        constraints: vec![],
-                    }],
+                        vec![],
+                    )],
                     evidence: BTreeSet::new(),
                 },
             ],
@@ -321,15 +315,15 @@ mod golden {
         let identity = graph.hash(&TestHasher);
         assert_eq!(
             hex(&identity.0.0),
-            "2775172345c7e69b205fb5430f152071094766c81ead58cbda408919ea4696e6"
+            "5068afd1cc5636888a91f304695aaa8dbddedf76b6aeb7950e89676939cee662"
         );
         assert_eq!(
             format!("{:016x}", fresh_id(&TestHasher, identity, 1, 0)),
-            "6295d154b15e1482"
+            "5957ed3bd5149984"
         );
         assert_eq!(
             hex(&fresh_local(&TestHasher, identity, 1, 0).0),
-            "82145eb154d19562b30498c6329923aa"
+            "849914d53bed5759b4d0ec333034a03e"
         );
     }
 }

@@ -159,10 +159,7 @@ mod tests {
     }
 
     const fn edge(producer: u32, output: u32) -> GraphArg {
-        GraphArg::Edge {
-            edge: EdgeRef { producer, output },
-            constraints: Vec::new(),
-        }
+        GraphArg::edge(EdgeRef { producer, output }, Vec::new())
     }
 
     fn one_node(target: impl Into<CallTarget>) -> ManifestGraph {
@@ -984,13 +981,13 @@ mod tests {
                     "take",
                     vec![
                         edge(0, 0),
-                        GraphArg::Edge {
-                            edge: EdgeRef {
+                        GraphArg::edge(
+                            EdgeRef {
                                 producer: 0,
                                 output: 1,
                             },
-                            constraints: vec![Constraint::MinAmount(7)],
-                        },
+                            vec![Constraint::MinAmount(7)],
+                        ),
                     ],
                 ),
             ],
@@ -1050,13 +1047,13 @@ mod tests {
                 node(
                     instance_of("router"),
                     "forward",
-                    vec![GraphArg::Edge {
-                        edge: EdgeRef {
+                    vec![GraphArg::edge(
+                        EdgeRef {
                             producer: 0,
                             output: 0,
                         },
-                        constraints: vec![Constraint::MinAmount(42)],
-                    }],
+                        vec![Constraint::MinAmount(42)],
+                    )],
                 ),
             ],
         };

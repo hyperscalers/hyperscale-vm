@@ -10,6 +10,7 @@ mod common;
 use common::admit_leaf;
 use hyperscale_vm_effects::{
     Constraint, GraphArg, Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, Value,
+    ValueRef,
 };
 use hyperscale_vm_fixtures::payouts;
 use hyperscale_vm_manifest_builder::{GraphBuilder, TypedBuilder, TypedError};
@@ -98,7 +99,11 @@ fn a_policy_deposits_what_nothing_claimed() {
     assert_eq!(graph.nodes[3].method, "deposit");
     // And it went home typed: the splitter's signature typed the slot,
     // so the appended argument asserts the resource like any other.
-    let GraphArg::Edge { edge, constraints } = &graph.nodes[3].args[0] else {
+    let GraphArg::Value {
+        source: ValueRef::Edge(edge),
+        constraints,
+    } = &graph.nodes[3].args[0]
+    else {
         panic!("a rest edge binds an edge");
     };
     assert_eq!(edge.producer, 1);
@@ -164,7 +169,7 @@ fn the_untyped_builder_routes_by_class_alone() {
     assert_eq!(graph.nodes[1].target, CallTarget::Principal(ALICE));
     // Untyped means untyped: nothing typed the slot, so the appended
     // argument asserts nothing either.
-    let GraphArg::Edge { constraints, .. } = &graph.nodes[1].args[0] else {
+    let GraphArg::Value { constraints, .. } = &graph.nodes[1].args[0] else {
         panic!("a rest edge binds an edge");
     };
     assert!(constraints.is_empty());

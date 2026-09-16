@@ -3,9 +3,9 @@
 //! gates badges open.
 
 use hyperscale_vm_effects::{
-    Claim, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta, IntentTree, ManifestGraph,
-    Marked, Marker, PrincipalRule, Records, RuleBytes, StoredRule, TestHasher, Value,
-    holdings_collection, never,
+    Claim, ClaimRef, GraphArg, GraphNode, Hash32, InstanceMeta, IntentTree, ManifestGraph, Marked,
+    Marker, PrincipalRule, Records, RuleBytes, StoredRule, TestHasher, Value, holdings_collection,
+    never,
 };
 use hyperscale_vm_fixtures::nf;
 use hyperscale_vm_harness::driver::{amount_of, cells, vault};
@@ -426,7 +426,7 @@ fn a_signature_opens_only_the_account_its_intent_acts_as() {
                 GraphArg::Literal(Value::Address(RES_X.address())),
                 GraphArg::Literal(Value::U128(100)),
             ],
-            evidence: [EvidenceRef::Account(ALICE)].into(),
+            evidence: [ClaimRef::Account(ALICE)].into(),
         }],
     };
     let (results, _) = run_both_signed(
@@ -1392,7 +1392,7 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
                 GraphArg::Literal(Value::Address(badge.address())),
                 GraphArg::Literal(Value::U64(id)),
             ],
-            evidence: [EvidenceRef::Account(BOB)].into(),
+            evidence: [ClaimRef::Account(BOB)].into(),
         }],
     };
     let (results, store) = run_both_signed(

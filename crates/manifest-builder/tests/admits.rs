@@ -156,7 +156,7 @@ proptest! {
         let graph = b.build().expect("every output is consumed");
         for node in &graph.nodes {
             for arg in &node.args {
-                if let GraphArg::Edge { constraints, .. } = arg {
+                if let GraphArg::Value { constraints, .. } = arg {
                     prop_assert!(
                         constraints.contains(&Constraint::ResourceIs(RES)),
                         "every edge in this world resolves to one resource, and says so"

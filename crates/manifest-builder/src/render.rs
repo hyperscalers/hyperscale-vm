@@ -33,7 +33,7 @@ use std::fmt::Write as _;
 
 use hyperscale_vm_effects::{
     ChainRecords, Constraint, EdgeContent, EdgeRef, GraphArg, Hasher, ManifestGraph, ParamType,
-    Value, u256_decimal,
+    Value, ValueRef, u256_decimal,
 };
 use hyperscale_vm_types::{Address, ResourceAddr, SubstateKey, TextError};
 
@@ -197,9 +197,18 @@ impl Printer<'_> {
     fn arg(&mut self, arg: &GraphArg) -> Result<String, TextError> {
         match arg {
             GraphArg::Literal(value) => self.value(value),
-            GraphArg::Socket(position) => Ok(format!("${position}")),
-            GraphArg::Give { give, .. } => Ok(format!("${}.{}", give.member, give.give)),
-            GraphArg::Edge { edge, constraints } => {
+            GraphArg::Value {
+                source: ValueRef::Socket(position),
+                ..
+            } => Ok(format!("${position}")),
+            GraphArg::Value {
+                source: ValueRef::Give(give),
+                ..
+            } => Ok(format!("${}.{}", give.member, give.give)),
+            GraphArg::Value {
+                source: ValueRef::Edge(edge),
+                constraints,
+            } => {
                 let (name, shown) = self
                     .bindings
                     .get(edge)
@@ -317,7 +326,10 @@ fn edge_types(
         for (at, arg) in node.args.iter().enumerate() {
             let value = match arg {
                 GraphArg::Literal(value) => Some(value.clone()),
-                GraphArg::Edge { edge, .. } => types
+                GraphArg::Value {
+                    source: ValueRef::Edge(edge),
+                    ..
+                } => types
                     .get(&edge.producer)
                     .and_then(|slots| slots.get(usize::try_from(edge.output).unwrap_or(usize::MAX)))
                     .copied()
@@ -334,7 +346,7 @@ fn edge_types(
                             EdgeContent::Fungible
                         },
                     }),
-                GraphArg::Socket(_) | GraphArg::Give { .. } => None,
+                GraphArg::Value { .. } => None,
             };
             known.push(value.is_some());
             values.push(value.unwrap_or_else(unknown));
@@ -361,7 +373,7 @@ fn consumed_slots(graph: &ManifestGraph) -> BTreeMap<u32, u32> {
     let mut slots = BTreeMap::new();
     for node in &graph.nodes {
         for arg in &node.args {
-            if let GraphArg::Edge { edge, .. } = arg {
+            if let Some(ValueRef::Edge(edge)) = arg.source() {
                 let seen = slots.entry(edge.producer).or_insert(0);
                 *seen = (*seen).max(edge.output.saturating_add(1));
             }

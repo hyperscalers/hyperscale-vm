@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use hyperscale_vm_effects::vocabulary::DEPOSIT_METHOD;
 use hyperscale_vm_effects::{
-    Constraint, EdgeRef, EvidenceRef, GraphArg, GraphNode, MAX_MANIFEST_NODES, ManifestGraph,
+    ClaimRef, Constraint, EdgeRef, GraphArg, GraphNode, MAX_MANIFEST_NODES, ManifestGraph, ValueRef,
 };
 use hyperscale_vm_types::{CallTarget, PrincipalAddr, ResourceAddr};
 
@@ -174,10 +174,7 @@ impl Bucket {
         let mut constraints = Vec::with_capacity(self.constraints.len() + usize::from(!asserted));
         constraints.extend(derived.map(Constraint::ResourceIs));
         constraints.extend(self.constraints);
-        GraphArg::Edge {
-            edge: self.edge,
-            constraints,
-        }
+        GraphArg::edge(self.edge, constraints)
     }
 }
 
@@ -329,7 +326,7 @@ impl GraphBuilder {
             target,
             method,
             args,
-            BTreeSet::from([EvidenceRef::Account(account)]),
+            BTreeSet::from([ClaimRef::Account(account)]),
         )
     }
 
@@ -354,7 +351,7 @@ impl GraphBuilder {
             target,
             method,
             args,
-            BTreeSet::from([EvidenceRef::Node(producer)]),
+            BTreeSet::from([ClaimRef::Node(producer)]),
         )
     }
 
@@ -364,7 +361,7 @@ impl GraphBuilder {
         target: impl Into<CallTarget>,
         method: impl Into<String>,
         args: impl Args,
-        evidence: BTreeSet<EvidenceRef>,
+        evidence: BTreeSet<ClaimRef>,
     ) -> [Bucket; N] {
         let args = args.bind_all(self);
         let producer = self.push(target.into(), method.into(), args, vec![None; N], evidence);
@@ -390,12 +387,12 @@ impl GraphBuilder {
         method: String,
         args: Vec<GraphArg>,
         outputs: Vec<Option<ResourceAddr>>,
-        evidence: BTreeSet<EvidenceRef>,
+        evidence: BTreeSet<ClaimRef>,
     ) -> u32 {
         let producer = u32::try_from(self.nodes.len()).expect("more nodes than an edge can name");
         for arg in &args {
-            if let GraphArg::Edge { edge, .. } = arg {
-                self.consume(*edge);
+            if let Some(ValueRef::Edge(edge)) = arg.source() {
+                self.consume(edge);
             }
         }
         self.nodes.push(GraphNode {
@@ -584,8 +581,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use hyperscale_vm_effects::{
-        Claim, Constraint, EdgeRef, EvidenceRef, GraphArg, GraphNode, ManifestGraph, StoredRule,
-        Value,
+        Claim, ClaimRef, Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph, StoredRule, Value,
     };
     use hyperscale_vm_types::{PrincipalAddr, ResourceAddr};
 
@@ -612,21 +608,18 @@ mod tests {
                             GraphArg::Literal(Value::Address(RES.address())),
                             GraphArg::Literal(Value::U128(100)),
                         ],
-                        evidence: [EvidenceRef::Account(ALICE)].into(),
+                        evidence: [ClaimRef::Account(ALICE)].into(),
                     },
                     GraphNode {
                         target: BOB.into(),
                         method: "deposit".into(),
-                        args: vec![GraphArg::Edge {
-                            edge: EdgeRef {
+                        args: vec![GraphArg::edge(
+                            EdgeRef {
                                 producer: 0,
                                 output: 0,
                             },
-                            constraints: vec![
-                                Constraint::ResourceIs(RES),
-                                Constraint::MinAmount(1)
-                            ],
-                        }],
+                            vec![Constraint::ResourceIs(RES), Constraint::MinAmount(1)]
+                        )],
                         evidence: BTreeSet::new(),
                     },
                 ],
@@ -682,7 +675,7 @@ mod tests {
             },),
         );
         let graph = b.build().unwrap();
-        assert_eq!(graph.nodes[1].args, vec![GraphArg::Socket(0)]);
+        assert_eq!(graph.nodes[1].args, vec![GraphArg::socket(0)]);
     }
 
     #[test]

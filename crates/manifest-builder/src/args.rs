@@ -177,7 +177,7 @@ impl Arg for SocketRef {
         if self.builder != builder.id() {
             builder.refuse(BuildError::ForeignSocket);
         }
-        GraphArg::Socket(self.position)
+        GraphArg::socket(self.position)
     }
 }
 

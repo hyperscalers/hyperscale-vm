@@ -4,7 +4,7 @@
 //!
 //! An intent's signer signs an [`Intent`] whole: its calls, the accounts
 //! it acts as, the interface it presents — [`Socket`]s for what it needs
-//! and [`Give`]s for the value it offers — and the members it composes,
+//! and gives for the value it offers — and the members it composes,
 //! each nested inside it with the wiring that fills its sockets. Two things
 //! cross an intent boundary: a value edge, which exactly one node
 //! argument consumes, and a claim, which as many of the intent's nodes
@@ -53,7 +53,7 @@ use crate::admission::{
 };
 use crate::claim::Claim;
 use crate::dsl::PresentedGrants;
-use crate::graph::{Constraint, EdgeRef, GiveRef, ManifestGraph};
+use crate::graph::{ClaimRef, Constraint, ManifestGraph, ValueRef};
 use crate::hash::Hasher;
 use crate::instance::InstanceMeta;
 use crate::manifest::ManifestHash;
@@ -180,7 +180,7 @@ pub enum Socket {
         constraints: Vec<Constraint>,
     },
     /// A proof carrying exactly this claim, which this intent's own
-    /// nodes present through [`crate::EvidenceRef::Socket`] and which
+    /// nodes present through [`ClaimRef::Socket`] and which
     /// its own wiring may grant onward into a member's socket.
     ///
     /// The claim is the declaration's, so a holder signs *which
@@ -189,21 +189,6 @@ pub enum Socket {
     /// source carries, so a composer cannot smuggle authority into an
     /// intent its signer never offered.
     Authority(Claim),
-}
-
-/// One value edge an intent offers the intent composing it.
-///
-/// Value alone: there is no give that carries a claim, so authority has
-/// no channel upward and no field in which to write the hazard. What a
-/// composer may take from a member is exactly this list, by position —
-/// never a node of the member's graph.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
-pub enum Give {
-    /// An output of this intent's own graph that no node of it consumes.
-    Edge(EdgeRef),
-    /// A give of one of this intent's members, offered on: how a sealed
-    /// group exposes a product assembled beneath it.
-    Member(GiveRef),
 }
 
 /// The terms an intent is admissible under: the network it was declared
@@ -276,9 +261,9 @@ pub struct Intent {
     /// against that set.
     #[hbor(max = MAX_ATTESTATIONS)]
     pub attested_by: Vec<PrincipalAddr>,
-    /// The intent's invocation graph; arguments may reference the
-    /// sockets via [`crate::GraphArg::Socket`] and the members' gives
-    /// via [`crate::GraphArg::Give`].
+    /// The intent's invocation graph; its arguments may consume the
+    /// sockets and the members' gives as [`ValueRef`]s beside its own
+    /// edges.
     pub graph: ManifestGraph,
     /// The sockets this intent declares. A value socket is consumed by
     /// exactly one node argument or wired on to exactly one member's
@@ -286,13 +271,16 @@ pub struct Intent {
     /// granted on to as many members, as ask for it.
     #[hbor(max = MAX_SOCKETS)]
     pub sockets: Vec<Socket>,
-    /// The value this intent offers its composer. Each is consumed
-    /// exactly once above: by an argument of the composer's own graph,
-    /// by the composer's wiring into a sibling's socket, or by the
-    /// composer's own gives. Empty on the root, which has nobody to give
-    /// to.
+    /// The value this intent offers its composer: an output of its own
+    /// graph that no node of it consumes, or a give of one of its
+    /// members offered on — how a sealed group exposes a product
+    /// assembled beneath it. Never one of its own sockets, which would
+    /// route the composer's value back to it. Each is consumed exactly
+    /// once above: by an argument of the composer's own graph, by the
+    /// composer's wiring into a sibling's socket, or by the composer's
+    /// own gives. Empty on the root, which has nobody to give to.
     #[hbor(max = MAX_SOCKETS)]
-    pub gives: Vec<Give>,
+    pub gives: Vec<ValueRef>,
     /// The intents this one composes, each with the wiring that fills
     /// its sockets. Nested rather than named: a composer contains its
     /// members, so which intent composes which is the shape of the
@@ -488,54 +476,19 @@ impl Intent {
 /// The composer's choice, signed by the composer and never by the
 /// declaring member — which is what lets one signed intent be carried
 /// by any composer that can fill its sockets. Every source is the
-/// composer's own; a composer names nothing inside a member.
+/// composer's own — its graph's edges, its members' gives, its own
+/// sockets passed through, and the claims it holds: a node's verdict,
+/// an account it acts as, or a socket of its own granted on. A composer
+/// names nothing inside a member, and a grant of a claim the composer
+/// does not hold is refused where the wiring is read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub enum Binding {
     /// A value edge, for a value socket.
-    Value(ValueSource),
-    /// A claim, for an authority socket.
-    Authority(ClaimSource),
-}
-
-/// Where a composer takes the value it wires into a member's socket.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
-pub enum ValueSource {
-    /// An output of the composer's own graph that no node of it
-    /// consumes.
-    Edge(EdgeRef),
-    /// A give of one of the composer's members — a sibling's product,
-    /// or the socket-owner's own, routed back to it.
-    Give(GiveRef),
-    /// One of the composer's own value sockets, wired straight through:
-    /// how a sealed group presents a member's need as its own.
-    Socket(u32),
-}
-
-/// What stands behind a claim a composer grants into a member's socket.
-///
-/// Three things in an intent can, and each is judged against what the
-/// intent holds. A node proves what it read state to verify — a badge
-/// in a vault, a component's own gate — and the claim is that node's
-/// verdict. An account proves nothing and needs to: its shard attests
-/// the keys that signed the intent, so the claim is the signature's, and
-/// it stands before any node runs. A socket carries a claim the composer
-/// itself received from above, granted on — how a claim reaches a
-/// distant descendant, re-granted at every level by someone who signed
-/// that level.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
-pub enum ClaimSource {
-    /// The claim node `producer` of the composer's own graph proves.
-    Node(u32),
-    /// An account the composer acts as, granted by the signer who signed
-    /// it.
-    ///
-    /// The account is stated here rather than read off the intent, so a
-    /// grant says what it gives and admission judges the two against
-    /// each other. Deriving it instead would make the field that decides
-    /// whose authority this is one nobody wrote.
-    Account(PrincipalAddr),
-    /// One of the composer's own authority sockets, granted on.
-    Socket(u32),
+    Value(ValueRef),
+    /// A claim, for an authority socket. An account is judged against
+    /// the composer's `accounts`, a socket against the claim the
+    /// composer's own socket carries.
+    Authority(ClaimRef),
 }
 
 /// The tree an envelope carries and admission runs over: the root, with

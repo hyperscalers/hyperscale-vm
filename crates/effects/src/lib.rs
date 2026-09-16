@@ -67,8 +67,8 @@ pub use footprint::{
     footprint,
 };
 pub use graph::{
-    Constraint, EdgeRef, EvidenceRef, GiveRef, GraphArg, GraphNode, MAX_EVIDENCE_PER_NODE,
-    ManifestGraph,
+    ClaimRef, Constraint, EdgeRef, GiveRef, GraphArg, GraphNode, MAX_EVIDENCE_PER_NODE,
+    ManifestGraph, ValueRef,
 };
 pub use hash::{Hash32, Hasher, TestHasher};
 pub use hyperscale_vm_types::{
@@ -81,12 +81,12 @@ pub use hyperscale_vm_types::{
 };
 pub use instance::{InstanceMeta, InstanceRegistry, ResolveError};
 pub use intent::{
-    Binding, COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, ClaimSource, CrossingCell, CrossingSite,
-    ESCROW_CLAIM_SLOT, ESCROW_RECORD_SLOT, Give, Intent, IntentHeader, IntentRecord, IntentTree,
-    MARKER_CELL_BYTES, MAX_ACCOUNTS, MAX_INTENTS, MAX_TREE_DEPTH, Marked, Marker, Member,
-    NULLIFIER_SLOT, Nullifier, SignedIntent, Socket, TREE_WIRE_DEPTH, TreeDecodeError, ValueSource,
-    admit_tree, attest, committed_tx_key, crossing_expiry_ms, decode_tree, encode_tree,
-    escrow_claim_key, escrow_record_key, nullifier_expiry_ms, nullifier_key,
+    Binding, COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, CrossingCell, CrossingSite, ESCROW_CLAIM_SLOT,
+    ESCROW_RECORD_SLOT, Intent, IntentHeader, IntentRecord, IntentTree, MARKER_CELL_BYTES,
+    MAX_ACCOUNTS, MAX_INTENTS, MAX_TREE_DEPTH, Marked, Marker, Member, NULLIFIER_SLOT, Nullifier,
+    SignedIntent, Socket, TREE_WIRE_DEPTH, TreeDecodeError, admit_tree, attest, committed_tx_key,
+    crossing_expiry_ms, decode_tree, encode_tree, escrow_claim_key, escrow_record_key,
+    nullifier_expiry_ms, nullifier_key,
 };
 pub use invoke::{CallArg, EdgeBound, IssuanceGrant, NodeCall, distinct_ids};
 pub use manifest::{Bounds, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};

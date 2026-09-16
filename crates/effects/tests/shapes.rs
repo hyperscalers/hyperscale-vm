@@ -13,17 +13,14 @@ use common::{
     shard_of, vault, wide_account_metadata, world,
 };
 use hyperscale_vm_effects::{
-    AdmissionError, Composed, EdgeRef, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta,
+    AdmissionError, ClaimRef, Composed, EdgeRef, GraphArg, GraphNode, Hash32, InstanceMeta,
     ManifestGraph, Records, ResolveError, TestHasher, Value, collection_id, fresh_id, per_shard,
 };
 use hyperscale_vm_types::{Address, Effect, EffectTarget, Mode, Moves};
 
 /// One consumed output edge, unconstrained.
 const fn edge(producer: u32, output: u32) -> GraphArg {
-    GraphArg::Edge {
-        edge: EdgeRef { producer, output },
-        constraints: vec![],
-    }
+    GraphArg::edge(EdgeRef { producer, output }, vec![])
 }
 
 /// An ordinary write: on a leaf that may or may not be there.
@@ -53,7 +50,7 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
                     GraphArg::Literal(Value::Address(usdc.address())),
                     GraphArg::Literal(Value::U128(100)),
                 ],
-                evidence: [EvidenceRef::Account(ALICE)].into(),
+                evidence: [ClaimRef::Account(ALICE)].into(),
             },
             GraphNode {
                 target: BOB.into(),
@@ -114,7 +111,7 @@ fn swap_writes_both_reserves_and_reads_the_config() {
                     GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(500)),
                 ],
-                evidence: [EvidenceRef::Account(ALICE)].into(),
+                evidence: [ClaimRef::Account(ALICE)].into(),
             },
             GraphNode {
                 target: pool().into(),
@@ -193,7 +190,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
                     GraphArg::Literal(Value::Address(BASE.address())),
                     GraphArg::Literal(Value::U128(10)),
                 ],
-                evidence: [EvidenceRef::Account(ALICE)].into(),
+                evidence: [ClaimRef::Account(ALICE)].into(),
             },
             GraphNode {
                 target: book().into(),
@@ -257,7 +254,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
                     GraphArg::Literal(Value::Address(QUOTE.address())),
                     GraphArg::Literal(Value::U128(1000)),
                 ],
-                evidence: [EvidenceRef::Account(BOB)].into(),
+                evidence: [ClaimRef::Account(BOB)].into(),
             },
             GraphNode {
                 target: book().into(),
@@ -426,7 +423,7 @@ fn a_presented_record_is_the_whole_of_instantiation() {
                     GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(500)),
                 ],
-                evidence: [EvidenceRef::Account(ALICE)].into(),
+                evidence: [ClaimRef::Account(ALICE)].into(),
             },
             GraphNode {
                 target: pool().into(),

@@ -24,10 +24,10 @@ use std::collections::BTreeSet;
 
 use common::{ALICE, BOB, pkg, world};
 use hyperscale_vm_effects::{
-    AdmissionError, Binding, Claim, ClaimSource, EdgeRef, EvidenceRef, GrantedBehaviour, GraphArg,
-    GraphNode, Hash32, InstanceMeta, Intent, IntentHeader, IntentTree, Issuance, JudgedLeaf,
-    LegRole, ManifestGraph, Member, PrefixShardResolver, Records, ResourceMeta, Rule,
-    ShardResolver, SignedIntent, Socket, TestHasher, Value, admit_tree, granting_issued_resource,
+    AdmissionError, Binding, Claim, ClaimRef, EdgeRef, GrantedBehaviour, GraphArg, GraphNode,
+    Hash32, InstanceMeta, Intent, IntentHeader, IntentTree, Issuance, JudgedLeaf, LegRole,
+    ManifestGraph, Member, PrefixShardResolver, Records, ResourceMeta, Rule, ShardResolver,
+    SignedIntent, Socket, TestHasher, Value, admit_tree, granting_issued_resource,
     holdings_collection, legs_of, star_at,
 };
 use hyperscale_vm_fixtures::security;
@@ -147,18 +147,18 @@ fn transfer_to(resource: ResourceAddr, recipient: PrincipalAddr) -> IntentTree {
                             GraphArg::Literal(Value::Address(resource.address())),
                             GraphArg::Literal(Value::U128(40)),
                         ],
-                        evidence: BTreeSet::from([EvidenceRef::Account(ALICE)]),
+                        evidence: BTreeSet::from([ClaimRef::Account(ALICE)]),
                     },
                     GraphNode {
                         target: recipient.into(),
                         method: "deposit".into(),
-                        args: vec![GraphArg::Edge {
-                            edge: EdgeRef {
+                        args: vec![GraphArg::edge(
+                            EdgeRef {
                                 producer: 0,
                                 output: 0,
                             },
-                            constraints: Vec::new(),
-                        }],
+                            Vec::new(),
+                        )],
                         evidence: BTreeSet::default(),
                     },
                 ],
@@ -364,18 +364,18 @@ fn a_member_presenting_a_granted_claim_is_the_cores_off_the_granters_shard() {
                         target: issuer.into(),
                         method: "register".into(),
                         args: vec![GraphArg::Literal(Value::U64(7))],
-                        evidence: BTreeSet::from([EvidenceRef::Socket(0)]),
+                        evidence: BTreeSet::from([ClaimRef::Socket(0)]),
                     },
                     GraphNode {
                         target: BOB.into(),
                         method: "deposit-nf".into(),
-                        args: vec![GraphArg::Edge {
-                            edge: EdgeRef {
+                        args: vec![GraphArg::edge(
+                            EdgeRef {
                                 producer: 0,
                                 output: 0,
                             },
-                            constraints: Vec::new(),
-                        }],
+                            Vec::new(),
+                        )],
                         evidence: BTreeSet::default(),
                     },
                 ],
@@ -385,7 +385,7 @@ fn a_member_presenting_a_granted_claim_is_the_cores_off_the_granters_shard() {
     let mut root = Intent::leaf(TEST_HEADER, REGISTRAR, ManifestGraph { nodes: Vec::new() });
     root.members = vec![Member {
         signed: SignedIntent::unsigned(bobs),
-        wiring: vec![Binding::Authority(ClaimSource::Account(REGISTRAR))],
+        wiring: vec![Binding::Authority(ClaimRef::Account(REGISTRAR))],
     }];
     let mut env = IntentTree::of_one(root);
     env.resources = vec![record(issuer, b"registered")];

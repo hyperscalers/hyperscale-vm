@@ -51,7 +51,7 @@ use crate::dsl::{
     Condition, Declaration, DeclaredAccess, EvalBudget, EvalInputs, PresentedGrants,
     evaluate_declaration, evaluate_expr,
 };
-use crate::graph::{Constraint, EvidenceRef, GiveRef, GraphArg, GraphNode};
+use crate::graph::{ClaimRef, Constraint, GiveRef, GraphArg, GraphNode, ValueRef};
 use crate::hash::{Hash32, Hasher};
 use crate::instance::{InstanceMeta, ResolveError};
 use crate::intent::{IntentRecord, MARKER_CELL_BYTES, Socket};
@@ -835,7 +835,10 @@ impl Admission<'_> {
                     bound.push(value.clone());
                     inputs.push(NodeInput::Literal(value.clone()));
                 }
-                GraphArg::Edge { edge, constraints } => {
+                GraphArg::Value {
+                    source: ValueRef::Edge(edge),
+                    constraints,
+                } => {
                     if !param.is_edge() {
                         return Err(AdmissionError::EdgeForValueParam {
                             node: node_index,
@@ -864,18 +867,25 @@ impl Admission<'_> {
                     bound.push(value);
                     inputs.push(input);
                 }
-                GraphArg::Socket(reference) => {
+                GraphArg::Value {
+                    source: ValueRef::Socket(reference),
+                    constraints,
+                } => {
                     let (value, input) = self.bind_socket(
                         intent_index,
                         local,
                         *reference,
+                        constraints,
                         *param,
                         (node_index, param_index),
                     )?;
                     bound.push(value);
                     inputs.push(input);
                 }
-                GraphArg::Give { give, constraints } => {
+                GraphArg::Value {
+                    source: ValueRef::Give(give),
+                    constraints,
+                } => {
                     let (value, input) = self.bind_give(
                         intent_index,
                         *give,
@@ -1049,6 +1059,7 @@ impl Admission<'_> {
         intent_index: usize,
         local: u32,
         reference: u32,
+        asked: &[Constraint],
         param: ParamType,
         at: (u32, u32),
     ) -> Result<(Value, NodeInput), AdmissionError> {
@@ -1097,8 +1108,15 @@ impl Admission<'_> {
         let producer = usize::try_from(edge.producer).map_err(|_| AdmissionError::TooManyNodes)?;
         let source = self.flat_of[source_intent][producer];
         let declared = *declared;
-        let constraints: Vec<Constraint> =
-            constraints.iter().chain(through.iter()).copied().collect();
+        // The declaration's constraints, every pass-through's, and the
+        // consuming argument's own: each signer along the way bound the
+        // edge, and the consumer may bind it tighter still.
+        let constraints: Vec<Constraint> = constraints
+            .iter()
+            .chain(through.iter())
+            .chain(asked.iter())
+            .copied()
+            .collect();
         let (value, input) = bind_edge(
             &self.outputs,
             &mut self.consumed,
@@ -1143,7 +1161,7 @@ impl Admission<'_> {
         let mut evidence = Vec::with_capacity(node.evidence.len());
         for reference in &node.evidence {
             match reference {
-                EvidenceRef::Account(account) => {
+                ClaimRef::Account(account) => {
                     // An account's virtual badge. Nobody holds it and no
                     // node proves it: the intent acts as the account,
                     // and the account's own shard attests that the keys
@@ -1161,7 +1179,7 @@ impl Admission<'_> {
                     }
                     evidence.push(Claim::of_subject(account.address()));
                 }
-                EvidenceRef::Node(producer) => {
+                ClaimRef::Node(producer) => {
                     // An earlier node of the same intent, whose proven
                     // claims — the target's own statement, resolved when
                     // that node was judged — are what this proof
@@ -1201,7 +1219,7 @@ impl Admission<'_> {
                         })?;
                     evidence.extend_from_slice(claims);
                 }
-                EvidenceRef::Socket(reference) => {
+                ClaimRef::Socket(reference) => {
                     // A socket the declaration typed and the composer
                     // filled. What is presented is the claim the
                     // *declaration* named — never whatever else the

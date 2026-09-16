@@ -58,7 +58,7 @@ use crate::admission::{
 };
 use crate::claim::Claim;
 use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr, preorder_len};
-use crate::graph::{GraphArg, GraphNode, ManifestGraph};
+use crate::graph::{GraphArg, GraphNode, ManifestGraph, ValueRef};
 use crate::hash::Hasher;
 use crate::intent::{IntentTree, NULLIFIER_SLOT};
 use crate::manifest::JudgedLeaf;
@@ -678,14 +678,21 @@ fn placed_node<'a>(
 fn arg_text(arg: &GraphArg) -> String {
     match arg {
         GraphArg::Literal(value) => format!("the literal {value:?}"),
-        GraphArg::Edge { edge, .. } => format!(
+        GraphArg::Value {
+            source: ValueRef::Edge(edge),
+            ..
+        } => format!(
             "output {} of node {} of its own intent",
             edge.output, edge.producer
         ),
-        GraphArg::Socket(reference) => format!("socket {reference} of its own intent"),
-        GraphArg::Give { give, .. } => {
-            format!("give {} of its member {}", give.give, give.member)
-        }
+        GraphArg::Value {
+            source: ValueRef::Socket(reference),
+            ..
+        } => format!("socket {reference} of its own intent"),
+        GraphArg::Value {
+            source: ValueRef::Give(give),
+            ..
+        } => format!("give {} of its member {}", give.give, give.member),
     }
 }
 

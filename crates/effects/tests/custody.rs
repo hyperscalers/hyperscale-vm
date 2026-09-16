@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, meta_granting, pkg, world};
 use hyperscale_vm_effects::vocabulary::{HALT, VAULT};
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, Claim, EdgeRef, EvidenceRef, GrantedBehaviour, GraphArg, GraphNode,
+    AdmissionError, Admitted, Claim, ClaimRef, EdgeRef, GrantedBehaviour, GraphArg, GraphNode,
     Hash32, Holding, InstanceMeta, Intent, IntentHeader, IntentTree, JudgedLeaf, ManifestGraph,
     Records, ResourceGrants, ResourceKind, ResourceMeta, Rule, RuleBytes, SlotRef, StoredRule,
     TestHasher, Value, admit_tree, child_key,
@@ -150,13 +150,13 @@ fn paid_out(custodian: ComponentAddr, holder: PrincipalAddr) -> IntentTree {
                     GraphNode {
                         target: holder.into(),
                         method: "deposit".into(),
-                        args: vec![GraphArg::Edge {
-                            edge: EdgeRef {
+                        args: vec![GraphArg::edge(
+                            EdgeRef {
                                 producer: 0,
                                 output: 0,
                             },
-                            constraints: Vec::new(),
-                        }],
+                            Vec::new(),
+                        )],
                         evidence: BTreeSet::default(),
                     },
                 ],
@@ -189,13 +189,13 @@ fn round_trip(custodian: ComponentAddr) -> IntentTree {
                     GraphNode {
                         target: custodian.into(),
                         method: "deposit".into(),
-                        args: vec![GraphArg::Edge {
-                            edge: EdgeRef {
+                        args: vec![GraphArg::edge(
+                            EdgeRef {
                                 producer: 0,
                                 output: 0,
                             },
-                            constraints: Vec::new(),
-                        }],
+                            Vec::new(),
+                        )],
                         evidence: BTreeSet::default(),
                     },
                 ],
@@ -525,18 +525,18 @@ fn transferred(from: PrincipalAddr, to: PrincipalAddr, resource: ResourceAddr) -
                             GraphArg::Literal(Value::Address(resource.address())),
                             GraphArg::Literal(Value::U128(40)),
                         ],
-                        evidence: [EvidenceRef::Account(from)].into(),
+                        evidence: [ClaimRef::Account(from)].into(),
                     },
                     GraphNode {
                         target: to.into(),
                         method: "deposit".into(),
-                        args: vec![GraphArg::Edge {
-                            edge: EdgeRef {
+                        args: vec![GraphArg::edge(
+                            EdgeRef {
                                 producer: 0,
                                 output: 0,
                             },
-                            constraints: Vec::new(),
-                        }],
+                            Vec::new(),
+                        )],
                         evidence: BTreeSet::default(),
                     },
                 ],
@@ -632,13 +632,13 @@ fn one_flag_is_read_once_however_many_directions_the_access_moves_in() {
     env.root.graph.nodes.push(GraphNode {
         target: custodian.into(),
         method: "deposit".into(),
-        args: vec![GraphArg::Edge {
-            edge: EdgeRef {
+        args: vec![GraphArg::edge(
+            EdgeRef {
                 producer: 1,
                 output: 0,
             },
-            constraints: Vec::new(),
-        }],
+            Vec::new(),
+        )],
         evidence: BTreeSet::default(),
     });
     env.resources = vec![freezable_meta()];

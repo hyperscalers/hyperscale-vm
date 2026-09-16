@@ -38,9 +38,9 @@
 use std::ops::{Deref, DerefMut};
 
 use hyperscale_vm_effects::{
-    Binding, ChainRecords, Claim, ClaimSource, Constraint, EvidenceRef, Give, GiveRef, GraphArg,
-    Hasher, InstanceMeta, Intent, IntentHeader, IntentTree, MAX_SOCKETS, MAX_TREE_DEPTH,
-    MAX_VALUE_DEPTH, Member, ResourceMeta, SignedIntent, Socket, ValueSource,
+    Binding, ChainRecords, Claim, ClaimRef, Constraint, GiveRef, GraphArg, Hasher, InstanceMeta,
+    Intent, IntentHeader, IntentTree, MAX_SOCKETS, MAX_TREE_DEPTH, MAX_VALUE_DEPTH, Member,
+    ResourceMeta, SignedIntent, Socket, ValueRef,
 };
 use hyperscale_vm_types::{MAX_INTENTS, PrincipalAddr, ResourceAddr};
 
@@ -306,10 +306,7 @@ impl Given {
 
     /// The argument this give binds as, in the composer's own graph.
     pub(crate) fn into_arg(self) -> GraphArg {
-        GraphArg::Give {
-            give: self.give,
-            constraints: self.constraints,
-        }
+        GraphArg::give(self.give, self.constraints)
     }
 
     /// Whether `builder` is the composer holding this give.
@@ -485,7 +482,7 @@ pub struct IntentBuilder<'a> {
     /// the accounts' own.
     attested_by: Option<Vec<PrincipalAddr>>,
     sockets: Vec<Socket>,
-    gives: Vec<Give>,
+    gives: Vec<ValueRef>,
     members: Vec<Placed>,
     /// The creation-fixed records the tree carries for targets beyond
     /// the genesis registry. The root's alone: a member carries none.
@@ -631,7 +628,7 @@ impl<'a> IntentBuilder<'a> {
     /// [`GraphBuilder::export`]: crate::GraphBuilder::export
     pub fn give(&mut self, bucket: Bucket) {
         let edge = self.graph.export(bucket);
-        self.gives.push(Give::Edge(edge));
+        self.gives.push(ValueRef::Edge(edge));
     }
 
     /// Give a member's give on to whoever composes this intent: how a
@@ -658,7 +655,7 @@ impl<'a> IntentBuilder<'a> {
                 give: give.give,
             });
         }
-        self.gives.push(Give::Member(give));
+        self.gives.push(ValueRef::Give(give));
         Ok(())
     }
 
@@ -776,7 +773,7 @@ impl<'a> IntentBuilder<'a> {
                 let Offered::Edge(bucket) = offered else {
                     unreachable!("an edge wiring comes from an edge offering");
                 };
-                Binding::Value(ValueSource::Edge(self.graph.export(bucket)))
+                Binding::Value(ValueRef::Edge(self.graph.export(bucket)))
             }
         };
         let member = usize::try_from(socket.member).expect("minted indices fit");
@@ -830,7 +827,7 @@ impl<'a> IntentBuilder<'a> {
                 }
             }
             (Socket::Value { .. }, Offered::Socket(passed)) => Ok(Wiring::Ready(Binding::Value(
-                ValueSource::Socket(passed.position),
+                ValueRef::Socket(passed.position),
             ))),
             (Socket::Value { .. }, Offered::Give(given)) => {
                 // A member fed from its own give waits on itself: a cycle
@@ -848,15 +845,13 @@ impl<'a> IntentBuilder<'a> {
                         socket: at.1,
                     });
                 }
-                Ok(Wiring::Ready(Binding::Value(ValueSource::Give(given.give))))
+                Ok(Wiring::Ready(Binding::Value(ValueRef::Give(given.give))))
             }
             (Socket::Authority(_), Offered::Proof(proof)) => {
-                let source = match proof.reference() {
-                    EvidenceRef::Node(producer) => ClaimSource::Node(producer),
-                    EvidenceRef::Socket(passed) => ClaimSource::Socket(passed),
-                    EvidenceRef::Account(account) => ClaimSource::Account(account),
-                };
-                Ok(Wiring::Ready(Binding::Authority(source)))
+                // A proof is a claim this intent holds, named as the
+                // intent names it: what a node presents is what a
+                // composer grants.
+                Ok(Wiring::Ready(Binding::Authority(proof.reference())))
             }
             (Socket::Authority(_), Offered::Account(account)) => {
                 if !self.graph.accounts().contains(account) {
@@ -866,7 +861,7 @@ impl<'a> IntentBuilder<'a> {
                         account: *account,
                     });
                 }
-                Ok(Wiring::Ready(Binding::Authority(ClaimSource::Account(
+                Ok(Wiring::Ready(Binding::Authority(ClaimRef::Account(
                     *account,
                 ))))
             }
@@ -1067,17 +1062,17 @@ fn check_sockets(intent: &Intent, at: u32) -> Result<(), IntentError> {
     let declared = &intent.sockets;
     let mut uses = vec![0u32; declared.len()];
     let args = intent.graph.nodes.iter().flat_map(|node| {
-        node.args.iter().filter_map(|arg| match arg {
-            GraphArg::Socket(socket) => Some((*socket, true)),
-            GraphArg::Literal(_) | GraphArg::Edge { .. } | GraphArg::Give { .. } => None,
-        })
+        node.args
+            .iter()
+            .filter_map(|arg| arg.source().and_then(ValueRef::socket))
+            .map(|socket| (socket, true))
     });
     let presented = intent.graph.nodes.iter().flat_map(|node| {
         node.evidence
             .iter()
             .filter_map(|reference| match reference {
-                EvidenceRef::Socket(socket) => Some((*socket, false)),
-                EvidenceRef::Account(_) | EvidenceRef::Node(_) => None,
+                ClaimRef::Socket(socket) => Some((*socket, false)),
+                ClaimRef::Account(_) | ClaimRef::Node(_) => None,
             })
     });
     let passed = intent
@@ -1085,10 +1080,10 @@ fn check_sockets(intent: &Intent, at: u32) -> Result<(), IntentError> {
         .iter()
         .flat_map(|member| &member.wiring)
         .filter_map(|binding| match binding {
-            Binding::Value(ValueSource::Socket(socket)) => Some((*socket, true)),
-            Binding::Authority(ClaimSource::Socket(socket)) => Some((*socket, false)),
-            Binding::Value(ValueSource::Edge(_) | ValueSource::Give(_))
-            | Binding::Authority(ClaimSource::Node(_) | ClaimSource::Account(_)) => None,
+            Binding::Value(ValueRef::Socket(socket)) => Some((*socket, true)),
+            Binding::Authority(ClaimRef::Socket(socket)) => Some((*socket, false)),
+            Binding::Value(ValueRef::Edge(_) | ValueRef::Give(_))
+            | Binding::Authority(ClaimRef::Node(_) | ClaimRef::Account(_)) => None,
         });
     for (position, as_value) in args.chain(presented).chain(passed) {
         let slot = usize::try_from(position)
@@ -1130,13 +1125,14 @@ fn check_gives(intent: &Intent, at: u32) -> Result<(), IntentError> {
             give: u32::try_from(position).expect("bounded by MAX_SOCKETS"),
         };
         let held = match give {
-            Give::Edge(edge) => usize::try_from(edge.producer)
+            ValueRef::Edge(edge) => usize::try_from(edge.producer)
                 .is_ok_and(|producer| producer < intent.graph.nodes.len()),
-            Give::Member(give) => usize::try_from(give.member)
+            ValueRef::Give(give) => usize::try_from(give.member)
                 .ok()
                 .and_then(|member| intent.members.get(member))
                 .zip(usize::try_from(give.give).ok())
                 .is_some_and(|(member, give)| give < member.signed.intent.gives.len()),
+            ValueRef::Socket(_) => false,
         };
         if !held {
             return Err(unknown);
@@ -1155,25 +1151,19 @@ fn check_give_uses(intent: &Intent) -> Result<(), IntentError> {
         .nodes
         .iter()
         .flat_map(|node| &node.args)
-        .filter_map(|arg| match arg {
-            GraphArg::Give { give, .. } => Some(*give),
-            GraphArg::Literal(_) | GraphArg::Edge { .. } | GraphArg::Socket(_) => None,
-        })
+        .filter_map(|arg| arg.source().and_then(ValueRef::give))
         .chain(
             intent
                 .members
                 .iter()
                 .flat_map(|member| &member.wiring)
                 .filter_map(|binding| match binding {
-                    Binding::Value(ValueSource::Give(give)) => Some(*give),
-                    Binding::Value(ValueSource::Edge(_) | ValueSource::Socket(_))
+                    Binding::Value(ValueRef::Give(give)) => Some(*give),
+                    Binding::Value(ValueRef::Edge(_) | ValueRef::Socket(_))
                     | Binding::Authority(_) => None,
                 }),
         )
-        .chain(intent.gives.iter().filter_map(|give| match give {
-            Give::Member(give) => Some(*give),
-            Give::Edge(_) => None,
-        }))
+        .chain(intent.gives.iter().filter_map(|give| give.give()))
         .collect::<Vec<GiveRef>>();
     for (index, member) in intent.members.iter().enumerate() {
         let member_at = u32::try_from(index).expect("minted indices fit");

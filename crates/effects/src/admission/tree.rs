@@ -22,11 +22,9 @@ use hyperscale_vm_types::{
 use super::AdmissionError;
 use super::compose::{Fill, Proven};
 use crate::claim::Claim;
-use crate::graph::{EdgeRef, GiveRef, GraphNode};
+use crate::graph::{ClaimRef, EdgeRef, GiveRef, GraphNode, ValueRef};
 use crate::hash::{Hash32, Hasher};
-use crate::intent::{
-    Binding, ClaimSource, Give, Intent, MAX_ACCOUNTS, MAX_TREE_DEPTH, Socket, ValueSource,
-};
+use crate::intent::{Binding, Intent, MAX_ACCOUNTS, MAX_TREE_DEPTH, Socket};
 
 /// One member's give, followed to the node that produces it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,7 +51,7 @@ pub struct Interface {
 }
 
 impl Interface {
-    /// The give a `GraphArg::Give` or a `ValueSource::Give` of this
+    /// The give a `ValueRef::Give` of this
     /// intent names, where it names one.
     pub(crate) fn give(&self, give: GiveRef) -> Option<Yielded> {
         self.member_gives
@@ -284,10 +282,10 @@ impl Resolver<'_> {
             let mut wired_uses = vec![0u32; intent.sockets.len()];
             for binding in intent.members.iter().flat_map(|member| &member.wiring) {
                 let passed = match binding {
-                    Binding::Value(ValueSource::Socket(socket))
-                    | Binding::Authority(ClaimSource::Socket(socket)) => Some(*socket),
-                    Binding::Value(ValueSource::Edge(_) | ValueSource::Give(_))
-                    | Binding::Authority(ClaimSource::Node(_) | ClaimSource::Account(_)) => None,
+                    Binding::Value(ValueRef::Socket(socket))
+                    | Binding::Authority(ClaimRef::Socket(socket)) => Some(*socket),
+                    Binding::Value(ValueRef::Edge(_) | ValueRef::Give(_))
+                    | Binding::Authority(ClaimRef::Node(_) | ClaimRef::Account(_)) => None,
                 };
                 if let Some(count) = passed
                     .and_then(|socket| usize::try_from(socket).ok())
@@ -317,7 +315,7 @@ impl Resolver<'_> {
             give: as_u32(give),
         };
         match self.intents[intent].gives[give] {
-            Give::Edge(edge) => {
+            ValueRef::Edge(edge) => {
                 let producer = usize::try_from(edge.producer).map_err(|_| unknown())?;
                 if producer >= self.intents[intent].graph.nodes.len() {
                     return Err(unknown());
@@ -327,7 +325,7 @@ impl Resolver<'_> {
                     edge,
                 })
             }
-            Give::Member(GiveRef {
+            ValueRef::Give(GiveRef {
                 member,
                 give: inner,
             }) => {
@@ -342,6 +340,10 @@ impl Resolver<'_> {
                 }
                 self.yielded(child, inner)
             }
+            // A socket of the giving intent's own is filled from above:
+            // giving it back up would route the composer's value to
+            // itself, so a give names an edge or a member's give alone.
+            ValueRef::Socket(_) => Err(unknown()),
         }
     }
 
@@ -365,15 +367,12 @@ impl Resolver<'_> {
                         .iter()
                         .flat_map(|member| &member.wiring)
                         .filter_map(|binding| match binding {
-                            Binding::Value(ValueSource::Give(give)) => Some(*give),
-                            Binding::Value(ValueSource::Edge(_) | ValueSource::Socket(_))
+                            Binding::Value(ValueRef::Give(give)) => Some(*give),
+                            Binding::Value(ValueRef::Edge(_) | ValueRef::Socket(_))
                             | Binding::Authority(_) => None,
                         }),
                 )
-                .chain(intent.gives.iter().filter_map(|give| match give {
-                    Give::Member(give) => Some(*give),
-                    Give::Edge(_) => None,
-                }));
+                .chain(intent.gives.iter().filter_map(|give| give.give()));
             for give in taken {
                 if let Some(count) = usize::try_from(give.member)
                     .ok()
@@ -464,12 +463,12 @@ impl Resolver<'_> {
         &self,
         composer: usize,
         resource: ResourceAddr,
-        source: ValueSource,
+        source: ValueRef,
         at: (u32, u32),
     ) -> Result<Fill, AdmissionError> {
         let above = &self.intents[composer];
         match source {
-            ValueSource::Edge(edge) => {
+            ValueRef::Edge(edge) => {
                 let producer = usize::try_from(edge.producer).map_err(|_| unknown_binding(at))?;
                 if producer >= above.graph.nodes.len() {
                     return Err(unknown_binding(at));
@@ -480,7 +479,7 @@ impl Resolver<'_> {
                     through: Vec::new(),
                 })
             }
-            ValueSource::Give(give) => {
+            ValueRef::Give(give) => {
                 let member = usize::try_from(give.member).map_err(|_| unknown_binding(at))?;
                 if member >= above.members.len() {
                     return Err(unknown_binding(at));
@@ -497,7 +496,7 @@ impl Resolver<'_> {
                     through: Vec::new(),
                 })
             }
-            ValueSource::Socket(passed) => {
+            ValueRef::Socket(passed) => {
                 let passed = usize::try_from(passed).map_err(|_| unknown_binding(at))?;
                 let Some(Socket::Value {
                     resource: carried,
@@ -542,12 +541,12 @@ impl Resolver<'_> {
         &self,
         composer: usize,
         wanted: Claim,
-        source: ClaimSource,
+        source: ClaimRef,
         at: (u32, u32),
     ) -> Result<Fill, AdmissionError> {
         let above = &self.intents[composer];
         match source {
-            ClaimSource::Node(producer) => {
+            ClaimRef::Node(producer) => {
                 let node = usize::try_from(producer).map_err(|_| unknown_binding(at))?;
                 if node >= above.graph.nodes.len() {
                     return Err(unknown_binding(at));
@@ -557,7 +556,7 @@ impl Resolver<'_> {
                     from: Proven::Node(producer),
                 })
             }
-            ClaimSource::Account(account) => {
+            ClaimRef::Account(account) => {
                 if !above.accounts.contains(&account) {
                     return Err(AdmissionError::GrantNotHeld {
                         intent: at.0,
@@ -571,7 +570,7 @@ impl Resolver<'_> {
                     from: Proven::Account(account),
                 })
             }
-            ClaimSource::Socket(passed) => {
+            ClaimRef::Socket(passed) => {
                 let passed = usize::try_from(passed).map_err(|_| unknown_binding(at))?;
                 let Some(Socket::Authority(carried)) = above.sockets.get(passed) else {
                     return Err(unknown_binding(at));

@@ -6,8 +6,8 @@ mod common;
 
 use common::admit_leaf;
 use hyperscale_vm_effects::{
-    Constraint, EdgeRef, EvidenceRef, GraphArg, Hash32, Hasher, InstanceMeta, ManifestGraph,
-    PackageHash, Records, TestHasher, Value,
+    ClaimRef, Constraint, EdgeRef, GraphArg, Hash32, Hasher, InstanceMeta, ManifestGraph,
+    PackageHash, Records, TestHasher, Value, ValueRef,
 };
 use hyperscale_vm_fixtures::payouts;
 use hyperscale_vm_manifest_builder::{BuildError, TypedBuilder, TypedError};
@@ -87,13 +87,14 @@ fn asserted(graph: &ManifestGraph, node: usize) -> Vec<Option<ResourceAddr>> {
         .args
         .iter()
         .map(|arg| match arg {
-            GraphArg::Edge { constraints, .. } => {
-                constraints.iter().find_map(|constraint| match constraint {
-                    Constraint::ResourceIs(resource) => Some(*resource),
-                    Constraint::MinAmount(_) | Constraint::MaxAmount(_) => None,
-                })
-            }
-            GraphArg::Literal(_) | GraphArg::Socket(_) | GraphArg::Give { .. } => None,
+            GraphArg::Value {
+                source: ValueRef::Edge(_),
+                constraints,
+            } => constraints.iter().find_map(|constraint| match constraint {
+                Constraint::ResourceIs(resource) => Some(*resource),
+                Constraint::MinAmount(_) | Constraint::MaxAmount(_) => None,
+            }),
+            GraphArg::Literal(_) | GraphArg::Value { .. } => None,
         })
         .collect()
 }
@@ -160,13 +161,13 @@ fn a_split_of_a_typed_edge_is_two_typed_edges() {
     // The derived assertion leads, and the author's bound follows it.
     assert_eq!(
         graph.nodes[3].args,
-        vec![GraphArg::Edge {
-            edge: EdgeRef {
+        vec![GraphArg::edge(
+            EdgeRef {
                 producer: 1,
                 output: 1
             },
-            constraints: vec![Constraint::ResourceIs(RES), Constraint::MinAmount(1)],
-        }]
+            vec![Constraint::ResourceIs(RES), Constraint::MinAmount(1)]
+        )]
     );
     admit_leaf(&graph, ALICE, &chain, &TestHasher).unwrap();
 }
@@ -380,7 +381,7 @@ fn a_scope_presents_where_a_gate_wants_claims() {
     let gated = graph.nodes.last().expect("the gated call is a node");
     assert_eq!(gated.method, "deactivate-validator");
     assert!(
-        gated.evidence.contains(&EvidenceRef::Node(0)),
+        gated.evidence.contains(&ClaimRef::Node(0)),
         "the scope's proof rides the gated call: {:?}",
         gated.evidence
     );
@@ -431,8 +432,7 @@ fn nested_scopes_present_together() {
 
     let gated = graph.nodes.last().expect("the gated call is a node");
     assert!(
-        gated.evidence.contains(&EvidenceRef::Node(0))
-            && gated.evidence.contains(&EvidenceRef::Node(1)),
+        gated.evidence.contains(&ClaimRef::Node(0)) && gated.evidence.contains(&ClaimRef::Node(1)),
         "both scopes' proofs ride the gated call: {:?}",
         gated.evidence
     );
@@ -458,7 +458,7 @@ fn explicit_evidence_stands_in_for_the_scope() {
     let gated = graph.nodes.last().expect("the gated call is a node");
     assert_eq!(
         gated.evidence,
-        [EvidenceRef::Node(1), EvidenceRef::Account(OPERATOR)]
+        [ClaimRef::Node(1), ClaimRef::Account(OPERATOR)]
             .into_iter()
             .collect(),
         "the per-call spelling and the signature are the whole of the evidence"
