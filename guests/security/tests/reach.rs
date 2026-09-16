@@ -87,14 +87,12 @@ fn a_halt_stops_a_holder_who_was_moving_freely(chain: &mut Chain) {
 
     // The requirement is the share's own entry, injected at admission
     // rather than declared, so the package's signature says `halt`
-    // admits anyone and its wrapper takes no proof. The scope is where
-    // the registrar's authority rides: a halt reaches the holder's
-    // prefix, and a call that could want evidence draws the span's.
+    // admits anyone and its wrapper takes no proof. The intent acts as
+    // the registrar, and its own attestation is what answers the entry:
+    // a halt reaches the holder's prefix, and a call that could want
+    // evidence draws the claim of the account the intent acts as.
     chain
-        .transact(REGISTRAR, |b| {
-            let registrar = account::authorize(b, REGISTRAR)?;
-            b.presenting(registrar, |b| issuer.halt(b, HOLDER.address()))
-        })
+        .transact(REGISTRAR, |b| issuer.halt(b, HOLDER.address()))
         .expect_completed();
 
     // Admitted and then refused: a halt is a standing fact about the
@@ -135,10 +133,7 @@ fn a_halt_stops_a_holder_who_was_moving_freely(chain: &mut Chain) {
     // one whose end is the ending of a cell rather than a second flag,
     // so what proves it lifted is the movement it was stopping.
     chain
-        .transact(REGISTRAR, |b| {
-            let registrar = account::authorize(b, REGISTRAR)?;
-            b.presenting(registrar, |b| issuer.unhalt(b, HOLDER.address()))
-        })
+        .transact(REGISTRAR, |b| issuer.unhalt(b, HOLDER.address()))
         .expect_completed();
     transfer(&mut *chain)
         .expect("the manifest still admits")
