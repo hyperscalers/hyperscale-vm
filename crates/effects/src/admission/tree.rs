@@ -18,7 +18,9 @@ use hyperscale_vm_types::ResourceAddr;
 use super::AdmissionError;
 use super::compose::{Fill, Proven};
 use crate::claim::Claim;
-use crate::envelope::{Binding, ClaimSource, Give, Intent, MAX_TREE_DEPTH, Socket, ValueSource};
+use crate::envelope::{
+    Binding, ClaimSource, Give, Intent, MAX_ACCOUNTS, MAX_TREE_DEPTH, Socket, ValueSource,
+};
 use crate::graph::{EdgeRef, GiveRef, GraphNode};
 
 /// One member's give, followed to the node that produces it.
@@ -113,6 +115,9 @@ pub fn flatten(root: &Intent) -> Result<Flattened<'_>, AdmissionError> {
         }
         if intent.accounts.is_empty() {
             return Err(AdmissionError::NoAccount { intent: as_u32(at) });
+        }
+        if intent.accounts.len() > MAX_ACCOUNTS {
+            return Err(AdmissionError::TooManyAccounts { intent: as_u32(at) });
         }
         if composer.is_some() && intent.terms.is_some() {
             return Err(AdmissionError::TermsOnMember { intent: as_u32(at) });

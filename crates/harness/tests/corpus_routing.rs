@@ -2,7 +2,9 @@
 //! vectors pinning routing as consensus content, the star each pattern's shape implies, and
 //! the sweeps that hold across every guest.
 
-use hyperscale_vm_effects::{LegRole, ManifestGraph};
+use hyperscale_vm_effects::{
+    LegRole, ManifestGraph, PrefixShardResolver, TestHasher, admit_tree, legs_of, star_at,
+};
 use hyperscale_vm_fixtures::{lottery, nf};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::PrincipalAddr;
@@ -284,6 +286,39 @@ fn a_grant_declaring_deposit_bears_the_verdict() {
     );
     assert_eq!(star.core.len(), 1, "and it is the whole core");
     assert!(star.decomposes);
+}
+
+/// A transfer whose intent acts as the recipient too runs whole: Bob's
+/// shard runs a delivery the core never waits on, where his sign-in
+/// would land beside a verdict already given. The roles do not move —
+/// the payer's home bears the core either way, and the withdrawal now
+/// speaking on Bob's claim off his shard is the core's for that reason
+/// too.
+#[test]
+fn a_transfer_acting_as_its_recipient_runs_whole() {
+    let world = world();
+    let alone = star_of(&world, &transfer_graph());
+    assert_eq!(alone.roles, vec![LegRole::Core, LegRole::Outbound]);
+    assert!(alone.decomposes);
+
+    let tree = acting_as(&[ALICE, BOB], transfer_graph());
+    let admitted = admit_tree(
+        &tree,
+        &tree.assume_self_attested(),
+        tree.hash(&TestHasher),
+        &world,
+        &TestHasher,
+    )
+    .expect("one intent acts as both");
+    let both = star_at(
+        &legs_of(&admitted.admitted),
+        ALICE.address(),
+        &[ALICE.address(), BOB.address()],
+        &PrefixShardResolver { bits: 8 },
+        &TestHasher,
+    );
+    assert_eq!(both.roles, alone.roles);
+    assert!(!both.decomposes, "Bob's shard only delivers");
 }
 
 /// A declared access reaching a party no node targets leaves that target

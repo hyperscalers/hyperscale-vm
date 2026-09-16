@@ -11,7 +11,7 @@ use hyperscale_vm_effects::{
     AdmissionError, AdmittedTree, Binding, Bounds, ChainRecords, Claim, ClaimSource, Constraint,
     CrossingCell, CrossingSite, ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, EnvelopeTree,
     EvidenceRef, Give, GiveRef, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, Intent,
-    IntentHash, IntentHeader, IntentRecord, JudgedLeaf, MAX_SOCKETS, MAX_TREE_DEPTH,
+    IntentHash, IntentHeader, IntentRecord, JudgedLeaf, MAX_ACCOUNTS, MAX_SOCKETS, MAX_TREE_DEPTH,
     MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, Marked, Marker, Member, NULLIFIER_SLOT,
     NodeInput, PackageHash, PrefixShardResolver, Records, ResourceKind, Rule, ShardResolver,
     Socket, TREE_WIRE_DEPTH, TestHasher, Value, ValueSource, admit, admit_tree, bucketed_child_key,
@@ -493,6 +493,66 @@ fn an_intent_acting_as_two_accounts_nullifies_and_signs_in_for_each() {
     assert_eq!(
         admit_composed(&nobody),
         Err(AdmissionError::NoAccount { intent: 0 })
+    );
+}
+
+/// An intent at the account ceiling costs one nullifier, one `auth`
+/// read and one sign-in per account, and encodes; one past it is
+/// refused.
+#[test]
+fn an_intent_at_the_account_ceiling_costs_one_cell_per_account() {
+    let accounts: Vec<PrincipalAddr> = (0x80u8..)
+        .take(MAX_ACCOUNTS + 1)
+        .map(|byte| PrincipalAddr::new([byte; 31]))
+        .collect();
+    let acting_as = |accounts: &[PrincipalAddr]| {
+        let mut root = intent(
+            accounts[0],
+            vec![
+                withdraw(accounts[0], RES_X, 5),
+                deposit_edge(accounts[0], 0),
+            ],
+            Vec::new(),
+            Vec::new(),
+        );
+        root.accounts = accounts.to_vec();
+        tree(root)
+    };
+
+    let full = acting_as(&accounts[..MAX_ACCOUNTS]);
+    let admitted = admit_composed(&full).expect("the ceiling admits");
+    let [record] = admitted.intents.as_slice() else {
+        panic!("one intent");
+    };
+    assert_eq!(record.nullifiers.len(), MAX_ACCOUNTS);
+    let declaration = admitted.admitted.declaration();
+    let auth_cells: BTreeSet<_> = accounts[..MAX_ACCOUNTS]
+        .iter()
+        .map(|account| child_key(&TestHasher, account.address(), AUTH, &[]))
+        .collect();
+    let auth_reads = declaration
+        .ordered
+        .iter()
+        .filter(|access| match access.effect {
+            Effect {
+                target: EffectTarget::Point(cell),
+                mode: Mode::Read,
+            } => auth_cells.contains(&cell),
+            _ => false,
+        })
+        .count();
+    assert_eq!(auth_reads, MAX_ACCOUNTS);
+    let sign_ins = declaration
+        .conditions
+        .iter()
+        .filter(|condition| matches!(condition.rule, Rule::Require(JudgedLeaf::Signed { .. })))
+        .count();
+    assert_eq!(sign_ins, MAX_ACCOUNTS);
+    assert_eq!(decode_tree(&encode_tree(&full)).as_ref(), Ok(&full));
+
+    assert_eq!(
+        admit_composed(&acting_as(&accounts)),
+        Err(AdmissionError::TooManyAccounts { intent: 0 })
     );
 }
 

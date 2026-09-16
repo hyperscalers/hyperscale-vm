@@ -257,9 +257,9 @@ fn a_stored_leaf_judges_what_is_stored_and_nothing_else() {
 
 /// The one leaf judged against keys. An unwritten `auth` cell is
 /// governed by the key its address derives from, so the attesting set
-/// answers it only by being exactly that principal; a written one is
-/// judged against the rule stored there. Both answers come from the
-/// cell as read at materialization, before any call runs.
+/// answers it by holding that principal; a written one is judged
+/// against the rule stored there. Both answers come from the cell as
+/// read at materialization, before any call runs.
 #[test]
 fn a_sign_in_is_judged_against_the_rule_stored_at_the_accounts_cell() {
     let account = principal(1);
@@ -275,7 +275,7 @@ fn a_sign_in_is_judged_against_the_rule_stored_at_the_accounts_cell() {
         condition: UnmetCondition::SignedIn { account },
     };
 
-    // Unwritten: the account's own principal, and nothing else.
+    // Unwritten: the account's own principal, whoever signed beside it.
     let unwritten = MemoryStore::new();
     assert!(matches!(
         judged(&unwritten, vec![identity(1)]),
@@ -283,10 +283,12 @@ fn a_sign_in_is_judged_against_the_rule_stored_at_the_accounts_cell() {
     ));
     assert_eq!(judged(&unwritten, vec![identity(2)]), refused);
     assert_eq!(judged(&unwritten, Vec::new()), refused);
-    assert_eq!(
-        judged(&unwritten, vec![identity(1), identity(2)]),
-        refused,
-        "exactly the address's own, so a set holding it and another is not it",
+    assert!(
+        matches!(
+            judged(&unwritten, vec![identity(1), identity(2)]),
+            Outcome::Completed { .. }
+        ),
+        "a co-signer beside the address's own key is not a different account",
     );
 
     // Written: the rule stored governs, and the account's own key stops

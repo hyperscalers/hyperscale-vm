@@ -122,19 +122,20 @@ impl TryFrom<&StoredRule> for PrincipalRule {
 /// differently — which is why this is the whole of both rather than a
 /// rule each states for itself.
 ///
-/// An unwritten cell is governed by the key its address derives, so the
-/// attesting set answers it only by being exactly that principal. Bytes
-/// that are not a rule are not a rule admitting everybody, and neither
-/// is a rule asking about anything but claims: both fail closed.
+/// An unwritten cell is governed by the key its address derives — the
+/// rule naming that one principal, judged as a stored one would be, so
+/// an attesting set answers it by holding the principal, whoever else
+/// signed beside it. Bytes that are not a rule are not a rule admitting
+/// everybody, and neither is a rule asking about anything but claims:
+/// both fail closed.
 #[must_use]
 pub fn auth_cell_admits(owner: Address, cell: Option<&[u8]>, keys: &[Claim]) -> bool {
-    match cell {
-        None | Some([]) => keys == [Claim::of_subject(owner)],
-        Some(bytes) => RuleBytes::rule_in_cell(bytes)
-            .ok()
-            .and_then(|rule| rule.claims_only())
-            .is_some_and(|claims| claims.satisfied_by(keys)),
-    }
+    let rule = match cell {
+        None | Some([]) => Some(StoredRule::claim(Claim::of_subject(owner))),
+        Some(bytes) => RuleBytes::rule_in_cell(bytes).ok(),
+    };
+    rule.and_then(|rule| rule.claims_only())
+        .is_some_and(|claims| claims.satisfied_by(keys))
 }
 
 impl TryFrom<&StoredRule> for RuleBytes {

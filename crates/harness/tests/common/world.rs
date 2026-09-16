@@ -6,11 +6,11 @@ use std::sync::{Arc, LazyLock};
 
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG};
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, Claim, EnvelopeTree, Hash32, Hasher, InstanceMeta, LegShape,
-    ManifestGraph, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver, PresentedGrants,
-    PrincipalRule, Records, RuleBytes, ShardId, ShardResolver, SlotId, Star, StoredRule,
-    TestHasher, Value, admit_presenting, admit_tree, child_key, collection_id, holdings_collection,
-    legs_of, package_slot, per_shard, star_at,
+    AdmissionError, Admitted, AdmittedTree, Claim, EnvelopeTree, Hash32, Hasher, InstanceMeta,
+    Intent, IntentHeader, LegShape, ManifestGraph, PACKAGE_SLOT_BASE, PackageHash,
+    PrefixShardResolver, PresentedGrants, PrincipalRule, Records, RuleBytes, ShardId,
+    ShardResolver, SlotId, Star, StoredRule, TestHasher, Value, admit_presenting, admit_tree,
+    child_key, collection_id, holdings_collection, legs_of, package_slot, per_shard, star_at,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, security, shares};
 use hyperscale_vm_harness::driver::{Lanes, declared_vault, run_lanes, test_hash, vault};
@@ -23,8 +23,8 @@ use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError, graph_records};
 use hyperscale_vm_stdlib::{ACCOUNT_MODULE, account};
 use hyperscale_vm_types::{
     AbortReason, Address, CollectionId, ComponentAddr, Effect, EffectSet, EffectTarget, EntryKey,
-    Mode, Outcome, PrincipalAddr, ResourceAddr, SEAL_MATURITY_EPOCHS, SeedWindow, SubstateKey,
-    TxHash, encode_amount,
+    Mode, NetworkId, Outcome, PrincipalAddr, ResourceAddr, SEAL_MATURITY_EPOCHS, SeedWindow,
+    SubstateKey, TxHash, encode_amount,
 };
 use wasmtime::Result;
 use wasmtime::error::{Context, Error as WasmtimeError, ensure};
@@ -54,6 +54,27 @@ pub const QUOTE: ResourceAddr = ResourceAddr::new([0xE4; 31]);
 /// The epoch every corpus transaction executes in, and therefore the
 /// epoch a seal written by one records.
 pub const EPOCH: u64 = 10;
+
+/// Any window that covers the corpus clock; nothing here validates one
+/// against it.
+pub const HEADER: IntentHeader = IntentHeader {
+    network: NetworkId(242),
+    validity_start_ms: 0,
+    validity_end_ms: 3_600_000,
+    discriminator: 0,
+};
+
+/// A tree of one intent over `graph`, acting as every one of `accounts`.
+///
+/// How a party composes across their own accounts: one declaration,
+/// signed once, signed in on each account's shard and nullified under
+/// each account's prefix.
+pub fn acting_as(accounts: &[PrincipalAddr], graph: ManifestGraph) -> EnvelopeTree {
+    EnvelopeTree::of_one(Intent {
+        accounts: accounts.to_vec(),
+        ..Intent::leaf(HEADER, accounts[0], graph)
+    })
+}
 
 /// The seed a round sealed in [`EPOCH`] matures into.
 pub const MATURED_SEED: [u8; 32] = [0x5E; 32];
@@ -906,14 +927,27 @@ pub fn run_both_tree(
     store: &MemoryStore,
     tree: &EnvelopeTree,
 ) -> Result<(BatchOutcome, MemoryStore), AdmissionError> {
+    let (outcome, end, _) =
+        run_both_tree_attested(world, store, tree, &tree.assume_self_attested())?;
+    Ok((outcome, end))
+}
+
+/// As [`run_both_tree`], with each intent's attesting set named — how a
+/// test puts a key behind an intent that some account's rule refuses —
+/// and with the admitted records handed back, so a test can find the
+/// nullifier cells the run wrote.
+///
+/// # Errors
+///
+/// Admission's verdict on the composition, reached before any lane runs.
+pub fn run_both_tree_attested(
+    world: &Records,
+    store: &MemoryStore,
+    tree: &EnvelopeTree,
+    attested_by: &[Vec<PrincipalAddr>],
+) -> Result<(BatchOutcome, MemoryStore, AdmittedTree), AdmissionError> {
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(
-        tree,
-        &tree.assume_self_attested(),
-        identity,
-        world,
-        &TestHasher,
-    )?;
+    let admitted = admit_tree(tree, attested_by, identity, world, &TestHasher)?;
     let entry = BatchTx::new(
         TxHash(identity.0),
         admitted.admitted.declaration().clone(),
@@ -921,7 +955,8 @@ pub fn run_both_tree(
     )
     .with_calls(admitted.admitted.calls().to_vec())
     .with_nullifiers(admitted.intents.clone());
-    Ok(run_lanes(&LANES, store, &[entry]))
+    let (outcome, end) = run_lanes(&LANES, store, &[entry]);
+    Ok((outcome, end, admitted))
 }
 
 /// As [`run_both`], with every intent acting as `signer`'s account where
@@ -1039,6 +1074,16 @@ pub fn graph_in(
     write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>,
 ) -> ManifestGraph {
     TypedBuilder::compose(world, &TestHasher, ALICE, write)
+        .expect("every call types and every output is consumed")
+}
+
+/// As [`graph`], acting as every one of `accounts`: one signature
+/// answering each account's gates.
+pub fn graph_acting_as(
+    accounts: &[PrincipalAddr],
+    write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>,
+) -> ManifestGraph {
+    TypedBuilder::compose_as(&world(), &TestHasher, accounts, write)
         .expect("every call types and every output is consumed")
 }
 

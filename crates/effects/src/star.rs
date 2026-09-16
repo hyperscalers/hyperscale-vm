@@ -313,9 +313,9 @@ fn assemble(
 /// `payer` is the fee payer, whose home bears the core where nothing
 /// else can, and `accounts` are the accounts the transaction's intents
 /// act as. The two are held to different rules — a payer needs a member
-/// of any side, an account needs one that issues — which is why they
-/// arrive apart rather than folded into one list. `hasher` names the
-/// cells each crossing writes.
+/// of any side, an account needs a shard the core waits on — which is
+/// why they arrive apart rather than folded into one list. `hasher`
+/// names the cells each crossing writes.
 #[must_use]
 pub fn star_at(
     legs: &[LegShape],

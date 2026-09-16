@@ -106,13 +106,19 @@ pub const MARKER_CELL_BYTES: u32 = 96;
 /// producing node's target, on [`MARKER_CELL_BYTES`]'s terms.
 pub const CROSSING_CELL_BYTES: u32 = 256;
 
-/// The bound on accounts one intent may act as. A wire bound.
+/// The bound on accounts one intent may act as. A wire bound, and
+/// refused at admission for a tree built in memory.
 ///
-/// Each is a nullifier write and a sign-in judged at its own shard, and
-/// every one of those shards is one the transaction's core must wait
-/// on, so an intent acting as many accounts is one that runs whole on
-/// many shards. Eight admits every shape a party composes across its
-/// own accounts and holds the wait to a handful.
+/// Each account costs the intent one nullifier — a sweepable cell of
+/// [`MARKER_CELL_BYTES`] under the account's prefix, counted against
+/// the creation budget a block rations at five cells per transaction —
+/// one read of the account's `auth` cell, and one sign-in condition its
+/// own shard judges at materialization. Every one of those shards is
+/// one the transaction's core must wait on, so an intent acting as many
+/// accounts runs whole across all of them. Eight admits every shape a
+/// party composes across its own accounts; past that an intent spends
+/// two transactions' share of the block's sweepable budget on
+/// nullifiers alone and holds a core across as many shards.
 pub const MAX_ACCOUNTS: usize = 8;
 
 /// The bound on how deep a tree nests: a root alone is one, and each

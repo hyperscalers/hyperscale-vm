@@ -46,7 +46,7 @@ pub fn instantiate(
     address: ComponentAddr,
     args: impl Args,
 ) -> Result<(), TypedError> {
-    let founder = b.signer();
+    let founder = b.leading();
     // Which method seals is the declaration's answer, not a name this
     // crate knows.
     let (seal, signature) = b.seal_of(address)?;

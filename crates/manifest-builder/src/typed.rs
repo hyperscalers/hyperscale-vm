@@ -49,6 +49,10 @@ use crate::unpack::{Arity, Unpacked};
 /// index in a graph they have not finished building.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TypedError {
+    /// A builder acting as no account, which would have no nullifier
+    /// and no sign-in.
+    #[error("an intent acts as at least one account")]
+    NoAccount,
     /// A call target no record resolves.
     #[error("no instance at {0:?}")]
     UnknownInstance(Address),
@@ -428,14 +432,16 @@ pub struct TypedBuilder<'a> {
     graph: GraphBuilder,
     chain: &'a dyn ChainRecords,
     hasher: &'a dyn Hasher,
-    /// The account this intent acts as.
+    /// The accounts this intent acts as. Never empty.
     ///
     /// A declared fact rather than a fact about whoever runs the
     /// builder: an agent preparing an intent for somebody else's wallet
     /// names that somebody, and the intent's own gates hold the
     /// declaration to it. A wrong name is a refusal at the node that
-    /// reads it, never a forgery.
-    signer: PrincipalAddr,
+    /// reads it, never a forgery. The signature answers a gate naming
+    /// any of them; the leading one is where the builder files what a
+    /// composition earns and presents held badges from.
+    accounts: Vec<PrincipalAddr>,
     /// The nodes already proving a claim, so a second call wanting one
     /// presents the same proof rather than composing a second node.
     proven: BTreeMap<(Address, Option<u64>), Proof>,
@@ -477,13 +483,44 @@ const MAX_PRESENT_DEPTH: usize = 4;
 
 impl<'a> TypedBuilder<'a> {
     /// A builder with no nodes, typing its calls and resolving its
-    /// targets against what `chain` answers for.
-    pub fn new(chain: &'a dyn ChainRecords, hasher: &'a dyn Hasher, signer: PrincipalAddr) -> Self {
+    /// targets against what `chain` answers for, acting as one account.
+    pub fn new(
+        chain: &'a dyn ChainRecords,
+        hasher: &'a dyn Hasher,
+        account: PrincipalAddr,
+    ) -> Self {
+        Self::with_accounts(chain, hasher, vec![account])
+    }
+
+    /// As [`new`](Self::new), acting as every one of `accounts` — how a
+    /// party composes across their own accounts, with one signature
+    /// answering each account's gates.
+    ///
+    /// # Errors
+    ///
+    /// [`TypedError::NoAccount`] on an empty list: an intent acting as
+    /// nobody has no nullifier and no sign-in, and admission refuses it.
+    pub fn acting_as(
+        chain: &'a dyn ChainRecords,
+        hasher: &'a dyn Hasher,
+        accounts: &[PrincipalAddr],
+    ) -> Result<Self, TypedError> {
+        if accounts.is_empty() {
+            return Err(TypedError::NoAccount);
+        }
+        Ok(Self::with_accounts(chain, hasher, accounts.to_vec()))
+    }
+
+    fn with_accounts(
+        chain: &'a dyn ChainRecords,
+        hasher: &'a dyn Hasher,
+        accounts: Vec<PrincipalAddr>,
+    ) -> Self {
         Self {
             graph: GraphBuilder::new(),
             chain,
             hasher,
-            signer,
+            accounts,
             proven: BTreeMap::new(),
             composing: BTreeSet::new(),
             scopes: Vec::new(),
@@ -531,10 +568,18 @@ impl<'a> TypedBuilder<'a> {
         written
     }
 
-    /// The account this intent acts as.
+    /// The accounts this intent acts as, in the order it names them.
     #[must_use]
-    pub const fn signer(&self) -> PrincipalAddr {
-        self.signer
+    pub fn accounts(&self) -> &[PrincipalAddr] {
+        &self.accounts
+    }
+
+    /// The leading account: where the builder files what a composition
+    /// earns, and whose custody it presents held badges from. A badge
+    /// held under another account is presented explicitly.
+    #[must_use]
+    pub fn leading(&self) -> PrincipalAddr {
+        self.accounts[0]
     }
 
     /// The seal of `target`'s package: the name it publishes under, and
@@ -859,8 +904,13 @@ impl<'a> TypedBuilder<'a> {
     /// compose speaks for them. The claim is left to whoever can: a
     /// scope, or a grant the composition wires in.
     fn present(&mut self, claim: Claim) -> Option<Proof> {
-        if claim.instance.is_none() && claim.subject == self.signer.address() {
-            return Some(Proof::from_signature(self.graph_id(), self.signer));
+        if claim.instance.is_none()
+            && let Some(account) = self
+                .accounts
+                .iter()
+                .find(|account| account.address() == claim.subject)
+        {
+            return Some(Proof::from_signature(self.graph_id(), *account));
         }
         let key = (claim.subject, claim.instance);
         if let Some(proof) = self.proven.get(&key) {
@@ -878,14 +928,14 @@ impl<'a> TypedBuilder<'a> {
         if !self.composing.insert(key) {
             return None;
         }
-        let signer = self.signer;
+        let custody = self.leading();
         let proven = match (claim.subject.class(), claim.instance) {
             (AddressClass::Resource | AddressClass::Restricted, None) => self
-                .prove(signer.into(), PRESENT_BADGE_METHOD, (claim.subject,), &[])
+                .prove(custody.into(), PRESENT_BADGE_METHOD, (claim.subject,), &[])
                 .ok(),
             (AddressClass::Resource | AddressClass::Restricted, Some(id)) => self
                 .prove(
-                    signer.into(),
+                    custody.into(),
                     PRESENT_INSTANCE_METHOD,
                     (claim.subject, id),
                     &[],
@@ -917,10 +967,24 @@ impl<'a> TypedBuilder<'a> {
     pub fn compose(
         chain: &'a dyn ChainRecords,
         hasher: &'a dyn Hasher,
-        signer: PrincipalAddr,
+        account: PrincipalAddr,
         write: impl FnOnce(&mut Self) -> Result<(), TypedError>,
     ) -> Result<ManifestGraph, TypedError> {
-        let mut builder = Self::new(chain, hasher, signer);
+        Self::compose_as(chain, hasher, &[account], write)
+    }
+
+    /// As [`compose`](Self::compose), acting as every one of `accounts`.
+    ///
+    /// # Errors
+    ///
+    /// As [`acting_as`](Self::acting_as), then as [`compose`](Self::compose).
+    pub fn compose_as(
+        chain: &'a dyn ChainRecords,
+        hasher: &'a dyn Hasher,
+        accounts: &[PrincipalAddr],
+        write: impl FnOnce(&mut Self) -> Result<(), TypedError>,
+    ) -> Result<ManifestGraph, TypedError> {
+        let mut builder = Self::acting_as(chain, hasher, accounts)?;
         write(&mut builder)?;
         builder.build()
     }

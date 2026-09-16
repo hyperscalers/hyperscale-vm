@@ -3,11 +3,11 @@
 //! gates badges open.
 
 use hyperscale_vm_effects::{
-    Claim, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta, ManifestGraph, PrincipalRule,
-    Records, RuleBytes, StoredRule, TestHasher, Value, holdings_collection, never,
+    Claim, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta, ManifestGraph, Marked, Marker,
+    PrincipalRule, Records, RuleBytes, StoredRule, TestHasher, Value, holdings_collection, never,
 };
 use hyperscale_vm_fixtures::nf;
-use hyperscale_vm_harness::driver::{amount_of, vault};
+use hyperscale_vm_harness::driver::{amount_of, cells, vault};
 use hyperscale_vm_kernel::{MemoryStore, Substates};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
@@ -52,6 +52,106 @@ fn a_refused_sign_in_takes_its_transaction_with_it() {
     );
     assert_eq!(amount_of(&final_store, vault(ALICE, RES_X)), 150);
     assert_eq!(amount_of(&final_store, vault(BOB, RES_X)), 0);
+}
+
+/// Alice and Bob trade across their own accounts in one intent: her X
+/// for his Y, each withdrawal gated on its own account and answered by
+/// the one signature.
+fn swap_across_own_accounts() -> ManifestGraph {
+    graph_acting_as(&[ALICE, BOB], |b| {
+        let x = account::withdraw(b, ALICE, RES_X, 100)?;
+        account::deposit(b, BOB, x)?;
+        let y = account::withdraw(b, BOB, RES_Y, 10)?;
+        account::deposit(b, ALICE, y)
+    })
+}
+
+/// The store both accounts trade from.
+fn two_account_store() -> MemoryStore {
+    let mut store = sealed_store();
+    store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
+    store.write(vault(BOB, RES_Y), encode_amount(20).to_vec());
+    store
+}
+
+/// An intent acting as two accounts commits on both sign-ins: its one
+/// signature answers each account's gate, and the run writes a
+/// nullifier under each account's prefix.
+#[test]
+fn an_intent_acting_as_two_accounts_commits_on_both_sign_ins() {
+    let world = world();
+    let tree = acting_as(&[ALICE, BOB], swap_across_own_accounts());
+    let (outcome, end, admitted) =
+        run_both_tree_attested(&world, &two_account_store(), &tree, &[vec![ALICE, BOB]])
+            .expect("one intent acts as both");
+    let tx = TxHash(tree.hash(&TestHasher).0);
+    assert!(
+        matches!(outcome.receipts[&tx].outcome, Outcome::Completed { .. }),
+        "both sign-ins admit; got {:?}",
+        outcome.receipts[&tx].outcome
+    );
+    assert_eq!(amount_of(&end, vault(ALICE, RES_X)), 50);
+    assert_eq!(amount_of(&end, vault(BOB, RES_X)), 100);
+    assert_eq!(amount_of(&end, vault(BOB, RES_Y)), 10);
+    assert_eq!(amount_of(&end, vault(ALICE, RES_Y)), 10);
+
+    let [record] = admitted.intents.as_slice() else {
+        panic!("one intent");
+    };
+    let written = cells(&end);
+    assert_eq!(record.nullifiers.len(), 2);
+    for nullifier in &record.nullifiers {
+        assert_eq!(
+            written.get(&nullifier.key),
+            Some(
+                &Marker {
+                    tx,
+                    expiry_ms: record.expiry_ms,
+                    marks: Marked::Spent(record.intent),
+                }
+                .to_bytes()
+            ),
+            "{:?} spent its own nullifier",
+            nullifier.account
+        );
+    }
+}
+
+/// One account's rule refusing the attesting set refuses the whole
+/// intent at materialization: nothing moves on either account, and
+/// neither nullifier is written — the one Alice's shard would have
+/// admitted included.
+#[test]
+fn one_refusing_rule_refuses_the_whole_intent() {
+    let world = world();
+    let mut store = two_account_store();
+    // Bob's cell admits his own key alone; Alice's is unwritten and
+    // admits hers. Only Alice attests.
+    store.write(auth(BOB), stored_rule(BOB).in_cell());
+    let tree = acting_as(&[ALICE, BOB], swap_across_own_accounts());
+    let (outcome, end, admitted) =
+        run_both_tree_attested(&world, &store, &tree, &[vec![ALICE]]).expect("admissible");
+    let tx = TxHash(tree.hash(&TestHasher).0);
+    assert_eq!(
+        outcome.receipts[&tx].outcome,
+        Outcome::ConditionUnmet {
+            condition: UnmetCondition::SignedIn {
+                account: BOB.address(),
+            },
+        }
+    );
+    assert_eq!(amount_of(&end, vault(ALICE, RES_X)), 150);
+    assert_eq!(amount_of(&end, vault(BOB, RES_X)), 0);
+    assert_eq!(amount_of(&end, vault(BOB, RES_Y)), 20);
+    assert_eq!(amount_of(&end, vault(ALICE, RES_Y)), 0);
+    let written = cells(&end);
+    for nullifier in &admitted.intents[0].nullifiers {
+        assert!(
+            !written.contains_key(&nullifier.key),
+            "{:?} spent nothing",
+            nullifier.account
+        );
+    }
 }
 
 /// Sign in and hand the account to Bob's rule, uniformly.

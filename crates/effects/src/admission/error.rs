@@ -7,6 +7,7 @@
 use hyperscale_vm_types::{Address, EffectConflict, PrincipalAddr, ResourceAddr};
 
 use super::MAX_SOCKETS;
+use crate::MAX_ACCOUNTS;
 use crate::claim::Claim;
 use crate::dsl::EvalError;
 use crate::instance::ResolveError;
@@ -145,6 +146,12 @@ pub enum AdmissionError {
     /// no sign-in.
     #[error("intent {intent} acts as no account")]
     NoAccount {
+        /// The intent, in tree order.
+        intent: u32,
+    },
+    /// An intent acting as more accounts than [`MAX_ACCOUNTS`].
+    #[error("intent {intent} acts as more than {MAX_ACCOUNTS} accounts")]
+    TooManyAccounts {
         /// The intent, in tree order.
         intent: u32,
     },
@@ -849,6 +856,7 @@ impl AdmissionError {
             // About the intent rather than any one of its nodes.
             Self::TreeTooDeep { intent }
             | Self::NoAccount { intent }
+            | Self::TooManyAccounts { intent }
             | Self::TermsOnMember { intent }
             | Self::UnknownGive { intent, .. }
             | Self::UnconsumedGive { intent, .. }

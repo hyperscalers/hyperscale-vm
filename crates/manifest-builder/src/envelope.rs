@@ -417,12 +417,12 @@ impl<'a> IntentBuilder<'a> {
         let sockets = self.sockets;
         let gives = self.gives;
         let header = self.header;
-        let account = self.graph.signer();
+        let accounts = self.graph.accounts().to_vec();
         let graph = self.graph.build()?;
         check_sockets(&graph, &sockets, intent)?;
         Ok(Intent {
             header,
-            accounts: vec![account],
+            accounts,
             terms: None,
             graph,
             sockets,

@@ -24,10 +24,11 @@ use std::collections::BTreeSet;
 
 use common::{ALICE, BOB, pkg, world};
 use hyperscale_vm_effects::{
-    AdmissionError, EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour, GraphArg, GraphNode,
-    Hash32, InstanceMeta, Intent, IntentHeader, Issuance, JudgedLeaf, ManifestGraph, Records,
-    ResourceMeta, Rule, TestHasher, Value, admit_tree, granting_issued_resource,
-    holdings_collection,
+    AdmissionError, Binding, Claim, ClaimSource, EdgeRef, EnvelopeTree, EvidenceRef,
+    GrantedBehaviour, GraphArg, GraphNode, Hash32, InstanceMeta, Intent, IntentHeader, Issuance,
+    JudgedLeaf, LegRole, ManifestGraph, Member, PrefixShardResolver, Records, ResourceMeta, Rule,
+    ShardResolver, Socket, TestHasher, Value, admit_tree, granting_issued_resource,
+    holdings_collection, legs_of, star_at,
 };
 use hyperscale_vm_fixtures::security;
 use hyperscale_vm_types::{
@@ -361,6 +362,85 @@ fn the_register_entry_is_soulbound() {
             }
         ),
         "the entry forbids the debit: {refusal:?}",
+    );
+}
+
+/// A member's body presenting a claim it received in a socket ran on a
+/// sign-in the granting account's shard judges, so off that shard the
+/// body is the core's: a leg's verdict is its own, and only the core's
+/// waits on the shard the judgment lands on.
+///
+/// Bob registers himself on the registrar's authority, which the
+/// registrar's own intent grants into Bob's socket. The registration
+/// targets the issuer, whose shard is not the registrar's.
+#[test]
+fn a_member_presenting_a_granted_claim_is_the_cores_off_the_granters_shard() {
+    let (chain, issuer) = issuer();
+    let resolver = PrefixShardResolver { bits: 8 };
+    assert_ne!(
+        resolver.shard_of(issuer.into()),
+        resolver.shard_of(REGISTRAR.into()),
+        "the fixture has to straddle, or the verdict below proves nothing",
+    );
+
+    let bobs = Intent {
+        sockets: vec![Socket::Authority(Claim::of_subject(REGISTRAR))],
+        ..Intent::leaf(
+            TEST_HEADER,
+            BOB,
+            ManifestGraph {
+                nodes: vec![
+                    GraphNode {
+                        target: issuer.into(),
+                        method: "register".into(),
+                        args: vec![GraphArg::Literal(Value::U64(7))],
+                        evidence: BTreeSet::from([EvidenceRef::Socket(0)]),
+                    },
+                    GraphNode {
+                        target: BOB.into(),
+                        method: "deposit-nf".into(),
+                        args: vec![GraphArg::Edge {
+                            edge: EdgeRef {
+                                producer: 0,
+                                output: 0,
+                            },
+                            constraints: Vec::new(),
+                        }],
+                        evidence: BTreeSet::default(),
+                    },
+                ],
+            },
+        )
+    };
+    let mut root = Intent::leaf(TEST_HEADER, REGISTRAR, ManifestGraph { nodes: Vec::new() });
+    root.members = vec![Member {
+        intent: bobs,
+        wiring: vec![Binding::Authority(ClaimSource::Account(REGISTRAR))],
+    }];
+    let mut env = EnvelopeTree::of_one(root);
+    env.resources = vec![record(issuer, b"registered")];
+    let admitted = admit_tree(
+        &env,
+        &env.assume_self_attested(),
+        env.hash(&TestHasher),
+        &chain,
+        &TestHasher,
+    )
+    .expect("the registrar grants what Bob's socket asks");
+
+    let legs = legs_of(&admitted.admitted);
+    let star = star_at(
+        &legs,
+        REGISTRAR.address(),
+        &[REGISTRAR.address(), BOB.address()],
+        &resolver,
+        &TestHasher,
+    );
+    assert_eq!(legs[0].presents, vec![REGISTRAR.address()]);
+    assert_eq!(
+        star.roles[0],
+        LegRole::Core,
+        "the registration ran on the registrar's claim off the registrar's shard",
     );
 }
 
