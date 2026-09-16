@@ -193,10 +193,13 @@ fn the_signature_covers_what_the_envelope_says() {
     };
     assert!(accepts(&signed));
 
-    // The scheme is signed content.
+    // The scheme is signed content, and so is the key.
     let mut retagged = signed.clone();
     retagged.signer_scheme = SchemeId::SECP256K1;
     assert!(!accepts(&retagged));
+    let mut rekeyed = signed.clone();
+    rekeyed.signer = vec![9; 32];
+    assert!(!accepts(&rekeyed));
 
     // So is everything the composer chose.
     let mut repriced = signed.clone();

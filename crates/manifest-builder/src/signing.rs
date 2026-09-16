@@ -106,9 +106,10 @@ pub fn wrap_publish(
 
 /// Sign an envelope's content, filling its scheme, key and signature.
 ///
-/// The scheme is stamped before the preimage is taken, because a scheme
-/// is signed content: a signer commits to which one they used, and an
-/// envelope re-tagged afterwards loses the signature that covered it.
+/// The scheme and the key are stamped before the preimage is taken,
+/// because both are signed content: a signer commits to which key they
+/// used and under which scheme, and an envelope re-keyed or re-tagged
+/// afterwards loses the signature that covered it.
 ///
 /// # Errors
 ///
@@ -122,8 +123,8 @@ pub fn sign<S: AccountSigner>(
     hasher: &dyn Hasher,
 ) -> Result<TransactionEnvelope, EncodeError> {
     envelope.signer_scheme = key.scheme();
-    let digest = envelope.signing_digest(hasher)?;
     envelope.signer = key.public_key_bytes();
+    let digest = envelope.signing_digest(hasher)?;
     envelope.signature = key.sign_digest(&digest);
     Ok(envelope)
 }

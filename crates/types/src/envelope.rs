@@ -160,10 +160,11 @@ pub struct IntentHash(pub Hash32);
 /// canonical ordering key for every commutative-mode decision, the name
 /// every consensus artifact — receipt, certificate, provision — attaches
 /// to, and the root every fresh derivation and nullifier grows from. It
-/// covers exactly what the composer signed — the key and signature sit
-/// outside it — so a re-rolled signature over the same content is the
-/// same transaction, and two distinct transactions minting the same
-/// fresh key is unrepresentable rather than assumed away.
+/// covers exactly what the composer signed, their own key included — the
+/// signature alone sits outside it — so a re-rolled signature over the
+/// same content is the same transaction, the same content under another
+/// key is a different one, and two distinct transactions minting the
+/// same fresh key is unrepresentable rather than assumed away.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 #[hbor(transparent)]
 pub struct TxHash(pub Hash32);
@@ -255,9 +256,12 @@ pub enum TransactionBody {
 /// the composer's signature.
 ///
 /// The signature covers the derived preimage — every field but the
-/// composer's own key and signature, under the envelope domain — and the
-/// hash of that preimage is also the identity fresh derivations root at:
-/// distinct signed envelopes never mint the same fresh key.
+/// signature itself, under the envelope domain — and the hash of that
+/// preimage is also the identity fresh derivations root at: distinct
+/// signed envelopes never mint the same fresh key. The composer's key is
+/// inside it because a verdict reads it: the account the composition's
+/// own intent acts as is judged against that key, so one identity has to
+/// name one key.
 #[derive(Debug, Clone, PartialEq, Eq, Hbor)]
 #[hbor(signing_domain = "hyperscale-vm-envelope-v2")]
 pub struct TransactionEnvelope {
@@ -299,17 +303,23 @@ pub struct TransactionEnvelope {
     pub network: NetworkId,
     /// The scheme the composer's key and signature belong to.
     ///
-    /// Signed content, unlike the material it describes: a composer says
-    /// which scheme they signed under, so one key and signature pair that
-    /// happened to validate under two registered schemes could still only
-    /// be presented as the one its signer named.
+    /// Signed content, as the key is: a composer says which scheme they
+    /// signed under, so one key and signature pair that happened to
+    /// validate under two registered schemes could still only be
+    /// presented as the one its signer named.
     pub signer_scheme: SchemeId,
     /// The composer's public key, under [`signer_scheme`](Self::signer_scheme).
-    #[hbor(unsigned)]
+    ///
+    /// Signed content: the key attests the composition's own intent, and
+    /// the shard of the account that intent acts as judges its rule
+    /// against this key. Outside the preimage, one identity could carry
+    /// as many keys as would re-sign it, and two replicas holding two
+    /// copies would judge one transaction two ways.
     #[hbor(max = MAX_KEY_BYTES)]
     pub signer: Vec<u8>,
     /// The composer's signature over the hash of
     /// [`signing_bytes`](hyperscale_hbor::HborSigned::signing_bytes).
+    /// The one field the preimage leaves out.
     #[hbor(unsigned)]
     #[hbor(max = MAX_SIG_BYTES)]
     pub signature: Vec<u8>,
@@ -340,9 +350,8 @@ impl TransactionEnvelope {
     /// the protocol hasher — and the root fresh derivations grow from,
     /// which is what makes "distinct transactions never mint the same
     /// fresh key" structural: an envelope differing only in its unsigned
-    /// key and signature fields is the same digest, the same identity,
-    /// and the same fresh keys, collapsed by dedup rather than admitted
-    /// twice.
+    /// signature is the same digest, the same identity, and the same
+    /// fresh keys, collapsed by dedup rather than admitted twice.
     ///
     /// The domain is the preimage's, applied once. The hasher is asked for
     /// an undomained digest of it rather than for a second domain around
@@ -639,13 +648,13 @@ mod tests {
         );
     }
 
-    /// The two fields a signature cannot cover ride the wire and are
-    /// absent from the preimage; everything else is signed content.
+    /// The signature is the one field the preimage leaves out; it rides
+    /// the wire and nothing else. Everything else is signed content, the
+    /// composer's own key included.
     #[test]
     fn the_signature_covers_everything_but_itself() {
         let envelope = sample();
         let mut resigned = envelope.clone();
-        resigned.signer = vec![0x99; 32];
         resigned.signature = vec![0xAA; 64];
         assert_eq!(
             envelope.signing_bytes().unwrap(),
@@ -658,6 +667,20 @@ mod tests {
         assert_ne!(
             repriced.signing_bytes().unwrap(),
             resigned.signing_bytes().unwrap()
+        );
+    }
+
+    /// The composer's key is signed content: one content under two keys
+    /// is two identities, so the key a verdict is judged against is fixed
+    /// by the hash rather than by whichever copy a replica holds.
+    #[test]
+    fn the_same_content_under_another_key_is_another_identity() {
+        let envelope = sample();
+        let mut rekeyed = envelope.clone();
+        rekeyed.signer = vec![0x99; 32];
+        assert_ne!(
+            envelope.signing_bytes().unwrap(),
+            rekeyed.signing_bytes().unwrap()
         );
     }
 
