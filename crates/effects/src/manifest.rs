@@ -136,6 +136,24 @@ pub enum JudgedLeaf {
         /// requires nothing.
         expect: Presence,
     },
+    /// The rule stored at an account's `auth` cell admits `keys`.
+    ///
+    /// The one leaf judged against keys rather than against the claims a
+    /// call presented. Every other stored rule names principal addresses
+    /// and is judged against the accounts a call speaks for; this one
+    /// names them and is judged against the keys that attested the
+    /// intent. Same vocabulary, two judges, and the cell decides which.
+    ///
+    /// Answered at materialization from the cell as read there, so it
+    /// lands before any body runs and turns no caller away.
+    Signed {
+        /// The account's `auth` cell. Read into the declaration beside
+        /// the condition, so it is provisioned where the account's shard
+        /// judges it.
+        cell: SubstateKey,
+        /// The principals whose keys attested the intent.
+        keys: Vec<Claim>,
+    },
 }
 
 impl Leaf for JudgedLeaf {
@@ -146,7 +164,7 @@ impl Leaf for JudgedLeaf {
         match self {
             Self::Claim(_) => Judged::AtAdmission,
             Self::Stored { .. } => Judged::InTheLeg,
-            Self::Presence { .. } => Judged::AtMaterialization,
+            Self::Presence { .. } | Self::Signed { .. } => Judged::AtMaterialization,
         }
     }
 }

@@ -831,6 +831,9 @@ impl From<MaterializeError> for Outcome {
             MaterializeError::ConditionUnanswerable { node } => Self::ConditionUnmet {
                 condition: UnmetCondition::Unanswerable { node },
             },
+            MaterializeError::NotSignedIn { account } => Self::ConditionUnmet {
+                condition: UnmetCondition::SignedIn { account },
+            },
             MaterializeError::ConditionStraddlesScope { .. } => Self::ProtocolError {
                 reason: AbortReason::ConditionStraddlesScope,
             },

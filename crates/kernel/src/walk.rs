@@ -567,6 +567,10 @@ fn satisfies(
 ) -> Result<bool, SessionTrap> {
     match rule {
         Rule::Require(JudgedLeaf::Claim(claim)) => Ok(call.evidence.contains(claim)),
+        // A sign-in is the account's shard's to judge, from the cell as
+        // read at materialization, and admission never routes one here.
+        // Fails closed with the other leaves this judge cannot read.
+        Rule::Require(JudgedLeaf::Signed { .. }) => Ok(false),
         Rule::Require(JudgedLeaf::Presence { target, expect }) => Ok(match expect {
             Presence::Either => true,
             Presence::Absent => !session.declared_present(*target)?,

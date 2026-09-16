@@ -256,6 +256,82 @@ fn a_stored_leaf_judges_what_is_stored_and_nothing_else() {
     assert_eq!(judged(&unwritten, vec![identity(2)]), unmet);
 }
 
+/// The one leaf judged against keys. An unwritten `auth` cell is
+/// governed by the key its address derives from, so the attesting set
+/// answers it only by being exactly that principal; a written one is
+/// judged against the rule stored there. Both answers come from the
+/// cell as read at materialization, before any call runs.
+#[test]
+fn a_sign_in_is_judged_against_the_rule_stored_at_the_accounts_cell() {
+    let account = principal(1);
+    let key = cell_of(account);
+    let signed = |keys: Vec<Claim>| vec![Rule::Require(JudgedLeaf::Signed { cell: key, keys })];
+    let judged = |store: &MemoryStore, keys: Vec<Claim>| {
+        run(
+            store,
+            &[BatchTx::new(tx(11), declaring(key, signed(keys)), env())],
+        )
+    };
+    let refused = Outcome::ConditionUnmet {
+        condition: UnmetCondition::SignedIn { account },
+    };
+
+    // Unwritten: the account's own principal, and nothing else.
+    let unwritten = MemoryStore::new();
+    assert!(matches!(
+        judged(&unwritten, vec![identity(1)]),
+        Outcome::Completed { .. }
+    ));
+    assert_eq!(judged(&unwritten, vec![identity(2)]), refused);
+    assert_eq!(judged(&unwritten, Vec::new()), refused);
+    assert_eq!(
+        judged(&unwritten, vec![identity(1), identity(2)]),
+        refused,
+        "exactly the address's own, so a set holding it and another is not it",
+    );
+
+    // Written: the rule stored governs, and the account's own key stops
+    // answering the moment it names somebody else.
+    let mut securified = MemoryStore::new();
+    let stored = RuleBytes::try_from(&StoredRule::claim(identity(2))).unwrap();
+    securified.write(key, stored.in_cell());
+    assert!(matches!(
+        judged(&securified, vec![identity(2)]),
+        Outcome::Completed { .. }
+    ));
+    assert_eq!(judged(&securified, vec![identity(1)]), refused);
+}
+
+/// Bytes that are not a rule are not a rule that admits everybody.
+#[test]
+fn a_sign_in_over_undecodable_bytes_admits_nobody() {
+    let account = principal(3);
+    let key = cell_of(account);
+    let mut corrupt = MemoryStore::new();
+    corrupt.write(key, vec![0xFF; 7]);
+
+    assert_eq!(
+        run(
+            &corrupt,
+            &[BatchTx::new(
+                tx(12),
+                declaring(
+                    key,
+                    vec![Rule::Require(JudgedLeaf::Signed {
+                        cell: key,
+                        keys: vec![identity(3)],
+                    })],
+                ),
+                env(),
+            )],
+        ),
+        Outcome::ConditionUnmet {
+            condition: UnmetCondition::SignedIn { account },
+        },
+        "the account's own key does not answer past bytes that do not decode",
+    );
+}
+
 /// A signature signs in: at a rule cell under the signer's own prefix
 /// it is the whole answer while the cell is unwritten — the key the
 /// address derives from governs it — and the identity the stored rule

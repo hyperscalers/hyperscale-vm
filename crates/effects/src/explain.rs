@@ -304,6 +304,12 @@ pub fn explain_refusal(admitted: &Admitted, unmet: &UnmetCondition) -> String {
             node,
         } => unmet_presence(admitted, target, *required, *node),
         UnmetCondition::Satisfies { node } => unsatisfied_claims(admitted, *node),
+        UnmetCondition::SignedIn { account } => format!(
+            "the rule stored at {}'s auth cell does not admit the keys that attested the \
+             intent acting as that account. The account's own shard read the cell and judged it \
+             before any call ran, so nothing was executed on the strength of the signature.",
+            address_text(*account)
+        ),
         UnmetCondition::Unanswerable { node } => format!(
             "{}a condition nothing about committed state could have satisfied. The declaration \
              sent it to a judge that reads state, and it asks about something else — so it was \

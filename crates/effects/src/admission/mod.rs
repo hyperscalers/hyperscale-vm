@@ -1255,7 +1255,7 @@ fn judge_presented(
             JudgedLeaf::Claim(claim) => Ok(*claim),
             // A rule this stage judges reads claims alone, which is what
             // put it here.
-            JudgedLeaf::Presence { .. } | JudgedLeaf::Stored { .. } => {
+            JudgedLeaf::Presence { .. } | JudgedLeaf::Stored { .. } | JudgedLeaf::Signed { .. } => {
                 Err(AdmissionError::EvidenceUnsatisfied {
                     node: node_index,
                     rule: None,

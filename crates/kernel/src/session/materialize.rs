@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::{Condition, Declaration, JudgedLeaf, Rule};
+use hyperscale_vm_effects::{Claim, Condition, Declaration, JudgedLeaf, Rule, RuleBytes};
 use hyperscale_vm_types::{
     Address, CollectionId, Effect, EffectTarget, Mode, Moves, Presence, ResourceAddr, SubstateKey,
     TxHash,
@@ -398,6 +398,17 @@ pub enum MaterializeError {
         /// is every declaration a test builds by hand.
         node: Option<u32>,
     },
+    /// An intent acts as an account whose stored rule does not admit the
+    /// keys that attested it.
+    ///
+    /// Judged on the account's own shard, from the cell as read at
+    /// materialization, before any body runs — so a key reaching for an
+    /// account it cannot open costs a refusal and not an execution.
+    #[error("the rule at {account:?} does not admit the attesting keys")]
+    NotSignedIn {
+        /// The account whose rule refused.
+        account: Address,
+    },
     /// A declared condition committed state cannot answer.
     ///
     /// Distinct from [`Self::ConditionUnmet`], which names the leaf that
@@ -687,7 +698,7 @@ fn judge_conditions(
 ) -> Result<(), MaterializeError> {
     for condition in conditions {
         let mut owners = Vec::new();
-        presence_owners(&condition.rule, &mut owners);
+        judged_owners(&condition.rule, &mut owners);
         let inside = owners.iter().filter(|owner| judges.covers(**owner)).count();
         if inside == 0 && !owners.is_empty() {
             continue;
@@ -718,6 +729,9 @@ fn judge_conditions(
                     node: condition.node,
                 });
             }
+            Judgement::NotSignedIn { account } => {
+                return Err(MaterializeError::NotSignedIn { account });
+            }
         }
     }
     Ok(())
@@ -728,13 +742,14 @@ fn judge_conditions(
 /// Only presence leaves: a claim or a stored rule is not a question about
 /// state, so it belongs to no scope and the judge refuses it on its own
 /// terms whatever the scope says.
-fn presence_owners(rule: &Rule<JudgedLeaf>, into: &mut Vec<Address>) {
+fn judged_owners(rule: &Rule<JudgedLeaf>, into: &mut Vec<Address>) {
     match rule {
         Rule::Require(JudgedLeaf::Presence { target, .. }) => into.push(target.owner()),
+        Rule::Require(JudgedLeaf::Signed { cell, .. }) => into.push(cell.owner),
         Rule::Require(_) => {}
         Rule::CountOf { rules, .. } => {
             for branch in rules {
-                presence_owners(branch, into);
+                judged_owners(branch, into);
             }
         }
     }
@@ -756,6 +771,12 @@ enum Judgement {
     /// of the rule nobody satisfies — and it refuses, because the
     /// alternative is a verdict reached by finding nothing to object to.
     Unanswerable,
+    /// The rule stored at an account's `auth` cell does not admit the
+    /// keys that attested the intent.
+    NotSignedIn {
+        /// The account whose rule refused.
+        account: Address,
+    },
 }
 
 /// Whether `expect` is met by state that does or does not hold
@@ -789,6 +810,31 @@ fn judge(store: &mut OverlayStore, rule: &Rule<JudgedLeaf>) -> Result<Judgement,
                 }
             })
         }
+        Rule::Require(JudgedLeaf::Signed { cell, keys }) => {
+            // The cell as read here, and nothing else. Unwritten, the
+            // account is governed by the key its address derives from,
+            // so the attesting set answers it only by being exactly
+            // that one principal. Written, the rule stored is judged
+            // against the set. Bytes that do not decode are not a rule,
+            // and a rule asking about anything but claims is one this
+            // judge holds nothing to answer — both fail closed.
+            let bytes = store.read(*cell)?.unwrap_or_default();
+            let admits = if bytes.is_empty() {
+                keys.as_slice() == [Claim::of_subject(cell.owner)]
+            } else {
+                RuleBytes::rule_in_cell(&bytes)
+                    .ok()
+                    .and_then(|rule| rule.claims_only())
+                    .is_some_and(|claims| claims.satisfied_by(keys))
+            };
+            Ok(if admits {
+                Judgement::Met
+            } else {
+                Judgement::NotSignedIn {
+                    account: cell.owner,
+                }
+            })
+        }
         // A leaf reading evidence is not a question about state, and
         // admission never routes a rule holding one this way. Refused
         // rather than counted: a judge that cannot ask a question is not
@@ -802,6 +848,9 @@ fn judge(store: &mut OverlayStore, rule: &Rule<JudgedLeaf>) -> Result<Judgement,
                     Judgement::Met => got += 1,
                     Judgement::Unmet { target, required } => {
                         first_unmet.get_or_insert(Judgement::Unmet { target, required });
+                    }
+                    Judgement::NotSignedIn { account } => {
+                        first_unmet.get_or_insert(Judgement::NotSignedIn { account });
                     }
                     // A threshold reaching its count around a branch it
                     // could not read is a verdict on a rule this judge

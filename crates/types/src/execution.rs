@@ -704,6 +704,18 @@ pub enum UnmetCondition {
         /// The calling node.
         node: u32,
     },
+    /// The rule stored at an account's `auth` cell does not admit the
+    /// keys that attested the intent acting as it.
+    ///
+    /// Judged on the account's own shard before any body runs, so a key
+    /// reaching for an account it cannot open is turned away at the
+    /// price of a materialization refusal rather than an execution.
+    SignedIn {
+        /// The account whose rule refused. Read off the cell the leaf
+        /// names, so the reason is the party rather than an index into
+        /// an envelope the reader may not hold.
+        account: Address,
+    },
     /// The condition is not one the judge it reached could answer, and
     /// it holds no leaf to name as the reason.
     ///

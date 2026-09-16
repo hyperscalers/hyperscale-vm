@@ -269,7 +269,9 @@ fn authority_of(rule: &Rule<JudgedLeaf>, evidence: &[Claim]) -> Authority {
     }
     match rule {
         Rule::Require(JudgedLeaf::Claim(claim)) => claimed(claim, evidence),
-        Rule::Require(JudgedLeaf::Stored { .. }) => Authority::StoredRule,
+        Rule::Require(JudgedLeaf::Stored { .. } | JudgedLeaf::Signed { .. }) => {
+            Authority::StoredRule
+        }
         Rule::Require(JudgedLeaf::Presence { .. }) => Authority::Held,
         Rule::CountOf { count, rules } => Authority::Threshold {
             count: *count,
