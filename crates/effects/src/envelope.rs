@@ -39,12 +39,12 @@ use std::collections::BTreeSet;
 use hyperscale_hbor::{
     DecodeError, Hbor, from_slice, from_slice_with_depth, to_vec, to_vec_with_depth,
 };
-pub use hyperscale_vm_types::MAX_INTENTS;
 use hyperscale_vm_types::{
-    ARTIFACT_GRACE_MS, Address, COMMITTED_GRACE_MS, CROSSING_GRACE_MS, Effect, EffectTarget,
-    IntentHash, LegShape, MAX_MANIFEST_NODES, Mode, Moves, NetworkId, PrincipalAddr, ResourceAddr,
-    SubstateKey, SweepBucket, TxHash,
+    ARTIFACT_GRACE_MS, AccountSigner, Address, Attestation, COMMITTED_GRACE_MS, CROSSING_GRACE_MS,
+    Effect, EffectTarget, IntentHash, LegShape, MAX_ATTESTATIONS, MAX_MANIFEST_NODES, Mode, Moves,
+    NetworkId, PrincipalAddr, ResourceAddr, SubstateKey, SweepBucket, TxHash,
 };
+pub use hyperscale_vm_types::{MAX_INTENTS, attest};
 
 use crate::PACKAGE_SLOT_BASE;
 use crate::admission::{
@@ -136,13 +136,13 @@ pub const MAX_TREE_DEPTH: usize = 8;
 /// The codec nesting cost of the deepest admissible tree.
 ///
 /// A tree at [`MAX_TREE_DEPTH`] carrying a literal at the value depth
-/// bound costs exactly this many codec levels: three from the tree down
+/// bound costs exactly this many codec levels: six from the tree down
 /// to a literal in one of the root's arguments beyond the literal's own,
-/// and three per nested member — its list, the member, and the intent
-/// inside it. Pinned by test at both boundaries, and the cap
-/// [`decode_tree`] decodes under, so a tree past the depth bound is
+/// and four per nested member — its list, the member, the signed intent
+/// and the intent inside it. Pinned by test at both boundaries, and the
+/// cap [`decode_tree`] decodes under, so a tree past the depth bound is
 /// refused by the decoder before anything walks it.
-pub const TREE_WIRE_DEPTH: usize = 3 + MAX_VALUE_WIRE_DEPTH + 3 * MAX_TREE_DEPTH;
+pub const TREE_WIRE_DEPTH: usize = 6 + MAX_VALUE_WIRE_DEPTH + 4 * (MAX_TREE_DEPTH - 1);
 
 // Held at compile time rather than by a test: every side is a constant,
 // so a kernel cell colliding with a package's own — or with another
@@ -269,6 +269,13 @@ pub struct Intent {
     /// consents to which accounts it acts as.
     #[hbor(max = MAX_ACCOUNTS)]
     pub accounts: Vec<PrincipalAddr>,
+    /// The principals whose keys attest this intent, in the order their
+    /// attestations stand beside it. Never empty, never repeating.
+    /// Inside the signed declaration, so one intent hash admits exactly
+    /// one attesting set, and every account's shard judges its own rule
+    /// against that set.
+    #[hbor(max = MAX_ATTESTATIONS)]
+    pub attested_by: Vec<PrincipalAddr>,
     /// The intent's invocation graph; arguments may reference the
     /// sockets via [`crate::GraphArg::Socket`] and the members' gives
     /// via [`crate::GraphArg::Give`].
@@ -294,8 +301,46 @@ pub struct Intent {
     pub members: Vec<Member>,
 }
 
-/// One member of a composing intent: the intent, and how its composer
-/// fills its sockets.
+/// An intent and the attestations over it: what a counterparty hands
+/// over, and what a composer places as a member.
+///
+/// Verifiable on its own before anybody composes it — each attestation
+/// pairs by position with the principal the intent declares itself
+/// attested by, and covers the intent's hash. The attestations are
+/// transport: the intent's hash, and so the hash of any intent
+/// composing it, covers the declared principals and never the
+/// signature bytes.
+#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+pub struct SignedIntent {
+    /// The declaration.
+    pub intent: Intent,
+    /// One attestation per principal in the intent's `attested_by`, in
+    /// that order, each over the intent's hash.
+    #[hbor(max = MAX_ATTESTATIONS)]
+    pub signatures: Vec<Attestation>,
+}
+
+impl SignedIntent {
+    /// `intent` with no attestation yet.
+    #[must_use]
+    pub const fn unsigned(intent: Intent) -> Self {
+        Self {
+            intent,
+            signatures: Vec::new(),
+        }
+    }
+
+    /// Attest the intent with `key`, standing the attestation beside
+    /// those already given. The caller signs in the order the intent
+    /// declares its attesting principals.
+    pub fn attest<S: AccountSigner>(&mut self, key: &S, hasher: &dyn Hasher) {
+        let hash = self.intent.hash(hasher);
+        self.signatures.push(attest(key, &hash.0.0));
+    }
+}
+
+/// One member of a composing intent: the signed intent, and how its
+/// composer fills its sockets.
 ///
 /// The wiring travels with the member it fills — one binding per socket
 /// the member declares. Every source is the composer's own: its graph,
@@ -303,9 +348,9 @@ pub struct Intent {
 /// what confines a grant to what the granting intent holds.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct Member {
-    /// The composed intent, whole.
-    pub intent: Intent,
-    /// One binding per socket `intent` declares, in declaration order.
+    /// The composed intent with its attestations, whole.
+    pub signed: SignedIntent,
+    /// One binding per socket the intent declares, in declaration order.
     #[hbor(max = MAX_SOCKETS)]
     pub wiring: Vec<Binding>,
 }
@@ -315,10 +360,11 @@ const DOMAIN_ENVELOPE_TREE: &[u8] = b"hyperscale-vm/envelope-tree";
 
 impl Intent {
     /// The intent's identity through the hasher seam: the header, the
-    /// accounts, the graph hash, every socket, every give, and every
-    /// member's hash with its wiring, each part carrying its canonical
-    /// encoding. The terms alone stay out, on the terms the field
-    /// states.
+    /// accounts, the attesting principals, the graph hash, every socket,
+    /// every give, and every member's hash with its wiring, each part
+    /// carrying its canonical encoding. A member's attestations stay
+    /// out: they are transport, and the principals they pair with are
+    /// in the member's own hash.
     ///
     /// The fields are destructured rather than read one at a time, and
     /// the header enters whole through its own encoding, because
@@ -337,6 +383,7 @@ impl Intent {
         let Self {
             header,
             accounts,
+            attested_by,
             graph,
             sockets,
             gives,
@@ -344,9 +391,10 @@ impl Intent {
         } = self;
         let graph = graph.hash(hasher);
         let mut parts: Vec<Vec<u8>> =
-            Vec::with_capacity(3 + sockets.len() + gives.len() + 2 * members.len());
+            Vec::with_capacity(4 + sockets.len() + gives.len() + 2 * members.len());
         parts.push(to_vec(header).expect("a header is scalars"));
         parts.push(to_vec(accounts).expect("accounts are bounded addresses"));
+        parts.push(to_vec(attested_by).expect("attesting principals are bounded addresses"));
         parts.push(graph.0.0.to_vec());
         for socket in sockets {
             parts.push(to_vec(socket).expect("a socket is shallow"));
@@ -355,7 +403,7 @@ impl Intent {
             parts.push(to_vec(give).expect("a give is two indices"));
         }
         for member in members {
-            parts.push(member.intent.hash(hasher).0.0.to_vec());
+            parts.push(member.signed.intent.hash(hasher).0.0.to_vec());
             parts.push(to_vec(&member.wiring).expect("wiring is bounded indices"));
         }
         let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
@@ -369,18 +417,42 @@ impl Intent {
         1 + self
             .members
             .iter()
-            .map(|member| member.intent.depth())
+            .map(|member| member.signed.intent.depth())
             .max()
             .unwrap_or(0)
     }
 
-    /// A leaf acting as `account` under `header`: a graph, no interface,
-    /// no members.
+    /// Every member's signed intent beneath this one, in tree order, for
+    /// a verifier walking what each attestation covers.
+    #[must_use]
+    pub fn signed_members(&self) -> Vec<&SignedIntent> {
+        let mut signed = Vec::new();
+        let mut stack: Vec<&Member> = self.members.iter().rev().collect();
+        while let Some(member) = stack.pop() {
+            signed.push(&member.signed);
+            stack.extend(member.signed.intent.members.iter().rev());
+        }
+        signed
+    }
+
+    /// Run `visit` over every member's signed intent beneath this one,
+    /// each before its own members — how a fixture attests a tree it
+    /// assembled unsigned.
+    pub fn for_each_signed_member(&mut self, visit: &mut impl FnMut(&mut SignedIntent)) {
+        for member in &mut self.members {
+            visit(&mut member.signed);
+            member.signed.intent.for_each_signed_member(visit);
+        }
+    }
+
+    /// A leaf acting as `account` under `header`, attested by that
+    /// account's own key: a graph, no interface, no members.
     #[must_use]
     pub fn leaf(header: IntentHeader, account: PrincipalAddr, graph: ManifestGraph) -> Self {
         Self {
             header,
             accounts: vec![account],
+            attested_by: vec![account],
             graph,
             sockets: Vec::new(),
             gives: Vec::new(),
@@ -454,8 +526,10 @@ pub enum ClaimSource {
 /// that order.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct EnvelopeTree {
-    /// The intent nobody composes, which carries the terms, and beneath
-    /// it every other intent the tree holds.
+    /// The intent nobody composes, and beneath it every other intent the
+    /// tree holds. Its attestations are the envelope's, since what they
+    /// cover is the envelope: the root's hash, the terms and the
+    /// artifact.
     pub root: Intent,
     /// The creation-fixed records of the component targets the tree
     /// names beyond what the genesis registry serves — each registered,
@@ -485,27 +559,15 @@ impl EnvelopeTree {
         let mut stack = vec![&self.root];
         while let Some(intent) = stack.pop() {
             intents.push(intent);
-            stack.extend(intent.members.iter().rev().map(|member| &member.intent));
+            stack.extend(
+                intent
+                    .members
+                    .iter()
+                    .rev()
+                    .map(|member| &member.signed.intent),
+            );
         }
         intents
-    }
-
-    /// Each intent attested by the keys its own accounts derive, in tree
-    /// order.
-    ///
-    /// A premise, not a fact: what the chain judges is the set the
-    /// envelope's signatures actually carry, and that is the envelope's
-    /// to state. Answers the question a preview asks — what would this
-    /// tree do if every account signed its own intent — and is what a
-    /// fixture means when it says nothing else. Never a commit path,
-    /// where the signatures are in hand and saying this instead would
-    /// admit a key no rule was asked about.
-    #[must_use]
-    pub fn assume_self_attested(&self) -> Vec<Vec<PrincipalAddr>> {
-        self.intents()
-            .into_iter()
-            .map(|intent| intent.accounts.clone())
-            .collect()
     }
 
     /// A tree of one intent: a graph its own account signs, composing
@@ -1196,9 +1258,8 @@ pub fn decode_tree(bytes: &[u8]) -> Result<EnvelopeTree, DecodeError> {
 ///
 /// `identity` is the signed envelope's hash — the root of every fresh
 /// derivation. Distinct signed envelopes never mint the same fresh key,
-/// even when they carry the same tree. `attested_by` carries the
-/// principals whose keys signed each intent, in tree order; the
-/// accounts each intent acts as are the intent's own.
+/// even when they carry the same tree. The principals whose keys attest
+/// each intent, and the accounts it acts as, are the intent's own.
 ///
 /// # Errors
 ///
@@ -1211,25 +1272,12 @@ pub fn decode_tree(bytes: &[u8]) -> Result<EnvelopeTree, DecodeError> {
 /// excludes.
 pub fn admit_tree(
     tree: &EnvelopeTree,
-    attested_by: &[Vec<PrincipalAddr>],
     identity: ManifestHash,
     chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
 ) -> Result<AdmittedTree, AdmissionError> {
-    // One attesting set per intent, and the caller holds them: the
-    // signatures are the envelope's and never the tree's, so nothing
-    // here could derive them. Required rather than defaulted, because
-    // the default that suggests itself — an account attesting itself —
-    // is what an unwritten cell admits, so a caller that forgot would
-    // weaken every sign-in silently.
     let flat = flatten(&tree.root)?;
     let intents = flat.intents();
-    if attested_by.len() != intents.len() {
-        return Err(AdmissionError::AttestationArity {
-            expected: intents.len(),
-            found: attested_by.len(),
-        });
-    }
     if intents.len() > MAX_INTENTS {
         return Err(AdmissionError::TooManyIntents);
     }
@@ -1277,14 +1325,13 @@ pub fn admit_tree(
     let views: Vec<IntentView<'_>> = intents
         .iter()
         .zip(&records)
-        .zip(attested_by)
         .zip(resolved.views())
-        .map(|(((intent, record), attested_by), interface)| IntentView {
+        .map(|((intent, record), interface)| IntentView {
             graph: &intent.graph,
             sockets: &intent.sockets,
             interface,
             accounts: &intent.accounts,
-            attested_by,
+            attested_by: &intent.attested_by,
             identity: record.intent,
             expiry_ms: crossing_expiry_ms(&intent.header),
         })

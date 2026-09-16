@@ -2,8 +2,8 @@
 //! math, output floors, and the share vault's rounding.
 
 use hyperscale_vm_effects::{
-    AdmissionError, Claim, EnvelopeTree, Hash32, Intent, IntentHeader, ManifestGraph, SlotId,
-    TestHasher, Value, child_key, holdings_collection,
+    AdmissionError, Claim, EnvelopeTree, Hash32, Intent, IntentHeader, ManifestGraph, SignedIntent,
+    SlotId, TestHasher, Value, child_key, holdings_collection,
 };
 use hyperscale_vm_fixtures::{amm, shares};
 use hyperscale_vm_harness::driver::{amount_of, declared_vault, vault};
@@ -510,7 +510,7 @@ fn approved_composition(request: Intent) -> Result<EnvelopeTree, EnvelopeError> 
     let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, REGISTRAR, TEST_HEADER);
     let offered = env.grant();
     let wants = env
-        .adopt(request)?
+        .adopt(SignedIntent::unsigned(request))?
         .one()
         .expect("the request declares one socket");
     env.seal(root)?.none()?;
@@ -552,7 +552,7 @@ fn an_approved_trade_settles_through_a_venue_holding_no_credential() {
     let signed = request.hash(&TestHasher);
     let tree = approved_composition(request).expect("the registrar composes the approval");
     assert_eq!(
-        tree.root.members[0].intent.hash(&TestHasher),
+        tree.root.members[0].signed.intent.hash(&TestHasher),
         signed,
         "nothing the composition did moved what the buyer signed",
     );

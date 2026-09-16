@@ -13,7 +13,9 @@
 //! refused here, and nothing downstream can reach an authority socket by
 //! any other path.
 
-use hyperscale_vm_types::ResourceAddr;
+use std::collections::BTreeSet;
+
+use hyperscale_vm_types::{MAX_ATTESTATIONS, ResourceAddr};
 
 use super::AdmissionError;
 use super::compose::{Fill, Proven};
@@ -119,10 +121,19 @@ pub fn flatten(root: &Intent) -> Result<Flattened<'_>, AdmissionError> {
         if intent.accounts.len() > MAX_ACCOUNTS {
             return Err(AdmissionError::TooManyAccounts { intent: as_u32(at) });
         }
+        if intent.attested_by.is_empty() {
+            return Err(AdmissionError::NoAttester { intent: as_u32(at) });
+        }
+        if intent.attested_by.len() > MAX_ATTESTATIONS {
+            return Err(AdmissionError::TooManyAttesters { intent: as_u32(at) });
+        }
+        if intent.attested_by.iter().collect::<BTreeSet<_>>().len() != intent.attested_by.len() {
+            return Err(AdmissionError::DuplicateAttester { intent: as_u32(at) });
+        }
         intents.push(intent);
         parent.push(composer);
         for (position, member) in intent.members.iter().enumerate().rev() {
-            stack.push((&member.intent, Some((at, position)), depth + 1));
+            stack.push((&member.signed.intent, Some((at, position)), depth + 1));
         }
     }
     Ok(Flattened { intents, parent })

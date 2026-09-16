@@ -11,34 +11,25 @@
 //! knowing what blake3 or ed25519 are.
 
 use hyperscale_hbor::EncodeError;
+pub use hyperscale_vm_effects::attest;
 use hyperscale_vm_effects::{
     EnvelopeTree, Hasher, Intent, IntentHeader, ManifestGraph, encode_tree,
 };
 pub use hyperscale_vm_types::Terms;
-use hyperscale_vm_types::{
-    AccountSigner, PrincipalAddr, SchemeId, SubintentSig, TransactionEnvelope,
-};
+use hyperscale_vm_types::{AccountSigner, PrincipalAddr, TransactionEnvelope};
 
 /// An unsigned envelope around `tree`, stating `terms`.
 ///
 /// The window and the network are each intent's own header, stated
-/// when it was opened. The scheme is [`SchemeId::NONE`] and the
-/// material is empty: an envelope names no scheme until somebody signs
-/// it, and nothing verifies under none.
+/// when it was opened. Every member carries its own attestations inside
+/// the tree; the root's are given by [`sign`], one key at a time.
 #[must_use]
-pub fn wrap(
-    tree: &EnvelopeTree,
-    subintent_sigs: Vec<SubintentSig>,
-    terms: Terms,
-) -> TransactionEnvelope {
+pub fn wrap(tree: &EnvelopeTree, terms: Terms) -> TransactionEnvelope {
     TransactionEnvelope {
         tree: encode_tree(tree),
         terms,
         artifact: None,
-        subintent_sigs,
-        signer_scheme: SchemeId::NONE,
-        signer: Vec::new(),
-        signature: Vec::new(),
+        signatures: Vec::new(),
     }
 }
 
@@ -61,19 +52,16 @@ pub fn wrap_publish(
         tree: encode_tree(&EnvelopeTree::of_one(root)),
         terms,
         artifact: Some(artifact),
-        subintent_sigs: Vec::new(),
-        signer_scheme: SchemeId::NONE,
-        signer: Vec::new(),
-        signature: Vec::new(),
+        signatures: Vec::new(),
     }
 }
 
-/// Sign an envelope's content, filling its scheme, key and signature.
+/// Attest an envelope's content with `key`, standing the attestation
+/// beside those already given.
 ///
-/// The scheme and the key are stamped before the preimage is taken,
-/// because both are signed content: a signer commits to which key they
-/// used and under which scheme, and an envelope re-keyed or re-tagged
-/// afterwards loses the signature that covered it.
+/// The caller signs in the order the root intent declares its attesting
+/// principals: an attestation pairs by position with the principal
+/// there, and one whose key derives another principal is refused.
 ///
 /// # Errors
 ///
@@ -86,23 +74,7 @@ pub fn sign<S: AccountSigner>(
     key: &S,
     hasher: &dyn Hasher,
 ) -> Result<TransactionEnvelope, EncodeError> {
-    envelope.signer_scheme = key.scheme();
-    envelope.signer = key.public_key_bytes();
     let digest = envelope.signing_digest(hasher)?;
-    envelope.signature = key.sign_digest(&digest);
+    envelope.signatures.push(attest(key, &digest));
     Ok(envelope)
-}
-
-/// One member's signature over its intent hash.
-///
-/// The scheme is stamped beside the material it describes, so a signer's
-/// key and their claim about which curve produced it are written in one
-/// place and cannot drift apart.
-#[must_use]
-pub fn sign_subintent<S: AccountSigner>(key: &S, intent_hash: &[u8; 32]) -> SubintentSig {
-    SubintentSig {
-        scheme: key.scheme(),
-        public_key: key.public_key_bytes(),
-        signature: key.sign_digest(intent_hash),
-    }
 }

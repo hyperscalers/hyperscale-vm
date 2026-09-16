@@ -125,20 +125,23 @@ fn a_transaction_signs_and_verifies_inside_this_workspace() {
     let tree = EnvelopeTree::of_one(Intent::leaf(HEADER, ALICE, graph));
 
     let key = TestSigner(7);
-    let envelope = sign(wrap(&tree, Vec::new(), terms()), &key, &TestHasher)
-        .expect("an envelope within its caps signs");
+    let envelope =
+        sign(wrap(&tree, terms()), &key, &TestHasher).expect("an envelope within its caps signs");
 
-    assert_eq!(envelope.signer_scheme, SchemeId::ED25519);
+    let [attestation] = envelope.signatures.as_slice() else {
+        panic!("one key, one attestation");
+    };
+    assert_eq!(attestation.scheme, SchemeId::ED25519);
     assert!(TestVerifier.verify(
-        envelope.signer_scheme,
-        &envelope.signer,
-        &envelope.signature,
+        attestation.scheme,
+        &attestation.public_key,
+        &attestation.signature,
         &envelope.signing_digest(&TestHasher).expect("it encodes"),
     ));
 }
 
-/// The signature covers the content and not itself, so re-tagging the
-/// scheme or moving a signed field loses it.
+/// The signature covers the content and not the attestations, so moving
+/// a signed field loses it.
 #[test]
 fn the_signature_covers_what_the_envelope_says() {
     let chain = world();
@@ -152,30 +155,22 @@ fn the_signature_covers_what_the_envelope_says() {
     ));
 
     let key = TestSigner(7);
-    let signed = sign(wrap(&tree, Vec::new(), terms()), &key, &TestHasher)
-        .expect("an envelope within its caps signs");
-    let (material, signature) = (signed.signer.clone(), signed.signature.clone());
+    let signed =
+        sign(wrap(&tree, terms()), &key, &TestHasher).expect("an envelope within its caps signs");
+    let attestation = signed.signatures[0].clone();
     let accepts = |envelope: &TransactionEnvelope| {
         TestVerifier.verify(
-            SchemeId::ED25519,
-            &material,
-            &signature,
+            attestation.scheme,
+            &attestation.public_key,
+            &attestation.signature,
             &envelope.signing_digest(&TestHasher).expect("it encodes"),
         )
     };
     assert!(accepts(&signed));
 
-    // The scheme is signed content, and so is the key.
-    let mut retagged = signed.clone();
-    retagged.signer_scheme = SchemeId::SECP256K1;
-    assert!(!accepts(&retagged));
-    let mut rekeyed = signed.clone();
-    rekeyed.signer = vec![9; 32];
-    assert!(!accepts(&rekeyed));
-
-    // So is everything the composer chose: the terms beside the tree,
-    // and the header on the root inside it, since the tree is signed
-    // content.
+    // Everything the composer chose is signed: the terms beside the
+    // tree, and the header on the root inside it, since the tree is
+    // signed content.
     let mut repriced = signed.clone();
     repriced.terms.max_fee += 1;
     assert!(!accepts(&repriced));
@@ -190,9 +185,9 @@ fn the_signature_covers_what_the_envelope_says() {
 /// A signed publish envelope verifies, and its body is signed content.
 ///
 /// The `Publish` half of the signing seam: `wrap_publish` builds the
-/// unsigned intent, `sign` fills the scheme, key and signature, and the
+/// unsigned intent, `sign` stands the attestation beside it, and the
 /// signature covers the artifact — so altering a byte of the body loses
-/// it, exactly as re-tagging the scheme does for a call.
+/// it.
 #[test]
 fn a_publish_envelope_signs_and_verifies() {
     let key = TestSigner(7);
@@ -203,12 +198,13 @@ fn a_publish_envelope_signs_and_verifies() {
     )
     .expect("a publish envelope within its caps signs");
 
-    assert_eq!(signed.signer_scheme, SchemeId::ED25519);
+    let attestation = signed.signatures[0].clone();
+    assert_eq!(attestation.scheme, SchemeId::ED25519);
     let accepts = |envelope: &TransactionEnvelope| {
         TestVerifier.verify(
-            envelope.signer_scheme,
-            &envelope.signer,
-            &envelope.signature,
+            attestation.scheme,
+            &attestation.public_key,
+            &attestation.signature,
             &envelope.signing_digest(&TestHasher).expect("it encodes"),
         )
     };

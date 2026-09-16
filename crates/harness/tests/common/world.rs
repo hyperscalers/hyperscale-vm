@@ -72,6 +72,7 @@ pub const HEADER: IntentHeader = IntentHeader {
 pub fn acting_as(accounts: &[PrincipalAddr], graph: ManifestGraph) -> EnvelopeTree {
     EnvelopeTree::of_one(Intent {
         accounts: accounts.to_vec(),
+        attested_by: accounts.to_vec(),
         ..Intent::leaf(HEADER, accounts[0], graph)
     })
 }
@@ -122,14 +123,7 @@ pub fn account_lanes() -> Lanes {
 /// resolver's single shard.
 pub fn batch_entry(world: &Records, tree: &EnvelopeTree, env: EnvInputs) -> Result<BatchTx> {
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(
-        tree,
-        &tree.assume_self_attested(),
-        identity,
-        world,
-        &TestHasher,
-    )
-    .context("admission")?;
+    let admitted = admit_tree(tree, identity, world, &TestHasher).context("admission")?;
     let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 0 });
     ensure!(routing.len() == 1, "the null resolver routes to one shard");
     Ok(BatchTx::new(
@@ -927,27 +921,23 @@ pub fn run_both_tree(
     store: &MemoryStore,
     tree: &EnvelopeTree,
 ) -> Result<(BatchOutcome, MemoryStore), AdmissionError> {
-    let (outcome, end, _) =
-        run_both_tree_attested(world, store, tree, &tree.assume_self_attested())?;
+    let (outcome, end, _) = run_both_tree_admitted(world, store, tree)?;
     Ok((outcome, end))
 }
 
-/// As [`run_both_tree`], with each intent's attesting set named — how a
-/// test puts a key behind an intent that some account's rule refuses —
-/// and with the admitted records handed back, so a test can find the
-/// nullifier cells the run wrote.
+/// As [`run_both_tree`], with the admitted records handed back, so a
+/// test can find the nullifier cells the run wrote.
 ///
 /// # Errors
 ///
 /// Admission's verdict on the composition, reached before any lane runs.
-pub fn run_both_tree_attested(
+pub fn run_both_tree_admitted(
     world: &Records,
     store: &MemoryStore,
     tree: &EnvelopeTree,
-    attested_by: &[Vec<PrincipalAddr>],
 ) -> Result<(BatchOutcome, MemoryStore, AdmittedTree), AdmissionError> {
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(tree, attested_by, identity, world, &TestHasher)?;
+    let admitted = admit_tree(tree, identity, world, &TestHasher)?;
     let entry = BatchTx::new(
         TxHash(identity.0),
         admitted.admitted.declaration().clone(),

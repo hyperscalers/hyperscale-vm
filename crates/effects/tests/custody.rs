@@ -213,13 +213,7 @@ fn round_trip(custodian: ComponentAddr) -> EnvelopeTree {
 /// its own account derives — what a fixture means when it says nothing
 /// else about who signed.
 fn admit_env(env: &EnvelopeTree, chain: &Records) -> Result<AdmittedTree, AdmissionError> {
-    admit_tree(
-        env,
-        &env.assume_self_attested(),
-        env.hash(&TestHasher),
-        chain,
-        &TestHasher,
-    )
+    admit_tree(env, env.hash(&TestHasher), chain, &TestHasher)
 }
 
 #[test]

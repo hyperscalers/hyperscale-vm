@@ -4,7 +4,7 @@
 //! from a variant to the place a reader is sent — so a renderer over
 //! refusals is total by construction rather than by review.
 
-use hyperscale_vm_types::{Address, EffectConflict, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{Address, EffectConflict, MAX_ATTESTATIONS, PrincipalAddr, ResourceAddr};
 
 use super::MAX_SOCKETS;
 use crate::MAX_ACCOUNTS;
@@ -396,17 +396,23 @@ pub enum AdmissionError {
     /// The intent's signature presented to a method whose rules read no
     /// cell under the signer's own prefix.
     ///
-    /// The attesting sets handed to admission do not match the intents.
-    ///
-    /// One set per intent, and the caller supplies them: the signatures
-    /// are the envelope's, never the tree's. A mismatch is a caller
-    /// defect rather than a refusal a composer could earn.
-    #[error("{found} attesting sets for {expected} intents")]
-    AttestationArity {
-        /// The intents the tree carries.
-        expected: usize,
-        /// The sets handed in.
-        found: usize,
+    /// An intent attested by nobody, which no account's rule could admit.
+    #[error("intent {intent} is attested by nobody")]
+    NoAttester {
+        /// The intent, in tree order.
+        intent: u32,
+    },
+    /// An intent declaring more attesting principals than [`MAX_ATTESTATIONS`].
+    #[error("intent {intent} declares more than {MAX_ATTESTATIONS} attesting principals")]
+    TooManyAttesters {
+        /// The intent, in tree order.
+        intent: u32,
+    },
+    /// A principal declared twice in one intent's attesting set.
+    #[error("intent {intent} declares an attesting principal twice")]
+    DuplicateAttester {
+        /// The intent, in tree order.
+        intent: u32,
     },
     /// A proof drawn from a node that is not an earlier node of the same
     /// intent — the proof's producer must have run, and aborted the
@@ -851,6 +857,9 @@ impl AdmissionError {
             Self::TreeTooDeep { intent }
             | Self::NoAccount { intent }
             | Self::TooManyAccounts { intent }
+            | Self::NoAttester { intent }
+            | Self::TooManyAttesters { intent }
+            | Self::DuplicateAttester { intent }
             | Self::UnknownGive { intent, .. }
             | Self::UnconsumedGive { intent, .. }
             | Self::GiveReused { intent, .. }
@@ -871,8 +880,7 @@ impl AdmissionError {
             },
             // A budget, a shape, or a whole composition: nowhere to send
             // a reader that the sentence does not already say.
-            Self::AttestationArity { .. }
-            | Self::TooManyNodes { .. }
+            Self::TooManyNodes { .. }
             | Self::TooManyIntents { .. }
             | Self::DuplicateIntent { .. }
             | Self::CyclicSockets { .. }

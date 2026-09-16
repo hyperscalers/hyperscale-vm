@@ -40,7 +40,7 @@ use std::ops::{Deref, DerefMut};
 use hyperscale_vm_effects::{
     Binding, ChainRecords, Claim, ClaimSource, Constraint, EdgeRef, EnvelopeTree, EvidenceRef,
     Give, GiveRef, GraphArg, Hasher, InstanceMeta, Intent, IntentHeader, MAX_SOCKETS,
-    MAX_VALUE_DEPTH, ManifestGraph, Member, ResourceMeta, Socket, ValueSource,
+    MAX_VALUE_DEPTH, ManifestGraph, Member, ResourceMeta, SignedIntent, Socket, ValueSource,
 };
 use hyperscale_vm_types::{MAX_INTENTS, PrincipalAddr, ResourceAddr};
 
@@ -422,6 +422,7 @@ impl<'a> IntentBuilder<'a> {
         check_sockets(&graph, &sockets, intent)?;
         Ok(Intent {
             header,
+            attested_by: accounts.clone(),
             accounts,
             graph,
             sockets,
@@ -521,7 +522,7 @@ pub struct EnvelopeBuilder<'a> {
     composer: PrincipalAddr,
     /// Sealed intents by slot — `0` is the root's — `None` until the
     /// intent is sealed.
-    intents: Vec<Option<Intent>>,
+    intents: Vec<Option<SignedIntent>>,
     /// The bound source of each socket, by intent and position: which
     /// intent offered, and what.
     bindings: BTreeMap<(u32, u32), (u32, Offering)>,
@@ -630,15 +631,16 @@ impl<'a> EnvelopeBuilder<'a> {
     ///
     /// Past a `u32` of intents, far beyond [`MAX_INTENTS`], which
     /// [`build`](Self::build) enforces as an error.
-    pub fn adopt(&mut self, decl: Intent) -> Result<Sockets, EnvelopeError> {
+    pub fn adopt(&mut self, signed: SignedIntent) -> Result<Sockets, EnvelopeError> {
         let intent = u32::try_from(self.intents.len()).expect("intents fit an index");
+        let decl = &signed.intent;
         if decl.sockets.len() > MAX_SOCKETS {
             return Err(EnvelopeError::TooManySockets { intent });
         }
         check_sockets(&decl.graph, &decl.sockets, intent)?;
         let sockets = self.open_sockets(intent, decl.sockets.len());
         self.carry(&decl.graph);
-        self.intents.push(Some(decl));
+        self.intents.push(Some(signed));
         Ok(sockets)
     }
 
@@ -667,7 +669,7 @@ impl<'a> EnvelopeBuilder<'a> {
         let decl = intent.finish(index)?;
         let sockets = self.open_sockets(index, decl.sockets.len());
         self.carry(&decl.graph);
-        self.intents[slot] = Some(decl);
+        self.intents[slot] = Some(SignedIntent::unsigned(decl));
         Ok(sockets)
     }
 
@@ -768,6 +770,7 @@ impl<'a> EnvelopeBuilder<'a> {
         let declared = &self.intents[slot]
             .as_ref()
             .expect("an open socket names an intent the envelope holds")
+            .intent
             .sockets[position];
         let refused = match (declared, offered.offering) {
             (Socket::Value { .. }, Offering::Edge(_) | Offering::Give(_))
@@ -841,8 +844,8 @@ impl<'a> EnvelopeBuilder<'a> {
             let intent = u32::try_from(slot).expect("minted indices fit");
             intents.push(sealed.ok_or(EnvelopeError::UnsealedIntent { intent })?);
         }
-        let members = intents.drain(1..).collect::<Vec<Intent>>();
-        let mut root = intents.pop().expect("the root is slot 0");
+        let members = intents.drain(1..).collect::<Vec<SignedIntent>>();
+        let mut root = intents.pop().expect("the root is slot 0").intent;
 
         // A member's index among the root's members is one under its
         // slot, since the root is slot 0.
@@ -895,8 +898,8 @@ impl<'a> EnvelopeBuilder<'a> {
         let mut composed = Vec::with_capacity(members.len());
         for (index, member) in members.into_iter().enumerate() {
             let intent = u32::try_from(index + 1).expect("minted indices fit");
-            let mut bindings = Vec::with_capacity(member.sockets.len());
-            for position in 0..member.sockets.len() {
+            let mut bindings = Vec::with_capacity(member.intent.sockets.len());
+            for position in 0..member.intent.sockets.len() {
                 let socket = u32::try_from(position).expect("bounded by MAX_SOCKETS");
                 let (from, offering) = self
                     .bindings
@@ -914,7 +917,7 @@ impl<'a> EnvelopeBuilder<'a> {
                 });
             }
             composed.push(Member {
-                intent: member,
+                signed: member,
                 wiring: bindings,
             });
         }

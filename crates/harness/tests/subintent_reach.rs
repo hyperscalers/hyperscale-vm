@@ -125,14 +125,7 @@ fn traded() -> EnvelopeTree {
 /// its runner walks.
 fn routed(world: &Records, tree: &EnvelopeTree) -> Result<(BatchTx, AdmittedTree)> {
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(
-        tree,
-        &tree.assume_self_attested(),
-        identity,
-        world,
-        &TestHasher,
-    )
-    .context("admission")?;
+    let admitted = admit_tree(tree, identity, world, &TestHasher).context("admission")?;
     let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 0 });
     ensure!(routing.len() == 1, "the null resolver routes to one shard");
     let declaration = admitted.admitted.declaration().clone();

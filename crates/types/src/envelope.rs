@@ -26,7 +26,7 @@ use hyperscale_hbor::{EncodeError, Hash32, Hbor, HborSigned};
 use crate::address::PrincipalAddr;
 use crate::amount::Quanta;
 use crate::execution::{MAX_EVENT_BYTES_PER_TX, MAX_MANIFEST_NODES};
-use crate::scheme::{MAX_KEY_BYTES, MAX_SIG_BYTES, SchemeId};
+use crate::scheme::{AccountSigner, MAX_KEY_BYTES, MAX_SIG_BYTES, SchemeId};
 use crate::work::DeclaredWork;
 
 /// The cap on a tree's bytes.
@@ -51,16 +51,16 @@ pub const MAX_ARTIFACT_BYTES: usize = 256 * 1024;
 /// on [`MAX_CALL_BYTES`]'s terms.
 pub const MAX_MESSAGE_LEN: usize = 1024;
 
-/// The widest a whole envelope encodes: the tree and the artifact at
-/// their caps, every signature the envelope may bind at the widest
-/// registered scheme, and the scalars.
+/// The widest a whole envelope encodes: the tree, the artifact and the
+/// terms at their caps, every attestation the root may carry at the
+/// widest registered scheme, and the scalars.
 ///
 /// What a decoder allocates for the envelope as the network carries it,
 /// derived from the caps inside it so it moves when they do.
-pub const MAX_ENVELOPE_BYTES: usize = MAX_CALL_BYTES
+pub const MAX_ENVELOPE_BYTES: usize = MAX_TREE_BYTES
     + MAX_ARTIFACT_BYTES
     + MAX_TERMS_BYTES
-    + MAX_INTENTS * (MAX_KEY_BYTES + MAX_SIG_BYTES + 16)
+    + MAX_ATTESTATIONS * MAX_ATTESTATION_BYTES
     + 256;
 
 /// The widest the terms encode: one ceiling per manifest node, the
@@ -112,19 +112,43 @@ pub const COMMITTED_GRACE_MS: u64 = 264_000;
 /// the reshape span and the floor against the sum.
 pub const CROSSING_GRACE_MS: u64 = 1_500_000;
 
-/// The bound on subintents one envelope may compose, and so on the
-/// signatures it carries for them.
-///
-/// A wire bound on the decode; the signatures themselves are priced,
-/// per scheme, by [`DeclaredWork::signature`].
-pub const MAX_SUBINTENTS: usize = 32;
+/// The bound on intents one envelope's tree may carry. A wire bound on
+/// the decode; the attestations each carries are priced, per scheme,
+/// by [`DeclaredWork::signature`].
+pub const MAX_INTENTS: usize = 33;
 
-/// The bound on intents one envelope's tree may carry.
+/// The most principals one intent may declare itself attested by, and
+/// so the most attestations that stand beside it. A wire bound.
 ///
-/// One more than the signatures it carries for them: the composition's
-/// own intent is attested by the envelope's signature rather than by one
-/// of those, so the two bounds differ by exactly that intent.
-pub const MAX_INTENTS: usize = MAX_SUBINTENTS + 1;
+/// Room for a threshold rule over a few keys on each of a handful of
+/// accounts; every attestation past the first is priced as one more
+/// signature, so the ceiling bounds what a decoder allocates rather
+/// than what a composer may buy.
+pub const MAX_ATTESTATIONS: usize = 8;
+
+/// The most attestations one transaction may carry between its root and
+/// every member. Refused at derivation, where the tree is decoded and
+/// each attestation is held to its declaration.
+///
+/// What the byte and compute caps are sized for: every attestation is a
+/// verification and its material is retained, so the count rather than
+/// the per-intent bound is what one transaction may cost a block. Two
+/// per intent at the intent cap, or eight on a handful.
+pub const MAX_TX_ATTESTATIONS: usize = 2 * MAX_INTENTS;
+
+/// The widest one attestation encodes: the key and the signature at the
+/// widest registered scheme, and the scalars around them.
+pub const MAX_ATTESTATION_BYTES: usize = MAX_KEY_BYTES + MAX_SIG_BYTES + 16;
+
+/// The cap on a tree's bytes as an envelope carries it: the calls,
+/// wiring and records at [`MAX_CALL_BYTES`], plus every attestation the
+/// transaction may carry at its widest, since a member's ride inside.
+///
+/// The attestations dominate at the widest scheme and not otherwise; a
+/// tree of ed25519 members spends a few kilobytes of this room. What a
+/// decoder allocates for a stranger's tree, so the figure is stated
+/// against the caps rather than guessed.
+pub const MAX_TREE_BYTES: usize = MAX_CALL_BYTES + MAX_TX_ATTESTATIONS * MAX_ATTESTATION_BYTES;
 
 /// The most compute one envelope may sign for, in fuel, summed over its
 /// per-node ceilings.
@@ -215,22 +239,27 @@ impl fmt::Display for TxHash {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hbor)]
 pub struct NetworkId(pub u8);
 
-/// One bound subintent's signature: the signer's key and their signature
-/// over the subintent's declaration hash, in tree order.
+/// One signature standing beside the content it covers, with the key
+/// and scheme that produced it.
 ///
-/// The composer's own signature covers this whole value, so a subintent's
-/// scheme, key, and signature are all signed content twice over — once by
-/// the subintent's signer and once by the composer binding it.
+/// Transport rather than signed content: what is signed is the
+/// principal the key derives, declared in the intent, so a signature
+/// re-keyed or re-tagged afterwards derives another principal and is
+/// refused against the declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Hbor)]
-pub struct SubintentSig {
+pub struct Attestation {
     /// The scheme the key and signature below belong to.
     pub scheme: SchemeId,
-    /// The offered intent's attesting key. Whether the account that
-    /// intent acts as admits it is that account's own cell to say, on
-    /// its own shard.
+    /// The attesting key. With the scheme it derives the principal
+    /// declared at the same position in the intent's `attested_by`, and
+    /// an attestation deriving any other is refused. Whether an account
+    /// the intent acts as admits that principal is the account's own
+    /// cell to say, on its own shard.
     #[hbor(max = MAX_KEY_BYTES)]
     pub public_key: Vec<u8>,
-    /// The signature over the subintent's declaration hash.
+    /// The signature over the signing hash of the content the
+    /// attestation stands beside: an intent's hash for a member, the
+    /// envelope's digest for the root.
     #[hbor(max = MAX_SIG_BYTES)]
     pub signature: Vec<u8>,
 }
@@ -296,22 +325,25 @@ impl Terms {
     }
 }
 
-/// A transaction: the tree, the artifact a publish carries beside it,
-/// and the signatures, under the composer's signature.
+/// A signed transaction as the network carries it: the tree, the terms
+/// it is paid under, an artifact where it publishes one, and the root's
+/// attestations.
 ///
 /// The signature covers the derived preimage — every field but the
-/// signature itself, under the envelope domain — and the hash of that
-/// preimage is also the identity fresh derivations root at: distinct
-/// signed envelopes never mint the same fresh key. The composer's key is
-/// inside it because a verdict reads it: the accounts the root intent
-/// acts as are judged against that key, so one identity has to name one
-/// key.
+/// attestations, under the envelope domain — and the hash of that
+/// preimage is the transaction's identity and the root fresh
+/// derivations grow from: distinct signed envelopes never mint the same
+/// fresh key. The attestations are transport, on the terms
+/// [`Attestation`] states: what they pair with is the principals the
+/// root intent declares itself attested by, which the tree signs.
 #[derive(Debug, Clone, PartialEq, Eq, Hbor)]
-#[hbor(signing_domain = "hyperscale-vm-envelope-v3")]
+#[hbor(signing_domain = "hyperscale-vm-envelope-v4")]
 pub struct TransactionEnvelope {
     /// The tree, canonically encoded; the effect vocabulary owns the
-    /// encoding. A publish's tree is one root that calls nothing.
-    #[hbor(max = MAX_CALL_BYTES)]
+    /// encoding. A publish's tree is one root that calls nothing. Every
+    /// member's attestations ride inside it, beside the intent they
+    /// cover.
+    #[hbor(max = MAX_TREE_BYTES)]
     pub tree: Vec<u8>,
     /// What the transaction is paid and metered under. A function of
     /// the whole tree, so the composer of the root states them, and
@@ -328,31 +360,13 @@ pub struct TransactionEnvelope {
     /// way.
     #[hbor(max = MAX_ARTIFACT_BYTES)]
     pub artifact: Option<Vec<u8>>,
-    /// One signature per member intent, in tree order.
-    #[hbor(max = MAX_SUBINTENTS)]
-    pub subintent_sigs: Vec<SubintentSig>,
-    /// The scheme the composer's key and signature belong to.
-    ///
-    /// Signed content, as the key is: a composer says which scheme they
-    /// signed under, so one key and signature pair that happened to
-    /// validate under two registered schemes could still only be
-    /// presented as the one its signer named.
-    pub signer_scheme: SchemeId,
-    /// The composer's public key, under [`signer_scheme`](Self::signer_scheme).
-    ///
-    /// Signed content: the key attests the root intent, and the shard
-    /// of each account that intent acts as judges its rule against this
-    /// key. Outside the preimage, one identity could carry as many keys
-    /// as would re-sign it, and two replicas holding two copies would
-    /// judge one transaction two ways.
-    #[hbor(max = MAX_KEY_BYTES)]
-    pub signer: Vec<u8>,
-    /// The composer's signature over the hash of
-    /// [`signing_bytes`](hyperscale_hbor::HborSigned::signing_bytes).
-    /// The one field the preimage leaves out.
+    /// The root's attestations over the hash of
+    /// [`signing_bytes`](hyperscale_hbor::HborSigned::signing_bytes),
+    /// one per principal the root intent declares itself attested by,
+    /// in that order. The one field the preimage leaves out.
     #[hbor(unsigned)]
-    #[hbor(max = MAX_SIG_BYTES)]
-    pub signature: Vec<u8>,
+    #[hbor(max = MAX_ATTESTATIONS)]
+    pub signatures: Vec<Attestation>,
 }
 
 impl TransactionEnvelope {
@@ -381,21 +395,33 @@ impl TransactionEnvelope {
         let preimage = self.signing_bytes()?;
         Ok(hasher.hash(&[], &[&preimage]).0)
     }
+}
 
-    /// What every signature this envelope binds declares: its
-    /// verification as compute and its material as retention.
-    ///
-    /// The composer's, plus one per member. Each scheme is signed
-    /// content and each width comes from the registry, so this is a pure
-    /// function of what the composer put their name to.
-    #[must_use]
-    pub fn signatures(&self) -> DeclaredWork {
-        self.subintent_sigs
-            .iter()
-            .fold(DeclaredWork::signature(self.signer_scheme), |total, sig| {
-                total.saturating_add(DeclaredWork::signature(sig.scheme))
-            })
+/// One attestation over `hash` by `key`.
+///
+/// The scheme is stamped beside the material it describes, so a signer's
+/// key and their claim about which curve produced it are written in one
+/// place and cannot drift apart.
+#[must_use]
+pub fn attest<S: AccountSigner>(key: &S, hash: &[u8; 32]) -> Attestation {
+    Attestation {
+        scheme: key.scheme(),
+        public_key: key.public_key_bytes(),
+        signature: key.sign_digest(hash),
     }
+}
+
+/// What verifying `attestations` costs, each priced as its scheme is
+/// registered, saturating.
+#[must_use]
+pub fn attestation_work<'a>(
+    attestations: impl IntoIterator<Item = &'a Attestation>,
+) -> DeclaredWork {
+    attestations
+        .into_iter()
+        .fold(DeclaredWork::default(), |total, attestation| {
+            total.saturating_add(DeclaredWork::signature(attestation.scheme))
+        })
 }
 
 /// The sum of per-node ceilings, saturating: what an envelope buys in
@@ -541,8 +567,8 @@ mod tests {
     use hyperscale_hbor::{HborSigned, assert_canonical, to_vec};
 
     use super::{
-        MAX_EVENT_BYTES_PER_TX, MAX_GAS_LIMIT, MAX_PRIORITY_BP, PrincipalAddr, SubintentSig, Terms,
-        TermsRefusal, TransactionEnvelope, admit_event_bounds,
+        Attestation, MAX_EVENT_BYTES_PER_TX, MAX_GAS_LIMIT, MAX_PRIORITY_BP, PrincipalAddr, Terms,
+        TermsRefusal, TransactionEnvelope, admit_event_bounds, attestation_work,
     };
     use crate::{DeclaredWork, SchemeId};
 
@@ -551,14 +577,11 @@ mod tests {
             tree: vec![1, 2, 3],
             terms: terms(),
             artifact: None,
-            subintent_sigs: vec![SubintentSig {
+            signatures: vec![Attestation {
                 scheme: SchemeId::ED25519,
-                public_key: vec![0x11; 32],
-                signature: vec![0x22; 64],
+                public_key: vec![0x44; 32],
+                signature: vec![0x55; 64],
             }],
-            signer_scheme: SchemeId::ED25519,
-            signer: vec![0x44; 32],
-            signature: vec![0x55; 64],
         }
     }
 
@@ -578,102 +601,68 @@ mod tests {
         assert_canonical(&terms());
     }
 
-    /// Material the envelope carries is material its named scheme claims.
+    /// Material an attestation carries is material its named scheme
+    /// claims.
     #[test]
     fn the_carried_material_is_what_the_scheme_registers() {
-        let envelope = sample();
-        let spec = envelope
-            .signer_scheme
-            .spec()
-            .expect("the sample names a registered scheme");
-        assert!(spec.admits(&envelope.signer, &envelope.signature));
-        for sig in &envelope.subintent_sigs {
-            let spec = sig.scheme.spec().expect("a registered scheme");
-            assert!(spec.admits(&sig.public_key, &sig.signature));
+        for attestation in &sample().signatures {
+            let spec = attestation.scheme.spec().expect("a registered scheme");
+            assert!(spec.admits(&attestation.public_key, &attestation.signature));
         }
     }
 
-    /// Every signature the envelope binds is priced, and each scheme is
-    /// priced as the registry has it.
+    /// Every attestation is priced, and each scheme is priced as the
+    /// registry has it.
     #[test]
-    fn the_declared_signatures_count_every_signature() {
+    fn the_declared_signatures_count_every_attestation() {
         let ed = DeclaredWork::signature(SchemeId::ED25519);
         let secp = DeclaredWork::signature(SchemeId::SECP256K1);
         let mut envelope = sample();
-        assert_eq!(
-            envelope.signatures(),
-            ed.saturating_add(ed),
-            "the composer's signature and the one member it binds"
-        );
+        assert_eq!(attestation_work(&envelope.signatures), ed);
 
-        envelope.subintent_sigs.push(SubintentSig {
+        envelope.signatures.push(Attestation {
             scheme: SchemeId::SECP256K1,
             public_key: vec![0x66; 33],
             signature: vec![0x77; 64],
         });
         assert_eq!(
-            envelope.signatures(),
-            ed.saturating_add(ed).saturating_add(secp)
+            attestation_work(&envelope.signatures),
+            ed.saturating_add(secp)
         );
 
-        envelope.subintent_sigs.clear();
-        assert_eq!(envelope.signatures(), ed);
-    }
-
-    /// The scheme is signed content while the material it describes is
-    /// not, so re-tagging a key and signature to a second scheme they also
-    /// satisfy is a different preimage and loses the signature.
-    #[test]
-    fn the_scheme_is_signed_and_the_material_is_not() {
-        let envelope = sample();
-        let mut retagged = envelope.clone();
-        retagged.signer_scheme = SchemeId(0xFFFF);
-        assert_ne!(
-            envelope.signing_bytes().unwrap(),
-            retagged.signing_bytes().unwrap()
-        );
-
-        let mut rebound = envelope.clone();
-        rebound.subintent_sigs[0].scheme = SchemeId(0xFFFF);
-        assert_ne!(
-            envelope.signing_bytes().unwrap(),
-            rebound.signing_bytes().unwrap()
+        envelope.signatures.clear();
+        assert_eq!(
+            attestation_work(&envelope.signatures),
+            DeclaredWork::default()
         );
     }
 
-    /// The signature is the one field the preimage leaves out; it rides
-    /// the wire and nothing else. Everything else is signed content, the
-    /// composer's own key included.
+    /// The attestations are the one field the preimage leaves out; they
+    /// ride the wire and nothing else. Everything else is signed
+    /// content.
     #[test]
-    fn the_signature_covers_everything_but_itself() {
+    fn the_signature_covers_everything_but_the_attestations() {
         let envelope = sample();
         let mut resigned = envelope.clone();
-        resigned.signature = vec![0xAA; 64];
+        resigned.signatures[0].signature = vec![0xAA; 64];
+        resigned.signatures[0].scheme = SchemeId(0xFFFF);
         assert_eq!(
             envelope.signing_bytes().unwrap(),
             resigned.signing_bytes().unwrap()
         );
         assert_ne!(to_vec(&envelope).unwrap(), to_vec(&resigned).unwrap());
 
-        let mut retreed = envelope;
+        let mut retreed = envelope.clone();
         retreed.tree.push(4);
         assert_ne!(
             retreed.signing_bytes().unwrap(),
-            resigned.signing_bytes().unwrap()
+            envelope.signing_bytes().unwrap()
         );
-    }
-
-    /// The composer's key is signed content: one content under two keys
-    /// is two identities, so the key a verdict is judged against is fixed
-    /// by the hash rather than by whichever copy a replica holds.
-    #[test]
-    fn the_same_content_under_another_key_is_another_identity() {
-        let envelope = sample();
-        let mut rekeyed = envelope.clone();
-        rekeyed.signer = vec![0x99; 32];
+        let mut repriced = envelope.clone();
+        repriced.terms.max_fee += 1;
         assert_ne!(
-            envelope.signing_bytes().unwrap(),
-            rekeyed.signing_bytes().unwrap()
+            repriced.signing_bytes().unwrap(),
+            envelope.signing_bytes().unwrap()
         );
     }
 

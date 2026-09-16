@@ -337,7 +337,7 @@ fn the_publish_envelope_carries_the_admitted_artifact() {
     use hyperscale_vm_cli::{NetworkId, PrincipalAddr, publish_envelope};
     use hyperscale_vm_effects::decode_tree;
     use hyperscale_vm_gate::admit_package;
-    use hyperscale_vm_types::{SchemeId, TransactionEnvelope};
+    use hyperscale_vm_types::TransactionEnvelope;
 
     let dir = guests().join("flashloan");
     let bytes = artifact(&dir, Provenance::Published).expect("flashloan builds");
@@ -351,7 +351,7 @@ fn the_publish_envelope_carries_the_admitted_artifact() {
     assert_eq!(root.accounts, [payer]);
     assert_eq!(decoded.terms.fee_payer, payer);
     assert!(root.graph.nodes.is_empty(), "a publish calls nothing");
-    assert_eq!(decoded.signer_scheme, SchemeId::NONE, "unsigned");
+    assert!(decoded.signatures.is_empty(), "unsigned");
     let carried = decoded.artifact.expect("a publish carries its artifact");
     assert_eq!(carried, bytes, "exactly the artifact the gate admitted");
     admit_package(&carried).expect("the same gate admits the carried bytes");

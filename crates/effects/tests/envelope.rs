@@ -14,16 +14,16 @@ use hyperscale_vm_effects::{
     IntentHash, IntentHeader, IntentRecord, JudgedLeaf, MAX_ACCOUNTS, MAX_SOCKETS, MAX_TREE_DEPTH,
     MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, Marked, Marker, Member, NULLIFIER_SLOT,
     NodeInput, PackageHash, PrefixShardResolver, Records, ResourceKind, Rule, ShardResolver,
-    Socket, TREE_WIRE_DEPTH, TestHasher, Value, ValueSource, admit, admit_tree, bucketed_child_key,
-    child_key, decode_tree, encode_tree, escrow_claim_key, escrow_record_key,
+    SignedIntent, Socket, TREE_WIRE_DEPTH, TestHasher, Value, ValueSource, admit, admit_tree,
+    bucketed_child_key, child_key, decode_tree, encode_tree, escrow_claim_key, escrow_record_key,
     explain_admission_tree, nullifier_key, per_shard,
 };
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     ARTIFACT_GRACE_MS, Address, COMMITTED_GRACE_MS, CROSSING_GRACE_MS, CallTarget, Effect,
-    EffectTarget, MAX_INTENTS, Mode, Moves, NetworkId, PrincipalAddr, ResourceAddr,
-    SWEEP_BUCKET_SHIFT, SweepBucket, TxHash,
+    EffectTarget, MAX_ATTESTATIONS, MAX_INTENTS, Mode, Moves, NetworkId, PrincipalAddr,
+    ResourceAddr, SWEEP_BUCKET_SHIFT, SweepBucket, TxHash,
 };
 use proptest::prelude::{any, proptest};
 
@@ -135,7 +135,10 @@ fn intent(
 fn compose(mut composer: Intent, members: Vec<(Intent, Vec<Binding>)>) -> Intent {
     composer.members = members
         .into_iter()
-        .map(|(intent, wiring)| Member { intent, wiring })
+        .map(|(intent, wiring)| Member {
+            signed: SignedIntent::unsigned(intent),
+            wiring,
+        })
         .collect();
     composer
 }
@@ -182,13 +185,7 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
 fn admit_composed(tree: &EnvelopeTree) -> Result<AdmittedTree, AdmissionError> {
     let chain = world();
     let identity = tree.hash(&TestHasher);
-    admit_tree(
-        tree,
-        &tree.assume_self_attested(),
-        identity,
-        &chain,
-        &TestHasher,
-    )
+    admit_tree(tree, identity, &chain, &TestHasher)
 }
 
 /// The flattened calls, as target and method.
@@ -210,16 +207,12 @@ fn shape(admitted: &AdmittedTree) -> Vec<(Address, String)> {
 /// it, which that account's shard answers before any body runs.
 #[test]
 fn an_intent_is_attested_by_keys_the_account_need_not_derive() {
-    let tree = composed_tree(100);
+    let mut tree = composed_tree(100);
+    tree.root.attested_by = vec![BOB];
+    tree.root.members[0].signed.intent.attested_by = vec![ALICE];
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(
-        &tree,
-        &[vec![BOB], vec![ALICE]],
-        identity,
-        &world(),
-        &TestHasher,
-    )
-    .expect("a key that derives neither account still admits");
+    let admitted = admit_tree(&tree, identity, &world(), &TestHasher)
+        .expect("a key that derives neither account still admits");
 
     for (account, key) in [(ALICE, BOB), (BOB, ALICE)] {
         let cell = child_key(&TestHasher, account.address(), AUTH, &[]);
@@ -239,20 +232,41 @@ fn an_intent_is_attested_by_keys_the_account_need_not_derive() {
     }
 }
 
-/// One attesting set per intent. A caller handing over a different number
-/// is a defect rather than a refusal a composer could earn, so it is
-/// named as one.
+/// The attesting set is signed content with a shape: at least one
+/// principal, at most the cap, none twice. Two attestations by one
+/// principal would be one key counted twice against a threshold.
 #[test]
-fn an_attesting_set_is_required_for_every_intent() {
-    let tree = composed_tree(100);
-    let identity = tree.hash(&TestHasher);
+fn an_attesting_set_is_non_empty_bounded_and_repeats_nobody() {
+    let mut nobody = composed_tree(100);
+    nobody.root.members[0].signed.intent.attested_by.clear();
     assert_eq!(
-        admit_tree(&tree, &[vec![ALICE]], identity, &world(), &TestHasher),
-        Err(AdmissionError::AttestationArity {
-            expected: 2,
-            found: 1,
-        }),
+        admit_composed(&nobody),
+        Err(AdmissionError::NoAttester { intent: 1 })
     );
+
+    let mut twice = composed_tree(100);
+    twice.root.attested_by = vec![ALICE, ALICE];
+    assert_eq!(
+        admit_composed(&twice),
+        Err(AdmissionError::DuplicateAttester { intent: 0 })
+    );
+
+    let mut crowd = composed_tree(100);
+    crowd.root.attested_by = (0x80u8..)
+        .take(MAX_ATTESTATIONS + 1)
+        .map(|byte| PrincipalAddr::new([byte; 31]))
+        .collect();
+    assert_eq!(
+        admit_composed(&crowd),
+        Err(AdmissionError::TooManyAttesters { intent: 0 })
+    );
+
+    // The set is signed content: another set is another intent, and so
+    // another nullifier.
+    let base = composed_tree(100).root.hash(&TestHasher);
+    let mut delegated = composed_tree(100).root;
+    delegated.attested_by = vec![BOB];
+    assert_ne!(base, delegated.hash(&TestHasher));
 }
 
 /// A refusal placed by flattened node index is explained at the call
@@ -316,7 +330,7 @@ fn a_socket_filled_from_the_other_channel_names_the_mismatch() {
 
     // An authority socket filled with an edge.
     let mut tree = composed_tree(100);
-    tree.root.members[0].intent.sockets[0] = Socket::Authority(Claim::of_subject(BOB));
+    tree.root.members[0].signed.intent.sockets[0] = Socket::Authority(Claim::of_subject(BOB));
     assert_eq!(
         admit_composed(&tree).expect_err("an edge does not fill an authority socket"),
         AdmissionError::SocketKindMismatch {
@@ -418,8 +432,8 @@ fn routing_carries_the_nullifier_creation_write() {
 #[test]
 fn two_intents_acting_as_one_account_each_nullify() {
     let mut tree = composed_tree(100);
-    tree.root.members[0].intent.accounts = vec![ALICE];
-    tree.root.members[0].intent.graph.nodes =
+    tree.root.members[0].signed.intent.accounts = vec![ALICE];
+    tree.root.members[0].signed.intent.graph.nodes =
         vec![withdraw(ALICE, RES_Y, 10), deposit_param(ALICE, 0)];
     let admitted = admit_composed(&tree).expect("one account may offer twice");
     let [own, again] = admitted.intents.as_slice() else {
@@ -452,6 +466,7 @@ fn an_intent_acting_as_two_accounts_nullifies_and_signs_in_for_each() {
         Vec::new(),
     );
     root.accounts = vec![ALICE, BOB];
+    root.attested_by = vec![ALICE, BOB];
     let tree = EnvelopeTree::of_one(root);
     let admitted = admit_composed(&tree).expect("one intent acts as both");
     let [record] = admitted.intents.as_slice() else {
@@ -562,11 +577,11 @@ fn identities_differ_while_member_hashes_agree() {
     let second = composed_tree(120);
     assert_ne!(first.hash(&TestHasher), second.hash(&TestHasher));
     assert_eq!(
-        first.root.members[0].intent.hash(&TestHasher),
-        second.root.members[0].intent.hash(&TestHasher)
+        first.root.members[0].signed.intent.hash(&TestHasher),
+        second.root.members[0].signed.intent.hash(&TestHasher)
     );
     // Same tree, different account: a different nullifier.
-    let hash = first.root.members[0].intent.hash(&TestHasher);
+    let hash = first.root.members[0].signed.intent.hash(&TestHasher);
     assert_ne!(
         nullifier_key(&TestHasher, ALICE, hash, EXPIRY_MS),
         nullifier_key(&TestHasher, BOB, hash, EXPIRY_MS)
@@ -593,7 +608,10 @@ fn identities_differ_while_member_hashes_agree() {
 
 #[test]
 fn a_nullifier_leads_with_the_bucket_its_expiry_falls_in() {
-    let hash = composed_tree(100).root.members[0].intent.hash(&TestHasher);
+    let hash = composed_tree(100).root.members[0]
+        .signed
+        .intent
+        .hash(&TestHasher);
     let key = nullifier_key(&TestHasher, BOB, hash, EXPIRY_MS);
     assert_eq!(
         SweepBucket::claimed_by(key.local),
@@ -628,7 +646,7 @@ fn an_origin_names_the_intent_its_node_signed() {
     let tree = composed_tree(100);
     let admitted = admit_composed(&tree).expect("admits");
     let root = tree.root.hash(&TestHasher);
-    let bob = tree.root.members[0].intent.hash(&TestHasher);
+    let bob = tree.root.members[0].signed.intent.hash(&TestHasher);
 
     let origins: Vec<(IntentHash, u32)> = admitted
         .admitted
@@ -678,8 +696,8 @@ fn an_escrow_key_is_fixed_by_the_intent_its_node_signed() {
         "the composer has to have moved the transaction, or this proves nothing",
     );
 
-    let bob = first.root.members[0].intent.hash(&TestHasher);
-    assert_eq!(bob, second.root.members[0].intent.hash(&TestHasher));
+    let bob = first.root.members[0].signed.intent.hash(&TestHasher);
+    assert_eq!(bob, second.root.members[0].signed.intent.hash(&TestHasher));
 
     let origin_of = |tree: &EnvelopeTree, at: usize| {
         admit_composed(tree).expect("admits").admitted.origins()[at]
@@ -705,7 +723,10 @@ fn an_escrow_key_is_fixed_by_the_intent_its_node_signed() {
 /// the role separates a record from the claim that takes it.
 #[test]
 fn an_escrow_key_separates_what_it_names() {
-    let bob = composed_tree(100).root.members[0].intent.hash(&TestHasher);
+    let bob = composed_tree(100).root.members[0]
+        .signed
+        .intent
+        .hash(&TestHasher);
     let key = escrow_record_key(&TestHasher, BOB, bob, 1, 0);
 
     assert_ne!(
@@ -761,7 +782,10 @@ fn an_escrow_key_separates_what_it_names() {
 /// key a sweep could find.
 #[test]
 fn a_claim_leads_with_its_bucket_and_a_record_does_not() {
-    let bob = composed_tree(100).root.members[0].intent.hash(&TestHasher);
+    let bob = composed_tree(100).root.members[0]
+        .signed
+        .intent
+        .hash(&TestHasher);
     let claim = escrow_claim_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS);
     assert_eq!(
         SweepBucket::claimed_by(claim.local),
@@ -801,7 +825,10 @@ fn a_claim_leads_with_its_bucket_and_a_record_does_not() {
 /// prefix and its cells and has all of it.
 #[test]
 fn a_crossing_cell_carries_what_a_reclaim_needs() {
-    let bob = composed_tree(100).root.members[0].intent.hash(&TestHasher);
+    let bob = composed_tree(100).root.members[0]
+        .signed
+        .intent
+        .hash(&TestHasher);
     let tx = TxHash(Hash32([7; 32]));
     let site = CrossingSite::record(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS);
     let consumer = CrossingSite::claim(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS);
@@ -855,7 +882,10 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
 /// for the whole terminal evidence span.
 #[test]
 fn a_marker_takes_the_life_its_family_has_and_no_other() {
-    let bob = composed_tree(100).root.members[0].intent.hash(&TestHasher);
+    let bob = composed_tree(100).root.members[0]
+        .signed
+        .intent
+        .hash(&TestHasher);
     let tx = TxHash(Hash32([7; 32]));
     let end = TEST_HEADER.validity_end_ms;
 
@@ -891,7 +921,10 @@ fn a_marker_takes_the_life_its_family_has_and_no_other() {
 
 #[test]
 fn an_absurd_expiry_buckets_high_rather_than_wrapping() {
-    let bob = composed_tree(100).root.members[0].intent.hash(&TestHasher);
+    let bob = composed_tree(100).root.members[0]
+        .signed
+        .intent
+        .hash(&TestHasher);
     let key = nullifier_key(&TestHasher, BOB, bob, u64::MAX);
     assert_eq!(
         SweepBucket::claimed_by(key.local),
@@ -903,7 +936,7 @@ fn an_absurd_expiry_buckets_high_rather_than_wrapping() {
 
 #[test]
 fn the_intent_hash_covers_the_interface() {
-    let decl = composed_tree(100).root.members[0].intent.clone();
+    let decl = composed_tree(100).root.members[0].signed.intent.clone();
     let mut reconstrained = decl.clone();
     reconstrained.sockets[0] = Socket::Value {
         resource: RES_X,
@@ -937,11 +970,11 @@ fn the_intent_hash_covers_accounts_members_and_wiring() {
     assert_ne!(base, reacted.hash(&TestHasher));
 
     let mut recomposed = root.clone();
-    recomposed.members[0].intent.header.discriminator += 1;
+    recomposed.members[0].signed.intent.header.discriminator += 1;
     assert_ne!(base, recomposed.hash(&TestHasher));
     let mut widened = root.clone();
     let mut another = widened.members[0].clone();
-    another.intent.accounts = vec![CAROL];
+    another.signed.intent.accounts = vec![CAROL];
     widened.members.push(another);
     assert_ne!(base, widened.hash(&TestHasher));
     let mut uncomposed = root.clone();
@@ -969,7 +1002,7 @@ fn the_intent_hash_covers_accounts_members_and_wiring() {
 
 #[test]
 fn the_intent_hash_covers_every_term_of_the_header() {
-    let decl = composed_tree(100).root.members[0].intent.clone();
+    let decl = composed_tree(100).root.members[0].signed.intent.clone();
 
     let mut elsewhere = decl.clone();
     elsewhere.header.network = NetworkId(1);
@@ -1012,7 +1045,7 @@ fn the_tree_hash_covers_the_records_and_the_order() {
     assert_ne!(recorded.hash(&TestHasher), plain);
 
     let mut second = tree.root.members[0].clone();
-    second.intent.accounts = vec![CAROL];
+    second.signed.intent.accounts = vec![CAROL];
     let mut two = tree;
     two.root.members.push(second);
     let mut reordered = two.clone();
@@ -1025,7 +1058,7 @@ fn mutual_sockets_with_no_order_are_a_cycle() {
     // Each intent's only node consumes what the other yields; neither
     // can produce first.
     let mut tree = composed_tree(100);
-    tree.root.members[0].intent.graph.nodes = vec![deposit_param(BOB, 0)];
+    tree.root.members[0].signed.intent.graph.nodes = vec![deposit_param(BOB, 0)];
     tree.root.graph.nodes = vec![deposit_give(ALICE, 0, 0, Vec::new())];
     assert_eq!(admit_composed(&tree), Err(AdmissionError::CyclicSockets));
 }
@@ -1033,7 +1066,7 @@ fn mutual_sockets_with_no_order_are_a_cycle() {
 #[test]
 fn what_fills_a_socket_must_match_the_declared_resource() {
     let mut tree = composed_tree(100);
-    tree.root.members[0].intent.sockets[0] = Socket::Value {
+    tree.root.members[0].signed.intent.sockets[0] = Socket::Value {
         resource: RES_Y,
         constraints: Vec::new(),
     };
@@ -1127,7 +1160,7 @@ fn an_edge_filling_a_socket_is_judged_by_its_kind() {
 #[test]
 fn socket_consumption_is_exactly_once() {
     let mut unused = composed_tree(100);
-    unused.root.members[0].intent.graph.nodes[1] = withdraw(BOB, RES_Y, 1);
+    unused.root.members[0].signed.intent.graph.nodes[1] = withdraw(BOB, RES_Y, 1);
     assert_eq!(
         admit_composed(&unused),
         Err(AdmissionError::UnconsumedSocket {
@@ -1138,6 +1171,7 @@ fn socket_consumption_is_exactly_once() {
 
     let mut reused = composed_tree(100);
     reused.root.members[0]
+        .signed
         .intent
         .graph
         .nodes
@@ -1187,22 +1221,22 @@ fn give_consumption_is_exactly_once() {
 #[test]
 fn a_give_names_what_the_intent_holds() {
     let mut past_graph = composed_tree(100);
-    past_graph.root.members[0].intent.gives = vec![Give::Edge(edge(7, 0))];
+    past_graph.root.members[0].signed.intent.gives = vec![Give::Edge(edge(7, 0))];
     assert_eq!(
         admit_composed(&past_graph),
         Err(AdmissionError::UnknownGive { intent: 1, give: 0 })
     );
 
     let mut past_members = composed_tree(100);
-    past_members.root.members[0].intent.gives = vec![Give::Member(give(0, 0))];
+    past_members.root.members[0].signed.intent.gives = vec![Give::Member(give(0, 0))];
     assert_eq!(
         admit_composed(&past_members),
         Err(AdmissionError::UnknownGive { intent: 1, give: 0 })
     );
 
     let mut internal = composed_tree(100);
-    internal.root.members[0].intent.graph.nodes[1] = deposit_edge(BOB, 0);
-    internal.root.members[0].intent.sockets.clear();
+    internal.root.members[0].signed.intent.graph.nodes[1] = deposit_edge(BOB, 0);
+    internal.root.members[0].signed.intent.sockets.clear();
     internal.root.members[0].wiring.clear();
     internal.root.graph.nodes.push(deposit_edge(ALICE, 0));
     assert!(matches!(
@@ -1312,7 +1346,7 @@ fn duplicate_intents_reject() {
     let mut carol = intent(CAROL, Vec::new(), Vec::new(), Vec::new());
     carol.members = vec![beneath.root.members[0].clone()];
     beneath.root.members.push(Member {
-        intent: carol,
+        signed: SignedIntent::unsigned(carol),
         wiring: Vec::new(),
     });
     assert_eq!(
@@ -1324,10 +1358,14 @@ fn duplicate_intents_reject() {
 #[test]
 fn an_intent_cannot_declare_unbounded_sockets() {
     let mut tree = composed_tree(100);
-    let socket = tree.root.members[0].intent.sockets[0].clone();
+    let socket = tree.root.members[0].signed.intent.sockets[0].clone();
     let binding = tree.root.members[0].wiring[0];
     for _ in 0..MAX_SOCKETS {
-        tree.root.members[0].intent.sockets.push(socket.clone());
+        tree.root.members[0]
+            .signed
+            .intent
+            .sockets
+            .push(socket.clone());
         tree.root.members[0].wiring.push(binding);
     }
     assert_eq!(
@@ -1342,7 +1380,7 @@ fn a_socket_cannot_fill_a_value_parameter() {
     // its parameters from a socket is a parameter defect — not the edge
     // defect the shared arity check would otherwise report.
     let mut tree = composed_tree(100);
-    tree.root.members[0].intent.graph.nodes[1] = GraphNode::signed(
+    tree.root.members[0].signed.intent.graph.nodes[1] = GraphNode::signed(
         BOB,
         "withdraw",
         vec![GraphArg::Socket(0), GraphArg::Literal(Value::U128(1))],
@@ -1375,7 +1413,7 @@ fn a_socket_cannot_fill_a_value_parameter() {
 #[test]
 fn an_authority_socket_is_presented_not_passed() {
     let mut tree = composed_tree(100);
-    tree.root.members[0].intent.sockets =
+    tree.root.members[0].signed.intent.sockets =
         vec![Socket::Authority(Claim::of_subject(ALICE.address()))];
     tree.root.members[0].wiring = vec![Binding::Authority(ClaimSource::Account(ALICE))];
     // Bob's deposit is the last node emitted: both withdrawals and the
@@ -1824,7 +1862,7 @@ fn a_tree_is_bounded_in_depth() {
                 vec![Give::Member(give(0, 0))],
             );
             group.members = vec![Member {
-                intent: below,
+                signed: SignedIntent::unsigned(below),
                 wiring: Vec::new(),
             }];
             below = group;
@@ -1836,7 +1874,7 @@ fn a_tree_is_bounded_in_depth() {
             Vec::new(),
         );
         root.members = vec![Member {
-            intent: below,
+            signed: SignedIntent::unsigned(below),
             wiring: Vec::new(),
         }];
         tree(root)
@@ -1885,7 +1923,7 @@ fn the_wire_depth_is_pinned_to_the_deepest_admissible_tree() {
             Vec::new(),
         );
         group.members = vec![Member {
-            intent: below,
+            signed: SignedIntent::unsigned(below),
             wiring: Vec::new(),
         }];
         below = group;
@@ -1940,16 +1978,7 @@ fn fresh_keys_root_at_the_envelope_identity() {
     ];
     let admitted: Vec<_> = identities
         .iter()
-        .map(|identity| {
-            admit_tree(
-                &tree,
-                &tree.assume_self_attested(),
-                *identity,
-                &chain,
-                &TestHasher,
-            )
-            .unwrap()
-        })
+        .map(|identity| admit_tree(&tree, *identity, &chain, &TestHasher).unwrap())
         .collect();
     assert_eq!(
         admitted[0].admitted.manifest(),
@@ -2003,8 +2032,8 @@ proptest! {
         };
         tree.root.members[0].wiring[0] = binding;
         let identity = tree.hash(&TestHasher);
-        let first = admit_tree(&tree, &tree.assume_self_attested(), identity, &chain, &TestHasher);
-        let second = admit_tree(&tree, &tree.assume_self_attested(), identity, &chain, &TestHasher);
+        let first = admit_tree(&tree, identity, &chain, &TestHasher);
+        let second = admit_tree(&tree, identity, &chain, &TestHasher);
         assert_eq!(first, second);
     }
 }
@@ -2070,13 +2099,7 @@ fn a_record_stands_for_a_seal_and_for_no_other_call() {
         resources: Vec::new(),
     };
     let admit_with = |tree: &EnvelopeTree, chain: &dyn ChainRecords| {
-        admit_tree(
-            tree,
-            &tree.assume_self_attested(),
-            tree.hash(&TestHasher),
-            chain,
-            &TestHasher,
-        )
+        admit_tree(tree, tree.hash(&TestHasher), chain, &TestHasher)
     };
 
     // The seal: nothing committed answers for the component yet, which

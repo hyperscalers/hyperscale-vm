@@ -219,14 +219,8 @@ fn a_delegation_in_the_wrong_resource_is_refused_at_admission() {
         }),
     );
     let identity = tree.hash(&TestHasher);
-    let refused = admit_tree(
-        &tree,
-        &tree.assume_self_attested(),
-        identity,
-        &world,
-        &TestHasher,
-    )
-    .expect_err("the pool takes its staked resource and this pays units");
+    let refused = admit_tree(&tree, identity, &world, &TestHasher)
+        .expect_err("the pool takes its staked resource and this pays units");
 
     assert!(
         matches!(
@@ -251,14 +245,8 @@ fn an_unstake_in_the_wrong_resource_is_refused_at_admission() {
         }),
     );
     let identity = tree.hash(&TestHasher);
-    let refused = admit_tree(
-        &tree,
-        &tree.assume_self_attested(),
-        identity,
-        &world,
-        &TestHasher,
-    )
-    .expect_err("the pool takes back its stake units and this hands it the staked resource");
+    let refused = admit_tree(&tree, identity, &world, &TestHasher)
+        .expect_err("the pool takes back its stake units and this hands it the staked resource");
 
     assert!(
         matches!(
@@ -275,14 +263,8 @@ fn a_delegation_in_the_pools_own_resource_admits() -> Result<()> {
     let world = world();
     let tree = single_intent(ALICE, stake_graph(40));
     let identity = tree.hash(&TestHasher);
-    admit_tree(
-        &tree,
-        &tree.assume_self_attested(),
-        identity,
-        &world,
-        &TestHasher,
-    )
-    .context("the pool's own resource is what it asks for")?;
+    admit_tree(&tree, identity, &world, &TestHasher)
+        .context("the pool's own resource is what it asks for")?;
     Ok(())
 }
 
@@ -323,14 +305,7 @@ fn single_intent(account: PrincipalAddr, graph: ManifestGraph) -> EnvelopeTree {
 /// Admit and route one envelope into its batch entry.
 fn batch_entry(world: &Records, tree: &EnvelopeTree) -> Result<BatchTx> {
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(
-        tree,
-        &tree.assume_self_attested(),
-        identity,
-        world,
-        &TestHasher,
-    )
-    .context("admission")?;
+    let admitted = admit_tree(tree, identity, world, &TestHasher).context("admission")?;
     let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 0 });
     ensure!(routing.len() == 1, "the null resolver routes to one shard");
     let declaration = admitted.admitted.declaration().clone();

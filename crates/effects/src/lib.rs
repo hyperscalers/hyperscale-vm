@@ -65,9 +65,9 @@ pub use envelope::{
     AdmittedTree, Binding, COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, ClaimSource, CrossingCell,
     CrossingSite, ESCROW_CLAIM_SLOT, ESCROW_RECORD_SLOT, EnvelopeTree, Give, Intent, IntentHeader,
     IntentRecord, MARKER_CELL_BYTES, MAX_ACCOUNTS, MAX_INTENTS, MAX_TREE_DEPTH, Marked, Marker,
-    Member, NULLIFIER_SLOT, Nullifier, Socket, TREE_WIRE_DEPTH, ValueSource, admit_tree,
-    committed_tx_key, crossing_expiry_ms, decode_tree, encode_tree, escrow_claim_key,
-    escrow_record_key, nullifier_expiry_ms, nullifier_key,
+    Member, NULLIFIER_SLOT, Nullifier, SignedIntent, Socket, TREE_WIRE_DEPTH, ValueSource,
+    admit_tree, attest, committed_tx_key, crossing_expiry_ms, decode_tree, encode_tree,
+    escrow_claim_key, escrow_record_key, nullifier_expiry_ms, nullifier_key,
 };
 pub use explain::{
     address_text, claim_text, explain, explain_admission, explain_admission_tree, explain_method,

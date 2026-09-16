@@ -11,7 +11,8 @@ use hyperscale_vm_effects::{
     Claim, Clause, Constraint, EnvelopeTree, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta,
     Intent, IntentHeader, ManifestGraph, MethodSignature, PackageHash, PackageMetadata,
     PrefixShardResolver, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes,
-    ShardResolver, StoredRule, TestHasher, Totality, Value, admit, admit_tree, footprint,
+    ShardResolver, SignedIntent, StoredRule, TestHasher, Totality, Value, admit, admit_tree,
+    footprint,
 };
 use hyperscale_vm_manifest_builder::{
     Authority, EnvelopeBuilder, IntentBuilder, PreflightError, TypedBuilder, preflight_tree,
@@ -103,14 +104,7 @@ fn a_report_is_what_the_chain_derives() {
     // Nothing new is computed here, so everything must equal the direct
     // call it composes.
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(
-        &tree,
-        &tree.assume_self_attested(),
-        identity,
-        &chain,
-        &TestHasher,
-    )
-    .unwrap();
+    let admitted = admit_tree(&tree, identity, &chain, &TestHasher).unwrap();
     assert_eq!(report.identity(), identity);
     assert_eq!(report.manifest(), admitted.admitted.manifest());
     assert_eq!(report.admitted, admitted.admitted);
@@ -535,7 +529,7 @@ fn the_compute_column_sums_to_the_terms_and_splits_per_intent() {
         .collect();
     assert_eq!(
         sub_nodes.len(),
-        tree.root.members[0].intent.graph.nodes.len()
+        tree.root.members[0].signed.intent.graph.nodes.len()
     );
     assert!(
         sub_nodes.iter().any(|node| *node > 0),
@@ -654,7 +648,11 @@ fn a_disjunction_reports_its_branches_and_names_no_certain_signer() {
     // The desk's composition grants the account its own intent acts as.
     let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
     let offered = env.grant();
-    let wants = env.adopt(request).unwrap().one().unwrap();
+    let wants = env
+        .adopt(SignedIntent::unsigned(request))
+        .unwrap()
+        .one()
+        .unwrap();
     env.seal(root).unwrap().none().unwrap();
     env.bind(wants, offered).unwrap();
     env.register_resource(either_note_meta());
@@ -816,7 +814,11 @@ fn a_conjunction_reports_what_each_branch_asks() {
 
     let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
     let offered = env.grant();
-    let wants = env.adopt(request).unwrap().one().unwrap();
+    let wants = env
+        .adopt(SignedIntent::unsigned(request))
+        .unwrap()
+        .one()
+        .unwrap();
     env.seal(root).unwrap().none().unwrap();
     env.bind(wants, offered).unwrap();
     env.register_resource(note_meta());

@@ -302,14 +302,8 @@ fn a_transfer_acting_as_its_recipient_runs_whole() {
     assert!(alone.decomposes);
 
     let tree = acting_as(&[ALICE, BOB], transfer_graph());
-    let admitted = admit_tree(
-        &tree,
-        &tree.assume_self_attested(),
-        tree.hash(&TestHasher),
-        &world,
-        &TestHasher,
-    )
-    .expect("one intent acts as both");
+    let admitted = admit_tree(&tree, tree.hash(&TestHasher), &world, &TestHasher)
+        .expect("one intent acts as both");
     let both = star_at(
         &legs_of(&admitted.admitted),
         ALICE.address(),

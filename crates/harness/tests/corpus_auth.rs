@@ -3,8 +3,9 @@
 //! gates badges open.
 
 use hyperscale_vm_effects::{
-    Claim, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta, ManifestGraph, Marked, Marker,
-    PrincipalRule, Records, RuleBytes, StoredRule, TestHasher, Value, holdings_collection, never,
+    Claim, EnvelopeTree, EvidenceRef, GraphArg, GraphNode, Hash32, InstanceMeta, ManifestGraph,
+    Marked, Marker, PrincipalRule, Records, RuleBytes, StoredRule, TestHasher, Value,
+    holdings_collection, never,
 };
 use hyperscale_vm_fixtures::nf;
 use hyperscale_vm_harness::driver::{amount_of, cells, vault};
@@ -81,9 +82,8 @@ fn two_account_store() -> MemoryStore {
 fn an_intent_acting_as_two_accounts_commits_on_both_sign_ins() {
     let world = world();
     let tree = acting_as(&[ALICE, BOB], swap_across_own_accounts());
-    let (outcome, end, admitted) =
-        run_both_tree_attested(&world, &two_account_store(), &tree, &[vec![ALICE, BOB]])
-            .expect("one intent acts as both");
+    let (outcome, end, admitted) = run_both_tree_admitted(&world, &two_account_store(), &tree)
+        .expect("one intent acts as both");
     let tx = TxHash(tree.hash(&TestHasher).0);
     assert!(
         matches!(outcome.receipts[&tx].outcome, Outcome::Completed { .. }),
@@ -128,9 +128,10 @@ fn one_refusing_rule_refuses_the_whole_intent() {
     // Bob's cell admits his own key alone; Alice's is unwritten and
     // admits hers. Only Alice attests.
     store.write(auth(BOB), stored_rule(BOB).in_cell());
-    let tree = acting_as(&[ALICE, BOB], swap_across_own_accounts());
+    let mut tree = acting_as(&[ALICE, BOB], swap_across_own_accounts());
+    tree.root.attested_by = vec![ALICE];
     let (outcome, end, admitted) =
-        run_both_tree_attested(&world, &store, &tree, &[vec![ALICE]]).expect("admissible");
+        run_both_tree_admitted(&world, &store, &tree).expect("admissible");
     let tx = TxHash(tree.hash(&TestHasher).0);
     assert_eq!(
         outcome.receipts[&tx].outcome,
@@ -152,6 +153,57 @@ fn one_refusing_rule_refuses_the_whole_intent() {
             nullifier.account
         );
     }
+}
+
+/// A threshold is a property of one intent's attesting set: an account
+/// whose rule wants two of two keys opens to an intent both attest and
+/// stays shut to one only one of them attests, at the sign-in judged on
+/// its own shard.
+#[test]
+fn a_threshold_rule_is_judged_over_the_intents_attesting_set() {
+    let world = world();
+    let mut store = sealed_store();
+    store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
+    let two_of_two = StoredRule::CountOf {
+        count: 2,
+        rules: vec![
+            StoredRule::claim(Claim::of_subject(BOB)),
+            StoredRule::claim(Claim::of_subject(MAKER)),
+        ],
+    };
+    store.write(
+        auth(ALICE),
+        RuleBytes::try_from(&two_of_two)
+            .expect("a rule within the vocabulary caps")
+            .in_cell(),
+    );
+    let tx = |tree: &EnvelopeTree| TxHash(tree.hash(&TestHasher).0);
+
+    let mut both = acting_as(&[ALICE], transfer_graph());
+    both.root.attested_by = vec![BOB, MAKER];
+    let (outcome, end) = run_both_tree(&world, &store, &both).expect("admissible");
+    assert!(
+        matches!(
+            outcome.receipts[&tx(&both)].outcome,
+            Outcome::Completed { .. }
+        ),
+        "two of two attest; got {:?}",
+        outcome.receipts[&tx(&both)].outcome
+    );
+    assert_eq!(amount_of(&end, vault(BOB, RES_X)), 100);
+
+    let mut one = acting_as(&[ALICE], transfer_graph());
+    one.root.attested_by = vec![BOB];
+    let (outcome, end) = run_both_tree(&world, &store, &one).expect("admissible");
+    assert_eq!(
+        outcome.receipts[&tx(&one)].outcome,
+        Outcome::ConditionUnmet {
+            condition: UnmetCondition::SignedIn {
+                account: ALICE.address(),
+            },
+        }
+    );
+    assert_eq!(amount_of(&end, vault(BOB, RES_X)), 0);
 }
 
 /// Sign in and hand the account to Bob's rule, uniformly.
