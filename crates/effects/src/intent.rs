@@ -333,7 +333,7 @@ impl SignedIntent {
     /// Attest the intent with `key`, standing the attestation beside
     /// those already given. The caller signs in the order the intent
     /// declares its attesting principals.
-    pub fn attest<S: AccountSigner>(&mut self, key: &S, hasher: &dyn Hasher) {
+    pub fn attest<S: AccountSigner + ?Sized>(&mut self, key: &S, hasher: &dyn Hasher) {
         let hash = self.intent.hash(hasher);
         self.signatures.push(attest(key, &hash.0.0));
     }

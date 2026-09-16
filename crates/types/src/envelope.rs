@@ -403,7 +403,7 @@ impl TransactionEnvelope {
 /// key and their claim about which curve produced it are written in one
 /// place and cannot drift apart.
 #[must_use]
-pub fn attest<S: AccountSigner>(key: &S, hash: &[u8; 32]) -> Attestation {
+pub fn attest<S: AccountSigner + ?Sized>(key: &S, hash: &[u8; 32]) -> Attestation {
     Attestation {
         scheme: key.scheme(),
         public_key: key.public_key_bytes(),

@@ -481,6 +481,9 @@ pub struct IntentBuilder<'a> {
     chain: &'a dyn ChainRecords,
     hasher: &'a dyn Hasher,
     header: IntentHeader,
+    /// The principals whose keys attest the intent, where they are not
+    /// the accounts' own.
+    attested_by: Option<Vec<PrincipalAddr>>,
     sockets: Vec<Socket>,
     gives: Vec<Give>,
     members: Vec<Placed>,
@@ -541,12 +544,26 @@ impl<'a> IntentBuilder<'a> {
             chain,
             hasher,
             header,
+            attested_by: None,
             sockets: Vec::new(),
             gives: Vec::new(),
             members: Vec::new(),
             instances: Vec::new(),
             resources: Vec::new(),
         }
+    }
+
+    /// Declare the principals whose keys attest this intent, in the
+    /// order their attestations will stand beside it.
+    ///
+    /// Left undeclared, the accounts attest themselves: each account's
+    /// own key signs. Declared, the set is whatever each account's
+    /// stored rule has to admit — a delegate's key acting as an account
+    /// it does not derive, or the several keys a threshold names. Signed
+    /// content: the set is in the intent's hash, so one intent admits
+    /// exactly one.
+    pub fn attested_by(&mut self, principals: impl IntoIterator<Item = PrincipalAddr>) {
+        self.attested_by = Some(principals.into_iter().collect());
     }
 
     /// Declare a socket: an edge the composer must wire, carrying
@@ -1003,7 +1020,7 @@ impl<'a> IntentBuilder<'a> {
         }
         let intent = Intent {
             header: self.header,
-            attested_by: accounts.clone(),
+            attested_by: self.attested_by.unwrap_or_else(|| accounts.clone()),
             accounts,
             graph,
             sockets: self.sockets,

@@ -757,6 +757,29 @@ fn a_user_composes_across_two_accounts() {
     assert!(manifest.nodes[2].evidence.contains(&Claim::of_subject(BOB)));
 }
 
+/// The attesting set is the builder's to declare: left alone it is the
+/// accounts' own keys, declared it is whatever the accounts' rules have
+/// to admit — and either way it is signed content the intent hash
+/// covers.
+#[test]
+fn an_intent_declares_who_attests_it() {
+    let chain = world();
+    let mut own = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
+    let funds = account::withdraw(&mut own, ALICE, RES_X, 1).unwrap();
+    account::deposit(&mut own, BOB, funds).unwrap();
+    let own = own.into_decl().expect("a leaf");
+    assert_eq!(own.attested_by, [ALICE]);
+
+    let mut delegated = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
+    delegated.attested_by([CAROL]);
+    let funds = account::withdraw(&mut delegated, ALICE, RES_X, 1).unwrap();
+    account::deposit(&mut delegated, BOB, funds).unwrap();
+    let delegated = delegated.into_decl().expect("a delegate's leaf");
+    assert_eq!(delegated.accounts, [ALICE]);
+    assert_eq!(delegated.attested_by, [CAROL]);
+    assert_ne!(own.hash(&TestHasher), delegated.hash(&TestHasher));
+}
+
 /// A quote assembled into a basket and sold on: Carol composes Bob's
 /// quote and presents its interface as her own — a socket for the X Bob
 /// wants, passed through, and a give of the Y he produces, given on —

@@ -67,7 +67,7 @@ pub fn wrap_publish(
 /// locally built artifact past the wire cap, which a decoded one never
 /// is. A signer is handed the refusal rather than a signature over bytes
 /// no envelope can carry.
-pub fn sign<S: AccountSigner>(
+pub fn sign<S: AccountSigner + ?Sized>(
     mut envelope: TransactionEnvelope,
     key: &S,
     hasher: &dyn Hasher,
