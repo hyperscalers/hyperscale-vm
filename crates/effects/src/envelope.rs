@@ -28,12 +28,12 @@
 use std::collections::BTreeSet;
 
 use hyperscale_hbor::{Hbor, from_slice, to_vec};
+pub use hyperscale_vm_types::MAX_INTENTS;
 use hyperscale_vm_types::{
     ARTIFACT_GRACE_MS, Address, COMMITTED_GRACE_MS, CROSSING_GRACE_MS, Effect, EffectTarget,
     IntentHash, LegShape, MAX_MANIFEST_NODES, Mode, Moves, NetworkId, PrincipalAddr, ResourceAddr,
     SubstateKey, SweepBucket, TxHash,
 };
-pub use hyperscale_vm_types::{MAX_INTENTS, MAX_SUBINTENTS};
 
 use crate::PACKAGE_SLOT_BASE;
 use crate::admission::{

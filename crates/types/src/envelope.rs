@@ -55,7 +55,7 @@ pub const MAX_MESSAGE_LEN: usize = 1024;
 /// What a decoder allocates for the envelope as the network carries it,
 /// derived from the caps inside it so it moves when they do.
 pub const MAX_ENVELOPE_BYTES: usize = MAX_ARTIFACT_BYTES
-    + (MAX_SUBINTENTS + 1) * (MAX_KEY_BYTES + MAX_SIG_BYTES + 16)
+    + MAX_INTENTS * (MAX_KEY_BYTES + MAX_SIG_BYTES + 16)
     + MAX_MANIFEST_NODES * 10
     + MAX_MESSAGE_LEN
     + 256;

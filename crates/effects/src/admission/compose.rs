@@ -231,10 +231,10 @@ pub(super) fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), Admission
     for (index, intent) in intents.iter().enumerate() {
         if intent.sockets.len() > MAX_SOCKETS {
             return Err(AdmissionError::TooManySockets {
-                intent: u32::try_from(index).expect("intents are bounded by MAX_SUBINTENTS"),
+                intent: u32::try_from(index).expect("intents are bounded by MAX_INTENTS"),
             });
         }
-        let intent_index = u32::try_from(index).expect("intents are bounded by MAX_SUBINTENTS");
+        let intent_index = u32::try_from(index).expect("intents are bounded by MAX_INTENTS");
         if intent.bindings.len() != intent.sockets.len() {
             return Err(AdmissionError::BindingArity {
                 intent: intent_index,

@@ -1030,11 +1030,11 @@ impl Admission<'_> {
 
     /// An intent's own position, as these payloads carry it.
     ///
-    /// Bounded by `MAX_SUBINTENTS`, which the envelope gate enforces
+    /// Bounded by `MAX_INTENTS`, which the envelope gate enforces
     /// before anything here runs — the same expectation the interleave
     /// already makes of it.
     fn intent_of(intent_index: usize) -> u32 {
-        u32::try_from(intent_index).expect("intents are bounded by MAX_SUBINTENTS")
+        u32::try_from(intent_index).expect("intents are bounded by MAX_INTENTS")
     }
 
     /// Bind the edge a socket was filled with.
@@ -1072,7 +1072,7 @@ impl Admission<'_> {
                 param: param_index,
             });
         }
-        let intent_at = u32::try_from(intent_index).expect("intents are bounded by MAX_SUBINTENTS");
+        let intent_at = u32::try_from(intent_index).expect("intents are bounded by MAX_INTENTS");
         let (
             Socket::Value {
                 resource: declared,
