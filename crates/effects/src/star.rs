@@ -328,7 +328,7 @@ pub fn star_at(
         .iter()
         .map(|node| shards.shard_of(node.target))
         .collect();
-    let roles = settle(legs, &homes, shards.shard_of(payer));
+    let roles = settle(legs, &homes, shards.shard_of(payer), shards);
     let core: BTreeSet<ShardId> = roles
         .iter()
         .zip(&homes)
@@ -379,6 +379,15 @@ pub fn star_at(
 /// Skipped, and there is nothing to under-flag — no method yields a
 /// principal claim.
 ///
+/// **A body acting as a stranger is the core's.** A node presenting an
+/// account's claim off that account's shard ran on a sign-in that shard
+/// has not judged yet. A leg's verdict is its own, so nothing would
+/// retract it if the judgment refused; the core's waits on that shard
+/// (`every_account_is_awaited`), so the node goes there. On the
+/// account's own shard the judgment lands before the body, as it does
+/// for every gated call an account makes on itself, and the node keeps
+/// its role.
+///
 /// **The core must have a bearer.** A core with no node in it names no
 /// shard for a refusal, a departure or an absence to be taken against,
 /// so there is nothing for a reclaim to be admitted on. Where nothing
@@ -399,8 +408,22 @@ pub fn star_at(
 /// no shard is both the core's and a leg's — a leg left beside the core
 /// would settle its own crossing on a shard whose verdict the core
 /// already gave, a member neither side of the star names.
-fn settle(legs: &[LegShape], homes: &[ShardId], payer_home: ShardId) -> Vec<LegRole> {
+fn settle(
+    legs: &[LegShape],
+    homes: &[ShardId],
+    payer_home: ShardId,
+    shards: &dyn ShardResolver,
+) -> Vec<LegRole> {
     let mut settled: Vec<LegRole> = legs.iter().map(|node| node.role).collect();
+    for (index, node) in legs.iter().enumerate() {
+        let here = homes[index];
+        let acts_as_a_stranger = node.presents.iter().any(|subject| {
+            subject.class() == AddressClass::Principal && shards.shard_of(*subject) != here
+        });
+        if acts_as_a_stranger {
+            settled[index] = LegRole::Core;
+        }
+    }
     for (index, node) in legs.iter().enumerate() {
         if settled.get(index) != Some(&LegRole::Attesting) {
             continue;
@@ -550,7 +573,7 @@ impl Placed<'_> {
             && self.a_leg_sits_off_the_core()
             && Self::crossings_fit(edges)
             && Self::every_route_owner_participates(&participants, payer, accounts, shards)
-            && self.every_account_issues(accounts, shards)
+            && self.every_account_is_awaited(accounts, edges, shards)
             && self.every_node_declares_inside_its_scope(shards)
             && self.every_edge_has_one_consumer()
             && self.no_named_instance_touches_a_leg()
@@ -611,49 +634,54 @@ impl Placed<'_> {
             .all(|owner| participants.contains(&shards.shard_of(owner)))
     }
 
-    /// Every shard running a member that issues: one that reserves, one
-    /// that bears the core's share, and a delivery whose value never
-    /// departed because its producer runs beside it.
+    /// Every shard the core's verdict waits on: the core's own, and the
+    /// home of every crossing a core node consumes.
     ///
-    /// What is excluded is a shard running deliveries alone. Its member
-    /// materializes after the core committed, on an arrival the core
-    /// issued — so a condition judged there is judged after the verdict
-    /// it was supposed to stand before.
-    fn issuing_shards(&self) -> BTreeSet<ShardId> {
-        (0u32..)
-            .zip(self.legs)
-            .filter_map(|(index, leg)| {
-                let home = self.homes[index as usize];
-                let issues = match self.role(index) {
-                    LegRole::Core | LegRole::Inbound | LegRole::Attesting => true,
-                    LegRole::Outbound => leg
-                        .edges
-                        .iter()
-                        .all(|edge| self.running(edge.source).contains(&home)),
-                };
-                issues.then_some(home)
-            })
-            .collect()
+    /// A core member settles on the core set and on the arrivals its
+    /// nodes take; a leg settles on itself. So a judgment anywhere else
+    /// — an inbound whose value crosses to a delivery, a member that
+    /// only attests, an outbound fed from beside itself — lands beside
+    /// the core's verdict rather than ahead of it, whatever that member
+    /// issues.
+    fn awaited_by_core(&self, edges: &[CrossingEdge]) -> BTreeSet<ShardId> {
+        let mut awaited = self.core.clone();
+        awaited.extend(
+            edges
+                .iter()
+                .filter(|edge| self.role(edge.consumer) == LegRole::Core)
+                .map(|edge| edge.from),
+        );
+        awaited
     }
 
-    /// Every account an intent acts as sits on a shard running a member
-    /// that issues.
+    /// Every account an intent acts as sits on a shard the core waits
+    /// on.
     ///
     /// Stronger than participating, and for one reason: an account's
     /// sign-in is a condition its own shard judges at materialization,
-    /// and that lands before any leg commits only where the member
-    /// issues. An account whose shard runs a delivery alone would have
-    /// its sign-in answered after a core that ran on the strength of it
-    /// — so the shape runs whole instead, where every participant
-    /// answers every condition before anything commits.
+    /// and a body that ran on the claim its signature resolved to is
+    /// retracted only where the verdict it belongs to waited on that
+    /// judgment. The core waits on its own shards and on the arrivals
+    /// its nodes consume, and a leg waits on nothing but itself — so an
+    /// account on any other shard would have its sign-in answered beside
+    /// a core that had already committed on the strength of it, and the
+    /// shape runs whole instead, where every participant answers every
+    /// condition before anything commits. The body itself is the core's
+    /// wherever it presents the claim off the account's shard, which is
+    /// what [`settle`] made of it.
     ///
     /// The fee payer is not held to this. What the reservation needs is
     /// a member of any side, which is what participating already says.
-    fn every_account_issues(&self, accounts: &[Address], shards: &dyn ShardResolver) -> bool {
-        let issuing = self.issuing_shards();
+    fn every_account_is_awaited(
+        &self,
+        accounts: &[Address],
+        edges: &[CrossingEdge],
+        shards: &dyn ShardResolver,
+    ) -> bool {
+        let awaited = self.awaited_by_core(edges);
         accounts
             .iter()
-            .all(|account| issuing.contains(&shards.shard_of(*account)))
+            .all(|account| awaited.contains(&shards.shard_of(*account)))
     }
 
     /// Every target a node declares sits inside the scope of the member
@@ -1814,11 +1842,12 @@ mod tests {
     }
 
     /// An account's sign-in is judged on its own shard at
-    /// materialization, and that lands before anything commits only
-    /// where the member issues. A shard running a delivery alone
-    /// materializes after the core it would have vouched for, so an
-    /// account sitting there runs the shape whole — while the same
-    /// account on the shard that reserves divides as before.
+    /// materialization, and the core's verdict stands behind it only
+    /// where the core waited on that shard. A shard running a delivery
+    /// alone materializes after the core it would have vouched for, so
+    /// an account sitting there runs the shape whole — while the same
+    /// account on the shard whose crossing the core takes divides as
+    /// before.
     #[test]
     fn an_account_whose_shard_only_delivers_does_not_decompose() {
         let alice = Address::new([0x11; 31], AddressClass::Component);
@@ -1835,7 +1864,7 @@ mod tests {
 
         assert!(
             over(&[alice]),
-            "the account that reserves is on a shard that issues",
+            "the account that reserves is on a shard the core waits on",
         );
         assert!(over(&[venue]), "and so is the core's");
         assert!(
@@ -1845,8 +1874,119 @@ mod tests {
         );
         assert!(
             !over(&[alice, bob]),
-            "one account off the issuing side is enough",
+            "one account the core does not wait on is enough",
         );
+    }
+
+    /// Issuing is not waiting. A member that reserves, attests, or
+    /// delivers from beside itself issues on its own verdict, and the
+    /// core takes nothing from it — so a sign-in judged there lands
+    /// beside the core's verdict, not ahead of it. Three shapes where the
+    /// account's shard runs an issuing member and the core waits on
+    /// none of them.
+    #[test]
+    fn an_account_whose_shard_the_core_does_not_wait_on_does_not_decompose() {
+        let alice = Address::new([0x11; 31], AddressClass::Component);
+        let venue = Address::new([0x91; 31], AddressClass::Component);
+        let bob = Address::new([0x22; 31], AddressClass::Component);
+        let carol = {
+            let mut beside = [0x11; 31];
+            beside[30] = 0x13;
+            Address::new(beside, AddressClass::Component)
+        };
+        for party in [venue, bob] {
+            assert_ne!(
+                resolver().shard_of(alice),
+                resolver().shard_of(party),
+                "the fixture has to straddle, or the verdict below proves nothing",
+            );
+        }
+        assert_eq!(
+            resolver().shard_of(alice),
+            resolver().shard_of(carol),
+            "carol has to sit beside alice, or the self-fed delivery crosses",
+        );
+        let over = |legs: &[LegShape], accounts: &[Address]| {
+            star_at(legs, venue, accounts, &resolver(), &TestHasher).decomposes
+        };
+
+        // Alice reserves, and her value crosses to a delivery the core
+        // never takes.
+        let past_the_core = vec![
+            leg(alice, LegRole::Inbound, &[], 0),
+            leg(venue, LegRole::Core, &[], 1),
+            leg(bob, LegRole::Outbound, &[(0, 0)], 2),
+        ];
+        assert!(over(&past_the_core, &[venue]));
+        assert!(!over(&past_the_core, &[alice]));
+
+        // Alice's shard only attests.
+        let attesting = vec![
+            leg(alice, LegRole::Attesting, &[], 0),
+            leg(venue, LegRole::Core, &[], 1),
+            leg(bob, LegRole::Outbound, &[(1, 0)], 2),
+        ];
+        assert!(over(&attesting, &[venue]));
+        assert!(!over(&attesting, &[alice]));
+
+        // Alice reserves for a delivery beside her.
+        let beside = vec![
+            leg(alice, LegRole::Inbound, &[], 0),
+            leg(venue, LegRole::Core, &[], 1),
+            leg(bob, LegRole::Outbound, &[(1, 0)], 2),
+            leg(carol, LegRole::Outbound, &[(0, 0)], 3),
+        ];
+        assert!(over(&beside, &[venue]));
+        assert!(!over(&beside, &[alice]));
+    }
+
+    /// A body presenting an account's claim off that account's shard is
+    /// the core's: a leg's verdict is its own, and only the core's waits
+    /// on the shard that judges the sign-in. On the account's own shard
+    /// the node keeps its role — the judgment lands before the body.
+    #[test]
+    fn a_body_acting_as_a_stranger_is_the_cores() {
+        let alice: Address = PrincipalAddr::new([0x11; 31]).into();
+        let treasury = Address::new([0x33; 31], AddressClass::Component);
+        let venue = Address::new([0x91; 31], AddressClass::Component);
+        let bob = Address::new([0x22; 31], AddressClass::Component);
+        assert_ne!(
+            resolver().shard_of(alice),
+            resolver().shard_of(treasury),
+            "the fixture has to straddle, or the verdict below proves nothing",
+        );
+        let mut legs = vec![
+            leg(treasury, LegRole::Inbound, &[], 0),
+            leg(venue, LegRole::Core, &[], 1),
+            leg(bob, LegRole::Outbound, &[(0, 0)], 2),
+        ];
+        let star = |legs: &[LegShape]| star_at(legs, venue, &[alice], &resolver(), &TestHasher);
+
+        assert_eq!(star(&legs).roles[0], LegRole::Inbound);
+        legs[0].presents = vec![alice];
+        let acting = star(&legs);
+        assert_eq!(
+            acting.roles[0],
+            LegRole::Core,
+            "the reserve ran on Alice's claim, so it is the core's"
+        );
+        assert!(
+            !acting.decomposes,
+            "and the core waits on nothing from Alice's shard, so the shape runs whole"
+        );
+
+        // Alice's own reserve beside it: her shard now feeds the core,
+        // and it keeps its role — the judgment lands before the body.
+        legs.push(leg(alice, LegRole::Inbound, &[], 3));
+        legs[1].edges.push(ValueEdge {
+            source: 3,
+            output: 0,
+            non_fungible: false,
+        });
+        legs[3].presents = vec![alice];
+        let awaited = star(&legs);
+        assert_eq!(awaited.roles[3], LegRole::Inbound);
+        assert!(awaited.decomposes);
     }
 
     /// A party the routing declares beyond any node — a sponsored payer,
