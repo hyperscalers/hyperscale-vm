@@ -6,7 +6,9 @@
 //! package's own business, held in that package's own cells.
 
 use hyperscale_hbor::{DecodeError, EncodeError, Hbor, HborShape, from_slice, to_vec};
+use hyperscale_vm_types::Address;
 
+use crate::claim::Claim;
 use crate::rule::StoredRule;
 
 /// A stored rule as the bytes it travels as.
@@ -69,6 +71,31 @@ impl RuleBytes {
     /// whose rule is past the vocabulary's caps.
     pub fn rule_in_cell(cell: &[u8]) -> Result<StoredRule, DecodeError> {
         from_slice::<Self>(cell)?.decode()
+    }
+}
+
+/// Whether the rule stored in `owner`'s `auth` cell admits `keys`.
+///
+/// The one judgment made against keys rather than against the claims a
+/// call presented, and two judges ask it: the fee reservation, before
+/// the transaction is included at all, and the sign-in condition its
+/// account's shard answers at materialization. They ask different
+/// questions of the same cell, so they must not be able to read it
+/// differently — which is why this is the whole of both rather than a
+/// rule each states for itself.
+///
+/// An unwritten cell is governed by the key its address derives, so the
+/// attesting set answers it only by being exactly that principal. Bytes
+/// that are not a rule are not a rule admitting everybody, and neither
+/// is a rule asking about anything but claims: both fail closed.
+#[must_use]
+pub fn auth_cell_admits(owner: Address, cell: Option<&[u8]>, keys: &[Claim]) -> bool {
+    match cell {
+        None | Some([]) => keys == [Claim::of_subject(owner)],
+        Some(bytes) => RuleBytes::rule_in_cell(bytes)
+            .ok()
+            .and_then(|rule| rule.claims_only())
+            .is_some_and(|claims| claims.satisfied_by(keys)),
     }
 }
 

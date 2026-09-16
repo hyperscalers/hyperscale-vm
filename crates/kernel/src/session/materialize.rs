@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::{Claim, Condition, Declaration, JudgedLeaf, Rule, RuleBytes};
+use hyperscale_vm_effects::{Condition, Declaration, JudgedLeaf, Rule, auth_cell_admits};
 use hyperscale_vm_types::{
     Address, CollectionId, Effect, EffectTarget, Mode, Moves, Presence, ResourceAddr, SubstateKey,
     TxHash,
@@ -818,15 +818,8 @@ fn judge(store: &mut OverlayStore, rule: &Rule<JudgedLeaf>) -> Result<Judgement,
             // against the set. Bytes that do not decode are not a rule,
             // and a rule asking about anything but claims is one this
             // judge holds nothing to answer — both fail closed.
-            let bytes = store.read(*cell)?.unwrap_or_default();
-            let admits = if bytes.is_empty() {
-                keys.as_slice() == [Claim::of_subject(cell.owner)]
-            } else {
-                RuleBytes::rule_in_cell(&bytes)
-                    .ok()
-                    .and_then(|rule| rule.claims_only())
-                    .is_some_and(|claims| claims.satisfied_by(keys))
-            };
+            let bytes = store.read(*cell)?;
+            let admits = auth_cell_admits(cell.owner, bytes.as_deref(), keys);
             Ok(if admits {
                 Judgement::Met
             } else {
