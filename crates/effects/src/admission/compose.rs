@@ -167,9 +167,10 @@ pub struct IntentView<'a> {
     pub(crate) graph: &'a ManifestGraph,
     pub(crate) sockets: &'a [Socket],
     pub(crate) bindings: &'a [Binding],
-    /// Whose signature this intent carries, and so whose identity its
-    /// proof names. A bare graph is unsigned and produces none.
-    pub(crate) signer: Option<PrincipalAddr>,
+    /// The account this intent acts as: the owner of its nullifier, the
+    /// owner of the `auth` cell its sign-in is judged against, and the
+    /// subject its signature resolves to.
+    pub(crate) account: PrincipalAddr,
     /// What this intent's own signer signed: the declaration's hash for
     /// an intent of a tree, and the graph's own for a bare one.
     ///
@@ -203,7 +204,7 @@ impl<'a> IntentView<'a> {
             graph,
             sockets,
             bindings,
-            signer: None,
+            account: PrincipalAddr::new([0; 31]),
             identity: IntentHash(Hash32([0; 32])),
             expiry_ms: 0,
         }

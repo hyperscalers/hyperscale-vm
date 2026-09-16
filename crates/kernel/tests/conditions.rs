@@ -15,7 +15,7 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, Outcome, Presence,
-    PrincipalAddr, ResourceAddr, SubstateKey, TxHash, UnmetCondition,
+    ResourceAddr, SubstateKey, TxHash, UnmetCondition,
 };
 
 /// `batch` with every entry applying `applies`.
@@ -119,7 +119,6 @@ fn call(target: Address, evidence: Vec<Claim>, requires: Vec<Rule<JudgedLeaf>>) 
         answers: false,
         issues: Vec::new(),
         evidence,
-        signed_in: None,
         requires,
     }
 }
@@ -330,53 +329,6 @@ fn a_sign_in_over_undecodable_bytes_admits_nobody() {
         },
         "the account's own key does not answer past bytes that do not decode",
     );
-}
-
-/// A signature signs in: at a rule cell under the signer's own prefix
-/// it is the whole answer while the cell is unwritten — the key the
-/// address derives from governs it — and the identity the stored rule
-/// is judged with once one is. Under anyone else's prefix it answers
-/// nothing, so a key an account has retired stands in for that account
-/// nowhere.
-#[test]
-fn a_sign_in_answers_only_a_rule_cell_of_its_own() {
-    let target = principal(1);
-    let key = cell_of(target);
-    let requires = vec![Rule::Require(JudgedLeaf::Stored { cell: key })];
-
-    let judged = |store: &MemoryStore, signer: u8| {
-        let mut entry = BatchTx::new(tx(7), declaring(key, Vec::new()), env());
-        entry = entry.with_calls(vec![NodeCall {
-            signed_in: Some(PrincipalAddr::new([signer; 31])),
-            ..call(target, Vec::new(), requires.clone())
-        }]);
-        run(store, &[entry])
-    };
-    let unmet = Outcome::ConditionUnmet {
-        condition: UnmetCondition::Satisfies { node: 0 },
-    };
-
-    // Unwritten: the owner's own key, and nobody else's.
-    let unwritten = MemoryStore::new();
-    assert!(matches!(judged(&unwritten, 1), Outcome::Completed { .. }));
-    assert_eq!(judged(&unwritten, 2), unmet);
-
-    // Stored, naming the owner's own key: the sign-in is judged as that
-    // identity. Another signer's is not lent to a cell that is not its
-    // own, and is not what the rule names either.
-    let mut own = MemoryStore::new();
-    let stored = RuleBytes::try_from(&StoredRule::claim(identity(1))).unwrap();
-    own.write(key, stored.in_cell());
-    assert!(matches!(judged(&own, 1), Outcome::Completed { .. }));
-    assert_eq!(judged(&own, 2), unmet);
-
-    // Stored, naming someone else: the owner's key is retired, and the
-    // one it names signs in at its own account, not here.
-    let mut retired = MemoryStore::new();
-    let stored = RuleBytes::try_from(&StoredRule::claim(identity(2))).unwrap();
-    retired.write(key, stored.in_cell());
-    assert_eq!(judged(&retired, 1), unmet);
-    assert_eq!(judged(&retired, 2), unmet);
 }
 
 /// A component's address is derived from no key, so its absent table's

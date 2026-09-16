@@ -85,7 +85,9 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
     assert_eq!(
         results,
         vec![TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 0 },
+            condition: UnmetCondition::SignedIn {
+                account: ALICE.address(),
+            },
         })],
         "the retired key must not open the account"
     );
@@ -227,13 +229,17 @@ fn a_retired_key_is_refused_at_its_own_sign_in_and_reaches_no_other() {
     assert_eq!(
         results,
         vec![TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 0 },
+            condition: UnmetCondition::SignedIn {
+                account: ALICE.address(),
+            },
         })],
         "the retired key is refused where a signature is judged, and nowhere later"
     );
 
-    // Direct: the signature presented to the maker's rule itself never
-    // enters a block.
+    // Direct: presented straight at the maker's rule, the signature
+    // resolves to Alice's account — and Alice's own shard judges her
+    // sign-in from her `auth` cell before any node runs, so the retired
+    // key is stopped there rather than at the rule it reached for.
     let direct = ManifestGraph {
         nodes: vec![GraphNode {
             target: MAKER.into(),
@@ -250,8 +256,12 @@ fn a_retired_key_is_refused_at_its_own_sign_in_and_reaches_no_other() {
     );
     assert_eq!(
         results,
-        vec![TxResult::Inadmissible(0)],
-        "a signature reaches no rule but the signer's own"
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::SignedIn {
+                account: ALICE.address(),
+            },
+        })],
+        "the retired key is refused at its own sign-in, whatever it reached for"
     );
 }
 
@@ -367,9 +377,10 @@ fn promote_by(signer: PrincipalAddr) -> ManifestGraph {
 }
 
 /// Whether `signer` opens Alice's sign-in at `clock_ms`: the whole
-/// authorized transfer completes, or refuses at Alice's authorize node
-/// — the first node for Alice's own key, the second for anyone else,
-/// whose own sign-in precedes it.
+/// authorized transfer completes, or refuses. Alice's own key refuses at
+/// her sign-in, which her shard judges from her `auth` cell before any
+/// node runs; anyone else's own sign-in passes at their own cell and the
+/// refusal lands on the node reaching Alice's rule.
 fn assert_acts(
     world: &Records,
     store: &MemoryStore,
@@ -393,12 +404,17 @@ fn assert_acts(
             results[0]
         );
     } else {
+        let refusal = if signer == ALICE {
+            UnmetCondition::SignedIn {
+                account: ALICE.address(),
+            }
+        } else {
+            UnmetCondition::Satisfies { node: 1 }
+        };
         assert_eq!(
             results,
             vec![TxResult::Refused(Outcome::ConditionUnmet {
-                condition: UnmetCondition::Satisfies {
-                    node: u32::from(signer != ALICE),
-                },
+                condition: refusal
             })],
             "the rule must refuse this signer at {clock_ms}"
         );
@@ -643,7 +659,9 @@ fn recovery_rotates_a_hostile_primary_out() {
     assert_eq!(
         results,
         vec![TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 0 },
+            condition: UnmetCondition::SignedIn {
+                account: ALICE.address(),
+            },
         })]
     );
 

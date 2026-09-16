@@ -121,7 +121,7 @@ mod tests {
         addr, instance_of, meta_of, method, payer_payee_world, pkg, resolver, resource, self_point,
     };
     use crate::types::{EdgeContent, ShardId, SlotId, Value, child_key, package_slot};
-    use crate::vocabulary::CONFIG;
+    use crate::vocabulary::{AUTH, CONFIG};
 
     const fn alice() -> PrincipalAddr {
         PrincipalAddr::new([0xAA; 31])
@@ -240,10 +240,23 @@ mod tests {
                     )),
                     mode: Mode::Read,
                 },
+                // The intent's sign-in, which is admission's own and no
+                // clause's: one read of the account's rule cell, beside
+                // the condition that judges it.
+                Effect {
+                    target: EffectTarget::Point(child_key(
+                        &TestHasher,
+                        alice().address(),
+                        AUTH,
+                        &[],
+                    )),
+                    mode: Mode::Read,
+                },
             ],
             "each node's clauses in node order, its fence read last — \
              appended, so every clause span an ABI binding names keeps \
-             the position its signature gave it"
+             the position its signature gave it, and the sign-in after \
+             every frame"
         );
     }
 
@@ -296,9 +309,16 @@ mod tests {
     ///
     /// Admission puts that read on every component call, so a test about
     /// what a signature declares counts what the signature wrote.
+    /// The effects `target` declares of its own, its instantiation fence
+    /// aside. Owner-keyed, so what admission injects under another
+    /// prefix — a signing account's rule cell — is somebody else's and
+    /// not counted here.
     fn own_effects(set: &EffectSet, target: impl Into<Address>) -> usize {
-        let leaf = EffectTarget::Point(child_key(&TestHasher, target, CONFIG, &[]));
-        set.iter().filter(|effect| effect.target != leaf).count()
+        let target = target.into();
+        let fence = EffectTarget::Point(child_key(&TestHasher, target, CONFIG, &[]));
+        set.iter()
+            .filter(|effect| effect.target.owner() == target && effect.target != fence)
+            .count()
     }
 
     #[test]
@@ -668,9 +688,10 @@ mod tests {
         );
         assert_eq!(
             sets(&admitted).len(),
-            1,
-            "and the one shard routed to is the target's own, which the \
-             instantiation fence makes a participant of every call"
+            2,
+            "the target's own shard, which the instantiation fence makes \
+             a participant of every call, and the signing account's, \
+             whose rule cell the sign-in reads"
         );
 
         // The same signature over a configuration its guard holds for.

@@ -36,8 +36,8 @@ pub use hyperscale_vm_types::{MAX_INTENTS, MAX_SUBINTENTS};
 
 use crate::PACKAGE_SLOT_BASE;
 use crate::admission::{
-    AdmissionError, Admitted, IntentView, MAX_SOCKETS, TargetAuthority, admit_intents,
-    check_instance_value_depth, check_value_depth,
+    AdmissionError, Admitted, IntentView, MAX_SOCKETS, admit_intents, check_instance_value_depth,
+    check_value_depth,
 };
 use crate::claim::Claim;
 use crate::dsl::PresentedGrants;
@@ -1021,30 +1021,6 @@ pub fn admit_tree(
     chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
 ) -> Result<AdmittedTree, AdmissionError> {
-    admit_tree_with_authority(tree, identity, chain, hasher, TargetAuthority::Required)
-}
-
-/// [`admit_tree`] with the target-authority rule made optional.
-///
-/// Only a preview waives it, and only when its caller asked to be shown
-/// what an envelope would do before its counterparties have signed: the
-/// signature is then admitted wherever it is presented, and the embedder
-/// drops the judgment it would fail.
-///
-/// # Errors
-///
-/// As [`admit_tree`].
-///
-/// # Panics
-///
-/// As [`admit_tree`].
-pub fn admit_tree_with_authority(
-    tree: &EnvelopeTree,
-    identity: ManifestHash,
-    chain: &dyn ChainRecords,
-    hasher: &dyn Hasher,
-    authority: TargetAuthority,
-) -> Result<AdmittedTree, AdmissionError> {
     if tree.intents.len() > MAX_INTENTS {
         return Err(AdmissionError::TooManyIntents);
     }
@@ -1085,7 +1061,7 @@ pub fn admit_tree_with_authority(
             graph: &intent.decl.graph,
             sockets: &intent.decl.sockets,
             bindings: &intent.bindings,
-            signer: Some(intent.account),
+            account: intent.account,
             identity: record.intent,
             expiry_ms: crossing_expiry_ms(&intent.decl.header),
         })
@@ -1106,15 +1082,7 @@ pub fn admit_tree_with_authority(
         .map(|meta| meta.address(hasher).address())
         .collect();
     let grants = PresentedGrants::from_presented(hasher, &tree.resources);
-    let mut admitted = admit_intents(
-        &views,
-        identity,
-        &resolvable,
-        &presented,
-        &grants,
-        hasher,
-        authority,
-    )?;
+    let mut admitted = admit_intents(&views, identity, &resolvable, &presented, &grants, hasher)?;
     // One exclusive nullifier creation per intent. No signature declared
     // these, so they belong to no frame — but they are the once-only
     // execution guarantee, so they are folded into the declaration here

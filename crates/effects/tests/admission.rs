@@ -220,15 +220,6 @@ fn evidence_is_presented_exactly_where_it_is_required() {
         admit(&missing, ALICE, &chain, &TestHasher),
         Err(AdmissionError::MissingEvidence { node: 1 })
     );
-
-    // And the proof rule itself: a signature signs in, so presenting it
-    // to the guarded withdrawal is refused whoever signed.
-    let mut signature = valid_graph();
-    signature.nodes[1].evidence = [EvidenceRef::IntentSignature].into();
-    assert_eq!(
-        admit(&signature, ALICE, &chain, &TestHasher),
-        Err(AdmissionError::SignatureForGuarded { node: 1 })
-    );
 }
 
 /// Authorize Alice, withdraw on her proof rather than on the signature,
@@ -280,8 +271,11 @@ fn a_proven_claim_resolves_to_its_producers_target() {
     // method's own declared read names: what is stored there, or — while
     // nothing is — the identity that address itself derives. The guarded
     // withdrawal keeps the pure identity match.
-    assert_eq!(admitted.manifest().nodes[0].evidence, Vec::<Claim>::new());
-    assert_eq!(admitted.calls()[0].signed_in, Some(ALICE));
+    assert_eq!(
+        admitted.calls()[0].evidence,
+        vec![Claim::of_subject(ALICE)],
+        "the signature presents the account itself",
+    );
     let cell = child_key(&TestHasher, ALICE, AUTH, &[]);
     assert_eq!(
         admitted.calls()[0].requires,
@@ -1619,13 +1613,13 @@ fn conditional_component(chain: &mut Records) -> ComponentAddr {
     target
 }
 
-/// A signature reaches no rule but the signer's own. A component's
-/// stored rule is not the signer's, and the claim beside it is one a
-/// signature never answers — so the one shape that could have admitted
-/// a key the account has retired is refused at the door, and the same
-/// method admits the proof that account's own sign-in mints.
+/// A signature presents the account, so a rule naming that account is
+/// answered by it wherever the rule is stored. What keeps a key the
+/// account has retired from opening the same door is not this stage: the
+/// account's own shard reads its `auth` cell and judges the attesting
+/// keys against it before any body runs.
 #[test]
-fn a_signature_reaches_no_rule_but_the_signers_own() {
+fn a_signature_presents_the_account_to_any_rule_naming_it() {
     let mut chain = setup();
     let target = conditional_component(&mut chain);
 
@@ -1637,9 +1631,11 @@ fn a_signature_reaches_no_rule_but_the_signers_own() {
             evidence: [EvidenceRef::IntentSignature].into(),
         }],
     };
+    let admitted = admit(&signed, ALICE, &chain, &TestHasher).expect("admits");
     assert_eq!(
-        admit(&signed, ALICE, &chain, &TestHasher),
-        Err(AdmissionError::SignatureForGuarded { node: 0 })
+        admitted.calls()[0].evidence,
+        vec![Claim::of_subject(ALICE)],
+        "a component's rule naming Alice is answered by Alice's signature",
     );
 
     let proven = ManifestGraph {
@@ -1659,12 +1655,10 @@ fn a_signature_reaches_no_rule_but_the_signers_own() {
         ],
     };
     let admitted = admit(&proven, ALICE, &chain, &TestHasher).expect("admits");
-    // The sign-in stays the sign-in's: the account's call carries it
-    // and presents no claim, and the component's call presents the
-    // claim that sign-in proved.
-    assert_eq!(admitted.calls()[0].signed_in, Some(ALICE));
-    assert_eq!(admitted.calls()[0].evidence, Vec::<Claim>::new());
-    assert_eq!(admitted.calls()[1].signed_in, None);
+    // Both calls present the account: the one naming the signature
+    // resolves it to the account itself, and the one presenting the
+    // first's proof carries what that node proved.
+    assert_eq!(admitted.calls()[0].evidence, vec![Claim::of_subject(ALICE)]);
     assert_eq!(admitted.calls()[1].evidence, vec![Claim::of_subject(ALICE)]);
 }
 

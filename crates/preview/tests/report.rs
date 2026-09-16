@@ -53,7 +53,6 @@ fn call() -> NodeCall {
         answers: false,
         issues: Vec::new(),
         evidence: Vec::new(),
-        signed_in: None,
         requires: Vec::new(),
     }
 }

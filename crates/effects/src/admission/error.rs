@@ -317,18 +317,6 @@ pub enum AdmissionError {
     /// The intent's signature presented to a method whose rules read no
     /// cell under the signer's own prefix.
     ///
-    /// A signature signs in; a proof acts. The identity a signature
-    /// carries is the address its key derives, and whether that address
-    /// still holds its account's authority is state only the account's
-    /// own rule cells know — so the one leaf a signature may reach is a
-    /// rule stored under the signer's prefix. A claim a declaration
-    /// names, and a rule stored under anyone else's prefix, takes a
-    /// proof.
-    #[error("node {node} presents a signature to a method that reads no rule of the signer's own")]
-    SignatureForGuarded {
-        /// The offending node.
-        node: u32,
-    },
     /// A proof drawn from a node that is not an earlier node of the same
     /// intent — the proof's producer must have run, and aborted the
     /// transaction if its own gate refused, before anything consumes it.
@@ -695,7 +683,6 @@ impl AdmissionError {
             | Self::EvidenceUnsatisfied { node, .. }
             | Self::UnexpectedEvidence { node, .. }
             | Self::UnsignedEvidence { node, .. }
-            | Self::SignatureForGuarded { node, .. }
             | Self::ArityMismatch { node, .. }
             | Self::OutputType { node, .. }
             | Self::Eval { node, .. } => Placed {

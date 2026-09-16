@@ -593,14 +593,11 @@ fn satisfies(
             // unreadable here: this judge holds the call's evidence and
             // nothing about who holds what, so it fails closed with the
             // other two rather than answering the part it can see.
-            let verdict = if bytes.is_empty() {
-                call.signs_in_at(cell).is_some()
-            } else {
-                RuleBytes::rule_in_cell(&bytes)
+            let verdict = !bytes.is_empty()
+                && RuleBytes::rule_in_cell(&bytes)
                     .ok()
                     .and_then(|rule| rule.claims_only())
-                    .is_some_and(|claims| claims.satisfied_by(&call.presented_at(cell)))
-            };
+                    .is_some_and(|claims| claims.satisfied_by(&call.evidence));
             judged.insert(*cell, verdict);
             Ok(verdict)
         }
