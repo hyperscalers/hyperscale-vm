@@ -431,9 +431,10 @@ fn nested_scopes_present_together() {
     );
 }
 
-/// Evidence a call names explicitly overrules the ambient reading.
+/// Evidence a call names explicitly stands in for the ambient reading;
+/// the intent's signature rides beside it as it rides every gated call.
 #[test]
-fn explicit_evidence_stands_alone_inside_a_scope() {
+fn explicit_evidence_stands_in_for_the_scope() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, OPERATOR);
     let held = b.call_proving(OPERATOR, "present-badge", (RES,)).unwrap();
@@ -450,8 +451,10 @@ fn explicit_evidence_stands_alone_inside_a_scope() {
     let gated = graph.nodes.last().expect("the gated call is a node");
     assert_eq!(
         gated.evidence,
-        std::iter::once(EvidenceRef::Node(1)).collect(),
-        "the per-call spelling is the whole of the evidence"
+        [EvidenceRef::Node(1), EvidenceRef::IntentSignature]
+            .into_iter()
+            .collect(),
+        "the per-call spelling and the signature are the whole of the evidence"
     );
 }
 

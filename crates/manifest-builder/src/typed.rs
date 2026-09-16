@@ -598,11 +598,10 @@ impl<'a> TypedBuilder<'a> {
             .map(|(_, outputs, _)| outputs)
     }
 
-    /// The same call, presenting `evidence` instead of the intent's
-    /// signature proof — how a call acts as the account an earlier
-    /// authorizing node signed in, and how a threshold gate is met:
-    /// satisfying two of three means presenting two, each a node of its
-    /// own earlier in the same intent.
+    /// The same call, presenting `evidence` beside the intent's
+    /// signature — how a threshold gate is met: satisfying two of three
+    /// means presenting two, each a node of its own earlier in the same
+    /// intent or a socket the composition filled.
     ///
     /// # Errors
     ///
@@ -644,12 +643,10 @@ impl<'a> TypedBuilder<'a> {
         self.prove(target.into(), method, args, &[])
     }
 
-    /// The same proving call, presenting `evidence` instead of the
-    /// intent's signature — how a target whose stored rule names another
-    /// account's identity is signed into through that account's own
-    /// sign-in, the only way in when the rule names no key the intent
-    /// could carry, and with several proofs where the stored rule is a
-    /// threshold.
+    /// The same proving call, presenting `evidence` beside the intent's
+    /// signature — a stored rule naming another account is met by that
+    /// account's claim granted into a socket, and a threshold by several
+    /// proofs.
     ///
     /// # Errors
     ///
@@ -1038,13 +1035,15 @@ impl<'a> TypedBuilder<'a> {
                     method: method.to_owned(),
                 });
             }
-            // A gated call presents the intent's signature, whatever the
-            // gate's own claims resolved to, and what its movements
-            // earned. The signature rides every one of them because it
-            // costs the graph nothing and names the account this intent
-            // acts as — which is the claim a stored rule the composer
-            // cannot read is most likely to want, and the one no node
-            // could prove anyway.
+            // A gated call presents the intent's signature and, beside
+            // it, either what the builder resolved for the gate and what
+            // the movements earned, or the evidence the caller named.
+            // The signature rides every one of them because it costs the
+            // graph nothing and names the account this intent acts as —
+            // which is the claim a stored rule the composer cannot read
+            // is most likely to want, and the one no node could prove
+            // anyway — so evidence named at the call joins it rather
+            // than standing in for it.
             (true, []) => iter::once(EvidenceRef::IntentSignature)
                 .chain(
                     gated
@@ -1053,7 +1052,9 @@ impl<'a> TypedBuilder<'a> {
                         .map(|proof| proof.reference()),
                 )
                 .collect(),
-            (true, presented) => presented.iter().map(|proof| proof.reference()).collect(),
+            (true, presented) => iter::once(EvidenceRef::IntentSignature)
+                .chain(presented.iter().map(|proof| proof.reference()))
+                .collect(),
         };
         // What the enclosing scopes hold rides beside whatever the call
         // resolved for itself: presented evidence is a set, so a proof

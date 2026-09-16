@@ -579,11 +579,9 @@ fn note_request(approver: Claim) -> IntentDecl {
     let note = note_meta().address(&TestHasher);
     let mut decl = IntentBuilder::declaration(&chain, &TestHasher, BOB, TEST_HEADER);
     let approval = decl.declare_proof(approver);
-    // A scope rather than a presented list: the holder's own gate is
-    // answered by the signature their intent carries, and naming
-    // evidence at the call would replace it rather than join it. The
-    // socket is there for the note's injected entry, whose claim is the
-    // desk's.
+    // The socket is there for the note's injected entry, whose claim is
+    // the desk's; the holder's own gate is answered by the signature
+    // their intent carries.
     let funds = decl
         .presenting(approval, |b| b.call(BOB, "withdraw", (note, 40u128)))
         .unwrap()

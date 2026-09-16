@@ -621,10 +621,8 @@ fn a_disjunction_reports_its_branches_and_names_no_certain_signer() {
     let chain = world();
     let note = either_note_meta().address(&TestHasher);
     // Alice's own request, signed before any composer exists, with a
-    // socket where the desk's approval goes. A scope rather than a
-    // presented list: the withdrawal's own gate is answered by the
-    // signature this intent carries, and naming evidence at the call
-    // would replace it rather than join it.
+    // socket where the desk's approval goes; the withdrawal's own gate
+    // is answered by the signature this intent carries.
     let mut request = IntentBuilder::declaration(&chain, &TestHasher, ALICE, TEST_HEADER);
     let approval = request.declare_proof(Claim::of_subject(DESK));
     let funds = request
