@@ -1,0 +1,5 @@
+error: the governing cell is judged by the account's shard against the keys attesting an intent — an account method names its holder with `#[requires(self)]`
+  --> tests/refusals/governs_auth_on_a_principal.rs:13:28
+   |
+13 |         #[requires(governs(auth))]
+   |                            ^^^^

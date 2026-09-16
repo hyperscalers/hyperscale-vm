@@ -1369,22 +1369,6 @@ fn lower_method(
     }
 
     let gate = parse_gate(method, declared, &params, serves)?;
-    // Presentation is the principals blueprint's: a badge in an account
-    // is a credential, and a badge handed to a component is an asset —
-    // authority must not travel with custody. A component acts as
-    // itself through `#[proves(self)]`, or names identities with
-    // `#[requires(..)]`.
-    if matches!(gate, Gate::Custodial { .. })
-        && matches!(serves, client::Serves::Instances)
-        && let Some((attr, _)) = own_attr(&method.attrs, &["proves"])
-    {
-        return Err(syn::Error::new_spanned(
-            attr,
-            "presenting a badge is the account's: a badge held by a component is an \
-             asset, not a credential, so an instance package gates with \
-             `#[proves(self)]` or `#[requires(..)]`",
-        ));
-    }
     client::check_names(&idents, client::Shape::of(&gate), serves)?;
     let yields = Yields::of(&method.sig.output);
     let claims_total = total_attr(method).is_some();

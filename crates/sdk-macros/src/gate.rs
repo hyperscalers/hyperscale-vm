@@ -196,6 +196,7 @@ pub fn parse_requires(
     attr: &syn::Attribute,
     declared: &Declared<'_>,
     params: &[(String, syn::Type)],
+    serves: Serves,
 ) -> syn::Result<Gate> {
     let written: syn::Expr = attr.parse_args()?;
     // The stored-rule form: `governs(<field>)` names the cell whose rule
@@ -215,6 +216,21 @@ pub fn parse_requires(
             }
         };
         let name = named.to_string();
+        // An account's `auth` cell names keys, and the account's own
+        // shard judges it against the keys attesting an intent. A gate
+        // over it would have the walk judge the same bytes against
+        // presented claims, which are accounts — so after a securify to
+        // another party's key the gate would refuse the very intent the
+        // shard admitted. The judgment already happened; the method
+        // names its holder.
+        if name == "auth" && matches!(serves, Serves::Principals) {
+            return Err(syn::Error::new(
+                named.span(),
+                "the governing cell is judged by the account's shard against the keys \
+                 attesting an intent — an account method names its holder with \
+                 `#[requires(self)]`",
+            ));
+        }
         let Some(field) = declared
             .accessors
             .get(&name)
@@ -222,8 +238,8 @@ pub fn parse_requires(
         else {
             return Err(syn::Error::new(
                 named.span(),
-                "not a cell of this package — `governs(auth)` names the address's own \
-                 governing rule, and a package keeping others names one of its fields",
+                "not a cell of this package — `governs(..)` names a field holding a \
+                 stored rule",
             ));
         };
         if !holds_rule(field) {
@@ -309,7 +325,7 @@ pub fn parse_gate(
         return Err(refusal);
     }
     if attr.path().is_ident("requires") {
-        return parse_requires(attr, declared, params);
+        return parse_requires(attr, declared, params, serves);
     }
     let claim: syn::Expr = attr.parse_args()?;
     // `proves(self)`: a component vouching for its own address, on its
@@ -333,13 +349,13 @@ pub fn parse_gate(
         |named: &syn::Ident| position(named, crate::is_address, "a badge is an address");
     // `proves(badge)` and `proves(badge[id])`: the stored rule,
     // possession of the badge, and the badge's mint.
-    match &claim {
+    let custodial = match &claim {
         syn::Expr::Path(badge) => {
             let badge = badge.path.require_ident()?;
-            Ok(Gate::Custodial {
+            Gate::Custodial {
                 badge: badge_position(badge)?,
                 id: None,
-            })
+            }
         }
         syn::Expr::Index(index) => {
             let (syn::Expr::Path(badge), syn::Expr::Path(id)) =
@@ -351,20 +367,36 @@ pub fn parse_gate(
                      this method",
                 ));
             };
-            Ok(Gate::Custodial {
+            Gate::Custodial {
                 badge: badge_position(badge.path.require_ident()?)?,
                 id: Some(position(
                     id.path.require_ident()?,
                     |ty| crate::is_named(ty, "u64"),
                     "an instance id is a `u64`",
                 )?),
-            })
+            }
         }
-        _ => Err(syn::Error::new(
-            claim.span(),
-            "a call proves `self`, a badge parameter, or `badge[id]`",
-        )),
+        _ => {
+            return Err(syn::Error::new(
+                claim.span(),
+                "a call proves `self`, a badge parameter, or `badge[id]`",
+            ));
+        }
+    };
+    // Presentation is the principals blueprint's: a badge in an account
+    // is a credential, and a badge handed to a component is an asset —
+    // authority must not travel with custody. A component acts as
+    // itself through `#[proves(self)]`, or names identities with
+    // `#[requires(..)]`.
+    if matches!(serves, Serves::Instances) {
+        return Err(syn::Error::new_spanned(
+            attr,
+            "presenting a badge is the account's: a badge held by a component is an \
+             asset, not a credential, so an instance package gates with \
+             `#[proves(self)]` or `#[requires(..)]`",
+        ));
     }
+    Ok(custodial)
 }
 
 /// The tracer calls a gate becomes.

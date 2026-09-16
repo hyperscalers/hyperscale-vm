@@ -206,6 +206,14 @@ fn the_lowering_refuses_a_self_proof_on_a_principals_package() {
     refuse.compile_fail("tests/refusals/proves_self_on_a_principal.rs");
 }
 
+/// The mirror: the cell the shard judges against keys is not one a
+/// gate reads against claims.
+#[test]
+fn the_lowering_refuses_a_gate_over_the_auth_cell_on_a_principals_package() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/governs_auth_on_a_principal.rs");
+}
+
 /// The other direction: an instantiation gate belongs to a package that
 /// instantiates. A principals package is served by class and never brought
 /// up, so `#[requires]` on its configuration binds nothing and is refused
