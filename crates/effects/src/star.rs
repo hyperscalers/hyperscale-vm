@@ -308,16 +308,17 @@ fn assemble(
 ///
 /// The half a parent re-derives at each anchor. Everything in `legs` is
 /// fixed by the envelope, and this is the only part a reshape can move.
-/// `owners` are the parties the transaction's routing declares beyond
-/// any node's frame: the fee payer and every signer. `payer` is the fee
-/// payer among them, whose home bears the core where nothing else can;
-/// it is absent only for a shape declaring no routing at all. `hasher`
-/// names the cells each crossing writes.
+/// `payer` is the fee payer, whose home bears the core where nothing
+/// else can, and `accounts` are the accounts the transaction's intents
+/// act as. The two are held to different rules — a payer needs a member
+/// of any side, an account needs one that issues — which is why they
+/// arrive apart rather than folded into one list. `hasher` names the
+/// cells each crossing writes.
 #[must_use]
 pub fn star_at(
     legs: &[LegShape],
     payer: Address,
-    owners: &[Address],
+    accounts: &[Address],
     shards: &dyn ShardResolver,
     hasher: &dyn Hasher,
 ) -> Star {
@@ -339,7 +340,7 @@ pub fn star_at(
         core: &core,
     };
     let edges = placed.crossing_edges(hasher);
-    let decomposes = placed.decomposes(owners, &edges, shards);
+    let decomposes = placed.decomposes(payer, accounts, &edges, shards);
     Star {
         roles,
         homes,
@@ -529,7 +530,8 @@ impl Placed<'_> {
     /// always correct, so an unsure answer takes it.
     fn decomposes(
         &self,
-        owners: &[Address],
+        payer: Address,
+        accounts: &[Address],
         edges: &[CrossingEdge],
         shards: &dyn ShardResolver,
     ) -> bool {
@@ -537,7 +539,8 @@ impl Placed<'_> {
         self.core_bears_a_verdict()
             && self.a_leg_sits_off_the_core()
             && Self::crossings_fit(edges)
-            && Self::every_route_owner_participates(&participants, owners, shards)
+            && Self::every_route_owner_participates(&participants, payer, accounts, shards)
+            && self.every_account_issues(accounts, shards)
             && self.every_node_declares_inside_its_scope(shards)
             && self.every_edge_has_one_consumer()
             && self.no_named_instance_touches_a_leg()
@@ -589,12 +592,58 @@ impl Placed<'_> {
     /// at all, not which role that member plays.
     fn every_route_owner_participates(
         participants: &BTreeSet<ShardId>,
-        owners: &[Address],
+        payer: Address,
+        accounts: &[Address],
         shards: &dyn ShardResolver,
     ) -> bool {
-        owners
+        std::iter::once(payer)
+            .chain(accounts.iter().copied())
+            .all(|owner| participants.contains(&shards.shard_of(owner)))
+    }
+
+    /// Every shard running a member that issues: one that reserves, one
+    /// that bears the core's share, and a delivery whose value never
+    /// departed because its producer runs beside it.
+    ///
+    /// What is excluded is a shard running deliveries alone. Its member
+    /// materializes after the core committed, on an arrival the core
+    /// issued — so a condition judged there is judged after the verdict
+    /// it was supposed to stand before.
+    fn issuing_shards(&self) -> BTreeSet<ShardId> {
+        (0u32..)
+            .zip(self.legs)
+            .filter_map(|(index, leg)| {
+                let home = self.homes[index as usize];
+                let issues = match self.role(index) {
+                    LegRole::Core | LegRole::Inbound | LegRole::Attesting => true,
+                    LegRole::Outbound => leg
+                        .edges
+                        .iter()
+                        .all(|edge| self.running(edge.source).contains(&home)),
+                };
+                issues.then_some(home)
+            })
+            .collect()
+    }
+
+    /// Every account an intent acts as sits on a shard running a member
+    /// that issues.
+    ///
+    /// Stronger than participating, and for one reason: an account's
+    /// sign-in is a condition its own shard judges at materialization,
+    /// and that lands before any leg commits only where the member
+    /// issues. An account whose shard runs a delivery alone would have
+    /// its sign-in answered after a core that ran on the strength of it
+    /// — so the shape runs whole instead, where every participant
+    /// answers every condition before anything commits.
+    ///
+    /// The fee payer is not held to this. What the reservation needs is
+    /// a member of any side, which is what participating already says.
+    fn every_account_issues(&self, accounts: &[Address], shards: &dyn ShardResolver) -> bool {
+        let issuing = self.issuing_shards();
+        accounts
             .iter()
-            .all(|owner| participants.contains(&shards.shard_of(*owner)))
+            .all(|account| issuing.contains(&shards.shard_of(*account)))
     }
 
     /// Every target a node declares sits inside the scope of the member
@@ -1725,6 +1774,42 @@ mod tests {
 
         legs[0].declares.push(instance_of("stranger").into());
         assert!(!placed(&legs).decomposes);
+    }
+
+    /// An account's sign-in is judged on its own shard at
+    /// materialization, and that lands before anything commits only
+    /// where the member issues. A shard running a delivery alone
+    /// materializes after the core it would have vouched for, so an
+    /// account sitting there runs the shape whole — while the same
+    /// account on the shard that reserves divides as before.
+    #[test]
+    fn an_account_whose_shard_only_delivers_does_not_decompose() {
+        let alice = Address::new([0x11; 31], AddressClass::Component);
+        let venue = Address::new([0x91; 31], AddressClass::Component);
+        let bob = Address::new([0x22; 31], AddressClass::Component);
+        let legs = vec![
+            leg(alice, LegRole::Inbound, &[], 0),
+            leg(venue, LegRole::Core, &[(0, 0)], 1),
+            leg(bob, LegRole::Outbound, &[(1, 0)], 2),
+        ];
+        let over = |accounts: &[Address]| {
+            star_at(&legs, alice, accounts, &resolver(), &TestHasher).decomposes
+        };
+
+        assert!(
+            over(&[alice]),
+            "the account that reserves is on a shard that issues",
+        );
+        assert!(over(&[venue]), "and so is the core's");
+        assert!(
+            !over(&[bob]),
+            "but the delivery's shard answers its sign-in after the core \
+             committed on the strength of it",
+        );
+        assert!(
+            !over(&[alice, bob]),
+            "one account off the issuing side is enough",
+        );
     }
 
     /// A party the routing declares beyond any node — a sponsored payer,
