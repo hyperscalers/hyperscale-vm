@@ -823,6 +823,7 @@ pub fn star_and_shape(world: &Records, graph: &ManifestGraph) -> (Star, Vec<LegS
     let legs = legs_of(&admitted);
     let star = star_at(
         &legs,
+        composer(graph).address(),
         &route_owners(graph),
         &PrefixShardResolver { bits: 8 },
         &TestHasher,

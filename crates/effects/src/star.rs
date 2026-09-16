@@ -309,11 +309,14 @@ fn assemble(
 /// The half a parent re-derives at each anchor. Everything in `legs` is
 /// fixed by the envelope, and this is the only part a reshape can move.
 /// `owners` are the parties the transaction's routing declares beyond
-/// any node's frame: the fee payer and every signer. `hasher` names the
-/// cells each crossing writes.
+/// any node's frame: the fee payer and every signer. `payer` is the fee
+/// payer among them, whose home bears the core where nothing else can;
+/// it is absent only for a shape declaring no routing at all. `hasher`
+/// names the cells each crossing writes.
 #[must_use]
 pub fn star_at(
     legs: &[LegShape],
+    payer: Address,
     owners: &[Address],
     shards: &dyn ShardResolver,
     hasher: &dyn Hasher,
@@ -322,7 +325,7 @@ pub fn star_at(
         .iter()
         .map(|node| shards.shard_of(node.target))
         .collect();
-    let roles = settle(legs, &homes);
+    let roles = settle(legs, &homes, shards.shard_of(payer));
     let core: BTreeSet<ShardId> = roles
         .iter()
         .zip(&homes)
@@ -370,7 +373,13 @@ pub fn star_at(
 /// shard for a refusal, a departure or an absence to be taken against,
 /// so there is nothing for a reclaim to be admitted on. Where nothing
 /// else is in the core, every write-free node is — all of them, so which
-/// one bears the verdict is never a pick.
+/// one bears the verdict is never a pick. Where there is no write-free
+/// node either — and a spend has none — the fee payer's home bears it
+/// instead: a party the routing already names, on a shard its legs
+/// already reach. It seeds only a home some node is already on, since a
+/// core shard running nothing would compose a member and find no plan
+/// for it; a payer off every leg leaves the core empty and the shape
+/// runs whole.
 ///
 /// **A leg on a core shard is the core's.** Every leg whose home is a
 /// core shard runs in the core member and is replicated where the core
@@ -380,7 +389,7 @@ pub fn star_at(
 /// no shard is both the core's and a leg's — a leg left beside the core
 /// would settle its own crossing on a shard whose verdict the core
 /// already gave, a member neither side of the star names.
-fn settle(legs: &[LegShape], homes: &[ShardId]) -> Vec<LegRole> {
+fn settle(legs: &[LegShape], homes: &[ShardId], payer_home: ShardId) -> Vec<LegRole> {
     let mut settled: Vec<LegRole> = legs.iter().map(|node| node.role).collect();
     for (index, node) in legs.iter().enumerate() {
         if settled.get(index) != Some(&LegRole::Attesting) {
@@ -408,12 +417,15 @@ fn settle(legs: &[LegShape], homes: &[ShardId]) -> Vec<LegRole> {
 
     // The core set is read once: folding a leg whose home is already in
     // it adds no shard, so one pass settles every role.
-    let core: BTreeSet<ShardId> = settled
+    let mut core: BTreeSet<ShardId> = settled
         .iter()
         .zip(homes)
         .filter(|(role, _)| **role == LegRole::Core)
         .map(|(_, home)| *home)
         .collect();
+    if core.is_empty() && homes.contains(&payer_home) {
+        core.insert(payer_home);
+    }
     for (role, home) in settled.iter_mut().zip(homes) {
         if core.contains(home) {
             *role = LegRole::Core;
@@ -743,10 +755,23 @@ mod tests {
         legs_under(manifest, chain, &answered(manifest))
     }
 
+    /// A payer on no shape's leg: the routing every shape here declares
+    /// has no node of its own, so nothing folds and the seed cannot fire.
+    fn off_every_leg() -> Address {
+        Address::new([0x77; 31], AddressClass::Component)
+    }
+
     /// The star `legs` imply under the test placement, over a routing
-    /// declaring nobody beyond the nodes.
+    /// whose fee payer is `payer` and which declares `owners`.
+    fn paid_for(legs: &[LegShape], payer: Address, owners: &[Address]) -> Star {
+        star_at(legs, payer, owners, &resolver(), &TestHasher)
+    }
+
+    /// The star `legs` imply under the test placement, over a routing
+    /// declaring nobody beyond the nodes and paid for by the first
+    /// node's target — the caller, in every shape here.
     fn placed(legs: &[LegShape]) -> Star {
-        star_at(legs, &[], &resolver(), &TestHasher)
+        paid_for(legs, legs[0].target, &[])
     }
 
     /// The star and the legs it was read off, since several tests want
@@ -1419,6 +1444,150 @@ mod tests {
         assert_eq!(star.roles[0], LegRole::Attesting);
     }
 
+    /// A spend has no write-free node, so a transfer's two nodes leave
+    /// the attesting fallback nothing to promote and the shape that
+    /// could have divided runs whole. The fee payer's home bears the
+    /// verdict instead: a party the routing already names, on a shard a
+    /// leg is already on, so the withdraw beside it folds in.
+    #[test]
+    fn the_payers_home_bears_a_core_nothing_else_can() {
+        let alice = Address::new([0x11; 31], AddressClass::Component);
+        let bob = Address::new([0x22; 31], AddressClass::Component);
+        assert_ne!(
+            resolver().shard_of(alice),
+            resolver().shard_of(bob),
+            "the fixture has to straddle, or the verdict below proves nothing",
+        );
+        let legs = vec![
+            leg(alice, LegRole::Inbound, &[], 0),
+            leg(bob, LegRole::Outbound, &[(0, 0)], 1),
+        ];
+        assert!(
+            paid_for(&legs, off_every_leg(), &[]).core.is_empty(),
+            "and a payer off every leg bears nothing, or the verdict below proves nothing",
+        );
+
+        let star = paid_for(&legs, alice, &[alice]);
+        assert_eq!(star.roles, vec![LegRole::Core, LegRole::Outbound]);
+        assert_eq!(star.core, BTreeSet::from([resolver().shard_of(alice)]));
+        assert_eq!(
+            star.edges
+                .iter()
+                .map(|edge| edge.producer)
+                .collect::<Vec<_>>(),
+            vec![0],
+            "the withdraw's value crosses to the deposit",
+        );
+        assert!(star.decomposes);
+    }
+
+    /// The seed names only a home some node is already on. A sponsored
+    /// payer off every leg would put a shard in the core with nothing to
+    /// run, so the core stays empty and the shape runs whole — which is
+    /// what it did before any payer was named at all.
+    #[test]
+    fn a_payer_off_every_leg_seeds_nothing() {
+        let alice = Address::new([0x11; 31], AddressClass::Component);
+        let bob = Address::new([0x22; 31], AddressClass::Component);
+        let sponsor = Address::new([0x33; 31], AddressClass::Component);
+        let legs = vec![
+            leg(alice, LegRole::Inbound, &[], 0),
+            leg(bob, LegRole::Outbound, &[(0, 0)], 1),
+        ];
+        let star = paid_for(&legs, sponsor, &[sponsor]);
+        assert_eq!(star.roles, vec![LegRole::Inbound, LegRole::Outbound]);
+        assert!(star.core.is_empty());
+        assert!(!star.decomposes);
+    }
+
+    /// The seed is a fallback and not a standing rule. A venue already
+    /// bears the verdict, so the payer's home stays out and their
+    /// withdraw stays an inbound leg — which is what keeps a
+    /// venue-mediated swap's one-shard core from becoming two.
+    #[test]
+    fn a_core_that_has_a_bearer_keeps_the_payers_home_out() {
+        let alice = Address::new([0x11; 31], AddressClass::Component);
+        let venue = Address::new([0x91; 31], AddressClass::Component);
+        let bob = Address::new([0x22; 31], AddressClass::Component);
+        let legs = vec![
+            leg(alice, LegRole::Inbound, &[], 0),
+            leg(venue, LegRole::Core, &[(0, 0)], 1),
+            leg(bob, LegRole::Outbound, &[(1, 0)], 2),
+        ];
+        let star = paid_for(&legs, alice, &[alice]);
+        assert_eq!(
+            star.roles,
+            vec![LegRole::Inbound, LegRole::Core, LegRole::Outbound],
+        );
+        assert_eq!(star.core, BTreeSet::from([resolver().shard_of(venue)]));
+        assert!(star.decomposes);
+    }
+
+    /// The seed runs after the attesting fallback, not before it. A
+    /// write-free node is a bearer the shape supplies itself, and the
+    /// payer's home is the last resort rather than a competing answer,
+    /// so it is asked only once nothing in the shape answers. Ordered
+    /// the other way the seed would fire on shapes that already have a
+    /// bearer, putting the core on whichever shard happens to pay and
+    /// leaving the write-free node a leg off it.
+    #[test]
+    fn the_fallback_bears_the_core_before_the_payers_home_can() {
+        let here = Address::new([0x11; 31], AddressClass::Component);
+        let alice = Address::new([0x22; 31], AddressClass::Component);
+        let bob = Address::new([0x33; 31], AddressClass::Component);
+        let legs = vec![
+            leg(here, LegRole::Attesting, &[], 0),
+            leg(alice, LegRole::Inbound, &[], 1),
+            leg(bob, LegRole::Outbound, &[(1, 0)], 2),
+        ];
+
+        let star = paid_for(&legs, alice, &[alice]);
+        assert_eq!(
+            star.roles,
+            vec![LegRole::Core, LegRole::Inbound, LegRole::Outbound],
+            "the write-free node bears it and the payer's withdraw stays a leg",
+        );
+        assert_eq!(
+            star.core,
+            BTreeSet::from([resolver().shard_of(here)]),
+            "seeded ahead of the fallback this would be the payer's shard",
+        );
+        assert!(!star.core.contains(&resolver().shard_of(alice)));
+    }
+
+    /// Two accounts swapping with no venue between them: every node
+    /// moves value, none is write-free, and before the seed there was no
+    /// core for either side to be a leg off. The payer's home bears it,
+    /// their own two nodes fold in, and the counterparty's stay legs.
+    #[test]
+    fn a_two_account_swap_divides_on_the_payers_home() {
+        let alice = Address::new([0x11; 31], AddressClass::Component);
+        let bob = Address::new([0x22; 31], AddressClass::Component);
+        let legs = vec![
+            leg(alice, LegRole::Inbound, &[], 0),
+            leg(bob, LegRole::Inbound, &[], 1),
+            leg(bob, LegRole::Outbound, &[(0, 0)], 2),
+            leg(alice, LegRole::Outbound, &[(1, 0)], 3),
+        ];
+        assert!(
+            !paid_for(&legs, off_every_leg(), &[]).decomposes,
+            "and off every leg it runs whole, or the verdict below proves nothing",
+        );
+
+        let star = paid_for(&legs, alice, &[alice, bob]);
+        assert_eq!(
+            star.roles,
+            vec![
+                LegRole::Core,
+                LegRole::Inbound,
+                LegRole::Outbound,
+                LegRole::Core,
+            ],
+        );
+        assert_eq!(star.core, BTreeSet::from([resolver().shard_of(alice)]));
+        assert!(star.decomposes);
+    }
+
     /// A leg whose home is a core shard is the core member's: the venue's
     /// output to a recipient on the venue's own shard is passed directly
     /// rather than departed into a record the shard could never be
@@ -1568,7 +1737,9 @@ mod tests {
         let (chain, manifest) = star_world(Totality::Total);
         let legs = legs(&manifest, &chain);
         let participant = legs[0].target;
-        let over = |owners: &[Address]| star_at(&legs, owners, &resolver(), &TestHasher).decomposes;
+        let over = |owners: &[Address]| {
+            star_at(&legs, legs[0].target, owners, &resolver(), &TestHasher).decomposes
+        };
         assert!(over(&[participant]));
 
         let stranger: Address = instance_of("stranger").into();
