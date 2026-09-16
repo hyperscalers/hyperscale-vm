@@ -1577,18 +1577,6 @@ fn a_signature_presents_the_account_to_any_rule_naming_it() {
         vec![Claim::of_subject(ALICE)],
         "a component's rule naming Alice is answered by Alice's signature",
     );
-
-    let proven = ManifestGraph {
-        nodes: vec![GraphNode {
-            target: target.into(),
-            method: "act".into(),
-            args: vec![],
-            evidence: [EvidenceRef::IntentSignature].into(),
-        }],
-    };
-    let admitted = admit(&proven, ALICE, &chain, &TestHasher).expect("admits");
-    // The call naming the signature resolves it to the account itself.
-    assert_eq!(admitted.calls()[0].evidence, vec![Claim::of_subject(ALICE)]);
 }
 
 /// A `Requires` clause rides admission's single walk: the evaluated

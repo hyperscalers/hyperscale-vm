@@ -10,11 +10,11 @@ use hyperscale_vm_effects::{
     AdmissionError, AdmittedTree, Binding, Bounds, ChainRecords, Claim, ClaimSource, Constraint,
     CrossingCell, CrossingSite, ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, EnvelopeTree,
     EvidenceRef, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, Intent, IntentDecl, IntentHash,
-    IntentHeader, JudgedLeaf, MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, Marked,
-    Marker, NULLIFIER_SLOT, NodeInput, PackageHash, PrefixShardResolver, Records, ResourceKind,
-    Rule, ShardResolver, Socket, TestHasher, Value, admit, admit_tree, bucketed_child_key,
-    child_key, escrow_claim_key, escrow_record_key, explain_admission_tree, nullifier_key,
-    per_shard,
+    IntentHeader, IntentRecord, JudgedLeaf, MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph,
+    ManifestHash, Marked, Marker, NULLIFIER_SLOT, NodeInput, PackageHash, PrefixShardResolver,
+    Records, ResourceKind, Rule, ShardResolver, Socket, TestHasher, Value, admit, admit_tree,
+    bucketed_child_key, child_key, escrow_claim_key, escrow_record_key, explain_admission_tree,
+    nullifier_key, per_shard,
 };
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
@@ -357,27 +357,52 @@ fn a_composed_tree_flattens_deterministically() {
     assert_eq!(record.nullifier.owner, BOB);
 }
 
+/// Every intent's nullifier is written, each at its own account's shard
+/// and nowhere else — the composition's own included, which is one
+/// intent among the tree's and not a different kind of thing.
 #[test]
 fn routing_carries_the_nullifier_creation_write() {
     let tree = composed_tree(100);
     let admitted = admit_composed(&tree).unwrap();
     let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 8 });
-    let record = admitted.intents[1];
+    assert_eq!(admitted.intents.len(), tree.intents.len());
     // Asked of the resolver rather than restated: the claim is that the
-    // write lands at the signer's shard and nowhere else, not what those
-    // shards happen to be called.
+    // write lands at the account's shard and nowhere else, not what
+    // those shards happen to be called.
     let resolver = PrefixShardResolver { bits: 8 };
-    let signer = resolver.shard_of(record.account.address());
-    let root = resolver.shard_of(ALICE.address());
-    assert_ne!(signer, root);
-    assert!(routing[&signer].contains(&Effect {
+    let creation = |record: &IntentRecord| Effect {
         target: EffectTarget::Point(record.nullifier),
         mode: Mode::Write { moves: Moves::Both },
-    }));
-    // The root's shard carries no nullifier write.
-    assert!(!routing[&root].iter().any(|effect| {
-        matches!(effect.target, EffectTarget::Point(key) if key == record.nullifier)
-    }));
+    };
+    let (own, offered) = (admitted.intents[0], admitted.intents[1]);
+    let (alice, bob) = (
+        resolver.shard_of(own.account.address()),
+        resolver.shard_of(offered.account.address()),
+    );
+    assert_ne!(alice, bob);
+    assert!(routing[&alice].contains(&creation(&own)));
+    assert!(routing[&bob].contains(&creation(&offered)));
+    assert!(!routing[&alice].contains(&creation(&offered)));
+    assert!(!routing[&bob].contains(&creation(&own)));
+}
+
+/// Two intents acting as one account are two offers, each once-only on
+/// its own: two nullifiers under one prefix, keyed by each intent's own
+/// hash.
+#[test]
+fn two_intents_acting_as_one_account_each_nullify() {
+    let mut tree = composed_tree(100);
+    tree.intents[1].account = ALICE;
+    tree.intents[1].decl.graph.nodes = vec![withdraw(ALICE, RES_Y, 10), deposit_param(ALICE, 0)];
+    let admitted = admit_composed(&tree).expect("one account may offer twice");
+    let [own, again] = admitted.intents[..] else {
+        panic!("two intents, two records");
+    };
+    assert_eq!((own.account, again.account), (ALICE, ALICE));
+    assert_ne!(own.intent, again.intent);
+    assert_ne!(own.nullifier, again.nullifier);
+    assert_eq!(own.nullifier.owner, ALICE.address());
+    assert_eq!(again.nullifier.owner, ALICE.address());
 }
 
 #[test]
@@ -1395,6 +1420,12 @@ fn the_envelope_hash_covers_the_bindings_the_composer_chose() {
     let mut resigned = tree.clone();
     resigned.intents[1].account = ALICE;
     assert_ne!(tree.hash(&TestHasher), resigned.hash(&TestHasher));
+
+    // Order is identity too: a binding names an intent by position, so
+    // the same intents in another order are another composition.
+    let mut reordered = tree.clone();
+    reordered.intents.swap(0, 1);
+    assert_ne!(tree.hash(&TestHasher), reordered.hash(&TestHasher));
 
     let mut rebound_subintent = tree.clone();
     rebound_subintent.intents[1].bindings[0] = rebind(rebound_subintent.intents[1].bindings[0], 2);
