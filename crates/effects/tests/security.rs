@@ -228,8 +228,14 @@ fn an_authored_rule_governs_a_holder_the_package_never_named() {
 
     let mut env = transfer(share);
     env.resources = vec![record(issuer, b"share")];
-    let admitted =
-        admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher).expect("the transfer admits");
+    let admitted = admit_tree(
+        &env,
+        &env.assume_self_attested(),
+        env.hash(&TestHasher),
+        &chain,
+        &TestHasher,
+    )
+    .expect("the transfer admits");
     let declaration = admitted.admitted.declaration();
 
     let held = credential(ALICE, registered);
@@ -283,8 +289,14 @@ fn each_side_of_a_transfer_answers_for_its_own_register_entry() {
 
     let mut env = transfer_to(share, BOB);
     env.resources = vec![record(issuer, b"share")];
-    let admitted =
-        admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher).expect("the transfer admits");
+    let admitted = admit_tree(
+        &env,
+        &env.assume_self_attested(),
+        env.hash(&TestHasher),
+        &chain,
+        &TestHasher,
+    )
+    .expect("the transfer admits");
     let conditions: Vec<_> = admitted
         .admitted
         .declaration()
@@ -309,8 +321,14 @@ fn each_side_of_a_transfer_answers_for_its_own_register_entry() {
 fn the_unrestricted_class_is_asked_nothing() {
     let (chain, issuer) = issuer();
     let env = transfer(issued(issuer, b"bearer"));
-    let admitted = admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher)
-        .expect("the transfer admits with no record presented at all");
+    let admitted = admit_tree(
+        &env,
+        &env.assume_self_attested(),
+        env.hash(&TestHasher),
+        &chain,
+        &TestHasher,
+    )
+    .expect("the transfer admits with no record presented at all");
     assert!(
         !admitted
             .admitted
@@ -333,8 +351,14 @@ fn the_register_entry_is_soulbound() {
 
     let mut env = transfer(issued(issuer, b"registered"));
     env.resources = vec![record(issuer, b"registered")];
-    let refusal = admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher)
-        .expect_err("no holder may debit their own register entry");
+    let refusal = admit_tree(
+        &env,
+        &env.assume_self_attested(),
+        env.hash(&TestHasher),
+        &chain,
+        &TestHasher,
+    )
+    .expect_err("no holder may debit their own register entry");
     // The sentence itself — "grants Withdraw to nobody", per direction —
     // is resource_grants' pin; what this adds is that the macro-derived
     // entry reaches the same verdict.

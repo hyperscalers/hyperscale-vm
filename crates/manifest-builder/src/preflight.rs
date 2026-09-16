@@ -721,7 +721,13 @@ pub fn preflight_tree(
     network: &str,
 ) -> Result<Report, PreflightError> {
     let identity = tree.hash(hasher);
-    let admitted = admit_tree(tree, identity, chain, hasher)?;
+    // A verdict asked before anything is signed, so what it reports is
+    // the composition each account signing its own intent would produce
+    // — the question a wallet is about to put to its holder. A set the
+    // chain would judge differently is one the holder has not agreed to
+    // yet, and reporting on it would answer a transaction nobody offered.
+    let attested_by = tree.assume_self_attested();
+    let admitted = admit_tree(tree, &attested_by, identity, chain, hasher)?;
     report(admitted.admitted, admitted.intents, chain, network)
 }
 

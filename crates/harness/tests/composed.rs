@@ -88,7 +88,14 @@ fn composed_tree(composer: PrincipalAddr, pay: u128) -> EnvelopeTree {
 /// its runner walks.
 fn batch_entry(world: &Records, tree: &EnvelopeTree) -> Result<(BatchTx, AdmittedTree)> {
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(tree, identity, world, &TestHasher).context("admission")?;
+    let admitted = admit_tree(
+        tree,
+        &tree.assume_self_attested(),
+        identity,
+        world,
+        &TestHasher,
+    )
+    .context("admission")?;
     let routing = per_shard(&admitted.admitted, &PrefixShardResolver { bits: 0 });
     // The null resolver puts every effect on one shard, so the whole
     // declaration is the sole entry — taken as that rather than by naming

@@ -218,8 +218,14 @@ fn a_loan_nobody_repaid_is_refused_before_it_routes() {
         }],
     };
     let tree = intent(ALICE, unrepaid);
-    let refusal = admit_tree(&tree, tree.hash(&TestHasher), &world(), &TestHasher)
-        .expect_err("a loan nobody repaid is an output nobody consumed");
+    let refusal = admit_tree(
+        &tree,
+        &tree.assume_self_attested(),
+        tree.hash(&TestHasher),
+        &world(),
+        &TestHasher,
+    )
+    .expect_err("a loan nobody repaid is an output nobody consumed");
     assert!(
         matches!(refusal, AdmissionError::UnconsumedOutput { .. }),
         "the refusal is the linearity one: {refusal:?}",
@@ -240,8 +246,14 @@ fn the_obligation_cannot_be_routed_into_a_vault() {
         account::deposit(b, ALICE, debt)
     });
     let tree = intent(ALICE, parked);
-    let refusal = admit_tree(&tree, tree.hash(&TestHasher), &world(), &TestHasher)
-        .expect_err("no vault may hold the obligation");
+    let refusal = admit_tree(
+        &tree,
+        &tree.assume_self_attested(),
+        tree.hash(&TestHasher),
+        &world(),
+        &TestHasher,
+    )
+    .expect_err("no vault may hold the obligation");
     // The rendered sentence, per direction, is resource_grants' pin;
     // the variant is what this composition adds.
     assert!(
@@ -263,8 +275,14 @@ fn the_obligation_cannot_be_routed_into_a_vault() {
     assert_eq!(debt().address().class(), AddressClass::Restricted);
     let mut withheld = tree;
     withheld.resources = Vec::new();
-    let refusal = admit_tree(&withheld, withheld.hash(&TestHasher), &world(), &TestHasher)
-        .expect_err("a restricted resource moved with no record is refused");
+    let refusal = admit_tree(
+        &withheld,
+        &withheld.assume_self_attested(),
+        withheld.hash(&TestHasher),
+        &world(),
+        &TestHasher,
+    )
+    .expect_err("a restricted resource moved with no record is refused");
     assert!(
         matches!(refusal, AdmissionError::RecordWithheld { resource, .. } if resource == debt()),
         "a withheld record is refused for being withheld, not judged: {refusal:?}",

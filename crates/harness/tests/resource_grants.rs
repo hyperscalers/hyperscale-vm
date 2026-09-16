@@ -185,8 +185,14 @@ fn an_unpresented_record_refuses_at_admission() -> Result<()> {
     env.seal(root).context("the root grants")?.none()?;
     let tree = env.build().context("the tree builds")?;
     let identity = tree.hash(&TestHasher);
-    let refusal = admit_tree(&tree, identity, &chain, &TestHasher)
-        .expect_err("an unpresented record leaves the entries unresolvable");
+    let refusal = admit_tree(
+        &tree,
+        &tree.assume_self_attested(),
+        identity,
+        &chain,
+        &TestHasher,
+    )
+    .expect_err("an unpresented record leaves the entries unresolvable");
     assert!(
         matches!(refusal, AdmissionError::RecordWithheld { .. }),
         "withheld is the verdict, not whatever else refused first: {refusal:?}",
@@ -220,8 +226,14 @@ fn a_changed_rule_is_a_different_resource() -> Result<()> {
     env.seal(root).context("the root grants")?.none()?;
     let tree = env.build().context("the tree builds")?;
     let identity = tree.hash(&TestHasher);
-    let refusal = admit_tree(&tree, identity, &chain, &TestHasher)
-        .expect_err("a forged record registers a different resource");
+    let refusal = admit_tree(
+        &tree,
+        &tree.assume_self_attested(),
+        identity,
+        &chain,
+        &TestHasher,
+    )
+    .expect_err("a forged record registers a different resource");
     assert!(
         matches!(refusal, AdmissionError::RecordWithheld { .. }),
         "the holder's resource stays withheld, whatever else was presented: {refusal:?}",
@@ -236,8 +248,14 @@ fn a_forbidden_movement_refuses_at_admission() -> Result<()> {
     let tree = governed_tree(sealed(&never()))?;
     let identity = tree.hash(&TestHasher);
     let chain = world();
-    let refusal = admit_tree(&tree, identity, &chain, &TestHasher)
-        .expect_err("a movement the entry forbids is refused");
+    let refusal = admit_tree(
+        &tree,
+        &tree.assume_self_attested(),
+        identity,
+        &chain,
+        &TestHasher,
+    )
+    .expect_err("a movement the entry forbids is refused");
     let said = refusal.to_string();
     assert!(
         said.contains("grants Withdraw to nobody"),
@@ -260,8 +278,14 @@ fn a_resource_no_vault_may_hold_refuses_at_admission() -> Result<()> {
     let tree = admitted_tree(sealed(&never()), STRANGER)?;
     let identity = tree.hash(&TestHasher);
     let chain = world();
-    let refusal = admit_tree(&tree, identity, &chain, &TestHasher)
-        .expect_err("a credit the entry forbids is refused");
+    let refusal = admit_tree(
+        &tree,
+        &tree.assume_self_attested(),
+        identity,
+        &chain,
+        &TestHasher,
+    )
+    .expect_err("a credit the entry forbids is refused");
     let said = refusal.to_string();
     assert!(
         said.contains("grants Deposit to nobody"),

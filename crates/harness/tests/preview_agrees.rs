@@ -98,7 +98,14 @@ fn a_refused_preview_prints_the_refusal() -> Result<()> {
     // refuses the authorizing node, and the withdrawal never runs.
     let tree = single_intent(BOB, authorized_transfer_by(BOB));
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(&tree, identity, &world, &TestHasher).expect("it admits");
+    let admitted = admit_tree(
+        &tree,
+        &tree.assume_self_attested(),
+        identity,
+        &world,
+        &TestHasher,
+    )
+    .expect("it admits");
     let entry = batch_entry(&world, &tree, env())?;
 
     let source: Arc<dyn Substates> = Arc::new(store);

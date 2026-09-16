@@ -345,6 +345,7 @@ pub fn admit_presenting(
             sockets: &[],
             bindings: &[],
             account: composer,
+            attested_by: std::slice::from_ref(&composer),
             // A bare graph is signed whole by its composer, so what its
             // signer signed is the graph itself.
             identity: IntentHash(identity.0),
@@ -443,7 +444,11 @@ pub(crate) fn admit_intents(
             .conditions
             .push(Condition::declared(Rule::Require(JudgedLeaf::Signed {
                 cell,
-                keys: vec![Claim::of_subject(intent.account.address())],
+                keys: intent
+                    .attested_by
+                    .iter()
+                    .map(|key| Claim::of_subject(key.address()))
+                    .collect(),
             })));
     }
 

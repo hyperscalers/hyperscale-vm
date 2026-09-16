@@ -110,7 +110,14 @@ fn a_report_is_what_the_chain_derives() {
     // Nothing new is computed here, so everything must equal the direct
     // call it composes.
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(&tree, identity, &chain, &TestHasher).unwrap();
+    let admitted = admit_tree(
+        &tree,
+        &tree.assume_self_attested(),
+        identity,
+        &chain,
+        &TestHasher,
+    )
+    .unwrap();
     assert_eq!(report.identity(), identity);
     assert_eq!(report.manifest(), admitted.admitted.manifest());
     assert_eq!(report.admitted, admitted.admitted);

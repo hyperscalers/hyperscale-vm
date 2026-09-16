@@ -342,6 +342,23 @@ pub struct EnvelopeTree {
 }
 
 impl EnvelopeTree {
+    /// Each intent attested by the key its own account derives.
+    ///
+    /// A premise, not a fact: what the chain judges is the set the
+    /// envelope's signatures actually carry, and that is the envelope's
+    /// to state. Answers the question a preview asks — what would this
+    /// composition do if every account signed its own intent — and is
+    /// what a fixture means when it says nothing else. Never a commit
+    /// path, where the signatures are in hand and saying this instead
+    /// would admit a key no rule was asked about.
+    #[must_use]
+    pub fn assume_self_attested(&self) -> Vec<Vec<PrincipalAddr>> {
+        self.intents
+            .iter()
+            .map(|intent| vec![intent.account])
+            .collect()
+    }
+
     /// A composition of one intent: a graph its own account signs, with
     /// nothing offered into it.
     ///
@@ -1017,10 +1034,23 @@ pub fn encode_tree(tree: &EnvelopeTree) -> Vec<u8> {
 /// it excludes.
 pub fn admit_tree(
     tree: &EnvelopeTree,
+    attested_by: &[Vec<PrincipalAddr>],
     identity: ManifestHash,
     chain: &dyn ChainRecords,
     hasher: &dyn Hasher,
 ) -> Result<AdmittedTree, AdmissionError> {
+    // One attesting set per intent, and the caller holds them: the
+    // signatures are the envelope's and never the tree's, so nothing
+    // here could derive them. Required rather than defaulted, because
+    // the default that suggests itself — an account attesting itself —
+    // is what an unwritten cell admits, so a caller that forgot would
+    // weaken every sign-in silently.
+    if attested_by.len() != tree.intents.len() {
+        return Err(AdmissionError::AttestationArity {
+            expected: tree.intents.len(),
+            found: attested_by.len(),
+        });
+    }
     if tree.intents.len() > MAX_INTENTS {
         return Err(AdmissionError::TooManyIntents);
     }
@@ -1057,11 +1087,13 @@ pub fn admit_tree(
         .intents
         .iter()
         .zip(&records)
-        .map(|(intent, record)| IntentView {
+        .zip(attested_by)
+        .map(|((intent, record), attested_by)| IntentView {
             graph: &intent.decl.graph,
             sockets: &intent.decl.sockets,
             bindings: &intent.bindings,
             account: intent.account,
+            attested_by,
             identity: record.intent,
             expiry_ms: crossing_expiry_ms(&intent.decl.header),
         })

@@ -171,6 +171,13 @@ pub struct IntentView<'a> {
     /// owner of the `auth` cell its sign-in is judged against, and the
     /// subject its signature resolves to.
     pub(crate) account: PrincipalAddr,
+    /// The principals whose keys attested this intent.
+    ///
+    /// Separate from the account, and that separation is the whole of
+    /// what a sign-in decides: a key reaching for an account it does not
+    /// derive is admissible here and refused by that account's own shard,
+    /// which is what lets an account's rule name somebody else's key.
+    pub(crate) attested_by: &'a [PrincipalAddr],
     /// What this intent's own signer signed: the declaration's hash for
     /// an intent of a tree, and the graph's own for a bare one.
     ///
@@ -205,6 +212,7 @@ impl<'a> IntentView<'a> {
             sockets,
             bindings,
             account: PrincipalAddr::new([0; 31]),
+            attested_by: &[],
             identity: IntentHash(Hash32([0; 32])),
             expiry_ms: 0,
         }

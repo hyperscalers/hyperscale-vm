@@ -50,7 +50,14 @@ fn world() -> Records {
 fn admits(tree: &EnvelopeTree) {
     let chain = world();
     let identity = tree.hash(&TestHasher);
-    admit_tree(tree, identity, &chain, &TestHasher).expect("a composed envelope admits");
+    admit_tree(
+        tree,
+        &tree.assume_self_attested(),
+        identity,
+        &chain,
+        &TestHasher,
+    )
+    .expect("a composed envelope admits");
 }
 
 /// The two-sided trade: each signer withdraws what they pay, exports it,
@@ -568,8 +575,14 @@ fn a_declared_hole_carries_a_proof_across_an_intent_boundary() {
         "nothing the composition did moved what the holder signed",
     );
     let chain = world();
-    let admitted = admit_tree(&tree, tree.hash(&TestHasher), &chain, &TestHasher)
-        .expect("the approval satisfies the note's own entry");
+    let admitted = admit_tree(
+        &tree,
+        &tree.assume_self_attested(),
+        tree.hash(&TestHasher),
+        &chain,
+        &TestHasher,
+    )
+    .expect("the approval satisfies the note's own entry");
     // The withdrawing node carries both claims: the holder's own, and
     // the desk's — which reached it from another intent entirely.
     let withdrawing = admitted
@@ -602,7 +615,13 @@ fn a_hole_bound_to_the_wrong_claim_is_refused() {
     let tree = approved(request).expect("the composition still builds");
     let chain = world();
     assert_eq!(
-        admit_tree(&tree, tree.hash(&TestHasher), &chain, &TestHasher),
+        admit_tree(
+            &tree,
+            &tree.assume_self_attested(),
+            tree.hash(&TestHasher),
+            &chain,
+            &TestHasher
+        ),
         Err(AdmissionError::SocketClaimMismatch {
             intent: 1,
             node: 1,

@@ -21,10 +21,10 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, meta_granting, pkg, world};
 use hyperscale_vm_effects::vocabulary::{HALT, VAULT};
 use hyperscale_vm_effects::{
-    AdmissionError, Claim, EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour, GraphArg,
-    GraphNode, Hash32, Holding, InstanceMeta, Intent, IntentDecl, IntentHeader, JudgedLeaf,
-    ManifestGraph, Records, ResourceGrants, ResourceKind, ResourceMeta, Rule, RuleBytes, SlotRef,
-    StoredRule, TestHasher, Value, admit_tree, child_key,
+    AdmissionError, AdmittedTree, Claim, EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour,
+    GraphArg, GraphNode, Hash32, Holding, InstanceMeta, Intent, IntentDecl, IntentHeader,
+    JudgedLeaf, ManifestGraph, Records, ResourceGrants, ResourceKind, ResourceMeta, Rule,
+    RuleBytes, SlotRef, StoredRule, TestHasher, Value, admit_tree, child_key,
 };
 use hyperscale_vm_fixtures::custodian;
 use hyperscale_vm_types::{
@@ -217,12 +217,24 @@ fn round_trip(custodian: ComponentAddr) -> EnvelopeTree {
 /// A withdrawal from a component's own vault is judged against what
 /// **that component** holds, in a declaration that says nothing about
 /// any of it.
+/// The tree admitted against `chain`, every intent attested by the key
+/// its own account derives — what a fixture means when it says nothing
+/// else about who signed.
+fn admit_env(env: &EnvelopeTree, chain: &Records) -> Result<AdmittedTree, AdmissionError> {
+    admit_tree(
+        env,
+        &env.assume_self_attested(),
+        env.hash(&TestHasher),
+        chain,
+        &TestHasher,
+    )
+}
+
 #[test]
 fn a_component_answers_for_its_own_vault() {
     let (chain, custodian) = custody_world();
     let env = round_trip(custodian);
-    let admitted = admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher)
-        .expect("the custodian's own withdrawal admits");
+    let admitted = admit_env(&env, &chain).expect("the custodian's own withdrawal admits");
 
     let cell = credential(custodian);
     assert!(
@@ -244,8 +256,7 @@ fn a_component_answers_for_its_own_vault() {
     // Whoever signs, the question is the same and the cell is the same:
     // a design that asked about the caller would ask about ALICE here
     // and BOB below, and bind neither.
-    let other = admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher)
-        .expect("a different signer admits the same way");
+    let other = admit_env(&env, &chain).expect("a different signer admits the same way");
     assert_eq!(
         other.admitted.declaration().conditions,
         admitted.admitted.declaration().conditions,
@@ -276,8 +287,7 @@ fn a_halt_binds_the_component_holding_the_value() {
     let env = round_trip(custodian);
     let mut env = env;
     env.resources = vec![freezable_meta()];
-    let admitted = admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher)
-        .expect("the custodian's own withdrawal admits");
+    let admitted = admit_env(&env, &chain).expect("the custodian's own withdrawal admits");
 
     let halted = EffectTarget::Point(child_key(
         &TestHasher,
@@ -315,8 +325,7 @@ fn a_halt_covers_every_slot_the_holder_keeps_the_resource_in() {
     let (chain, custodian) = custody_world_over(freezable());
     let mut env = paid_out(custodian, ALICE);
     env.resources = vec![freezable_meta()];
-    let admitted =
-        admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher).expect("the payout admits");
+    let admitted = admit_env(&env, &chain).expect("the payout admits");
     let declaration = admitted.admitted.declaration();
 
     // Two of the recipient's own cells take the value, at two different
@@ -367,8 +376,7 @@ fn a_halt_covers_every_slot_the_holder_keeps_the_resource_in() {
 fn a_resource_granting_no_freeze_reads_no_halt_leaf() {
     let (chain, custodian) = custody_world();
     let env = round_trip(custodian);
-    let admitted = admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher)
-        .expect("the governed resource moves on its own terms");
+    let admitted = admit_env(&env, &chain).expect("the governed resource moves on its own terms");
 
     let would_be = EffectTarget::Point(child_key(
         &TestHasher,
@@ -464,8 +472,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
             instances: Vec::new(),
             resources: vec![meta],
         };
-        let admitted = admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher)
-            .expect("the receiving method admits");
+        let admitted = admit_env(&env, &chain).expect("the receiving method admits");
         let asked = admitted.admitted.declaration().required().cloned();
         (target, asked.collect::<Vec<_>>())
     };
@@ -606,7 +613,7 @@ fn a_total_frame_carries_no_entry_its_own_leg_would_answer() {
         let chain = world();
         let mut env = transferred(ALICE, BOB, record.address(&TestHasher));
         env.resources = vec![record];
-        admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher)
+        admit_env(&env, &chain)
     };
 
     // A holding is materialization's, and a claim is admission's: both
@@ -663,8 +670,8 @@ fn one_flag_is_read_once_however_many_directions_the_access_moves_in() {
         evidence: BTreeSet::default(),
     });
     env.resources = vec![freezable_meta()];
-    let admitted = admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher)
-        .expect("the custodian moves its own value on the resource's terms");
+    let admitted =
+        admit_env(&env, &chain).expect("the custodian moves its own value on the resource's terms");
     let ordered = &admitted.admitted.frames()[1].ordered;
 
     let both_ways = ordered.iter().any(|access| {

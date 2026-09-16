@@ -5,14 +5,15 @@
 use std::collections::BTreeSet;
 
 use hyperscale_hbor::from_slice;
+use hyperscale_vm_effects::vocabulary::AUTH;
 use hyperscale_vm_effects::{
     AdmissionError, AdmittedTree, Binding, Bounds, ChainRecords, Claim, Constraint, CrossingCell,
     CrossingSite, ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, EnvelopeTree, GraphArg, GraphNode,
-    Hash32, Hasher, InstanceMeta, Intent, IntentDecl, IntentHash, IntentHeader, MAX_SOCKETS,
-    MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, Marked, Marker, NULLIFIER_SLOT, NodeInput,
-    PackageHash, PrefixShardResolver, Records, ResourceKind, ShardResolver, Socket, TestHasher,
-    Value, admit, admit_tree, bucketed_child_key, child_key, escrow_claim_key, escrow_record_key,
-    explain_admission_tree, nullifier_key, per_shard,
+    Hash32, Hasher, InstanceMeta, Intent, IntentDecl, IntentHash, IntentHeader, JudgedLeaf,
+    MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, Marked, Marker, NULLIFIER_SLOT,
+    NodeInput, PackageHash, PrefixShardResolver, Records, ResourceKind, Rule, ShardResolver,
+    Socket, TestHasher, Value, admit, admit_tree, bucketed_child_key, child_key, escrow_claim_key,
+    escrow_record_key, explain_admission_tree, nullifier_key, per_shard,
 };
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
@@ -135,10 +136,69 @@ fn composed_tree(pay: u128) -> EnvelopeTree {
     }
 }
 
+/// An intent acts as an account and is attested by keys, and the two are
+/// separate. A key deriving no part of the account it acts for is
+/// admissible here — nothing at this stage could judge it, since whether
+/// the account admits that key is state only the account's own cell
+/// holds. What stands between the two is the condition injected beside
+/// it, which that account's shard answers before any body runs.
+#[test]
+fn an_intent_is_attested_by_keys_the_account_need_not_derive() {
+    let tree = composed_tree(100);
+    let identity = tree.hash(&TestHasher);
+    let admitted = admit_tree(
+        &tree,
+        &[vec![BOB], vec![ALICE]],
+        identity,
+        &world(),
+        &TestHasher,
+    )
+    .expect("a key that derives neither account still admits");
+
+    for (account, key) in [(ALICE, BOB), (BOB, ALICE)] {
+        let cell = child_key(&TestHasher, account.address(), AUTH, &[]);
+        assert!(
+            admitted
+                .admitted
+                .declaration()
+                .conditions
+                .iter()
+                .any(|condition| matches!(
+                    &condition.rule,
+                    Rule::Require(JudgedLeaf::Signed { cell: at, keys })
+                        if *at == cell && keys.as_slice() == [Claim::of_subject(key.address())]
+                )),
+            "the sign-in names the account's own cell and the key that attested it",
+        );
+    }
+}
+
+/// One attesting set per intent. A caller handing over a different number
+/// is a defect rather than a refusal a composer could earn, so it is
+/// named as one.
+#[test]
+fn an_attesting_set_is_required_for_every_intent() {
+    let tree = composed_tree(100);
+    let identity = tree.hash(&TestHasher);
+    assert_eq!(
+        admit_tree(&tree, &[vec![ALICE]], identity, &world(), &TestHasher),
+        Err(AdmissionError::AttestationArity {
+            expected: 2,
+            found: 1,
+        }),
+    );
+}
+
 fn admit_composed(tree: &EnvelopeTree) -> Result<AdmittedTree, AdmissionError> {
     let chain = world();
     let identity = tree.hash(&TestHasher);
-    admit_tree(tree, identity, &chain, &TestHasher)
+    admit_tree(
+        tree,
+        &tree.assume_self_attested(),
+        identity,
+        &chain,
+        &TestHasher,
+    )
 }
 
 /// A refusal placed by flattened node index is explained at the call
@@ -411,7 +471,14 @@ fn a_nullifier_leads_with_the_bucket_its_expiry_falls_in() {
 fn an_origin_names_the_intent_its_node_signed() {
     let tree = composed_tree(100);
     let identity = tree.hash(&TestHasher);
-    let admitted = admit_tree(&tree, identity, &world(), &TestHasher).expect("admits");
+    let admitted = admit_tree(
+        &tree,
+        &tree.assume_self_attested(),
+        identity,
+        &world(),
+        &TestHasher,
+    )
+    .expect("admits");
     let root = tree.intents[0].decl.hash(&TestHasher);
     let bob = tree.intents[1].decl.hash(&TestHasher);
 
@@ -483,7 +550,14 @@ fn an_escrow_key_is_fixed_by_the_intent_its_node_signed() {
     // derivation sourced it from.
     let origin_of = |tree: &EnvelopeTree| {
         let identity = tree.hash(&TestHasher);
-        let admitted = admit_tree(tree, identity, &world(), &TestHasher).expect("admits");
+        let admitted = admit_tree(
+            tree,
+            &tree.assume_self_attested(),
+            identity,
+            &world(),
+            &TestHasher,
+        )
+        .expect("admits");
         admitted.admitted.origins()[3]
     };
     let (one, other) = (origin_of(&first), origin_of(&second));
@@ -499,7 +573,14 @@ fn an_escrow_key_is_fixed_by_the_intent_its_node_signed() {
     // fixes the window is the party whose cells it keys.
     let root_of = |tree: &EnvelopeTree| {
         let identity = tree.hash(&TestHasher);
-        let admitted = admit_tree(tree, identity, &world(), &TestHasher).expect("admits");
+        let admitted = admit_tree(
+            tree,
+            &tree.assume_self_attested(),
+            identity,
+            &world(),
+            &TestHasher,
+        )
+        .expect("admits");
         admitted.admitted.origins()[1]
     };
     assert_ne!(root_of(&first).expiry_ms, root_of(&second).expiry_ms);
@@ -974,7 +1055,13 @@ fn two_bindings_cannot_consume_one_output() {
     second.decl.graph.nodes[1] = withdraw(second_signer, RES_Y, 11);
     tree.intents.push(second);
     let identity = tree.hash(&TestHasher);
-    let result = admit_tree(&tree, identity, &chain, &TestHasher);
+    let result = admit_tree(
+        &tree,
+        &tree.assume_self_attested(),
+        identity,
+        &chain,
+        &TestHasher,
+    );
     assert_eq!(
         result,
         Err(AdmissionError::DoubleConsumption {
@@ -1113,7 +1200,16 @@ fn fresh_keys_root_at_the_envelope_identity() {
     ];
     let admitted: Vec<_> = identities
         .iter()
-        .map(|identity| admit_tree(&tree, *identity, &chain, &TestHasher).unwrap())
+        .map(|identity| {
+            admit_tree(
+                &tree,
+                &tree.assume_self_attested(),
+                *identity,
+                &chain,
+                &TestHasher,
+            )
+            .unwrap()
+        })
         .collect();
     assert_eq!(
         admitted[0].admitted.manifest(),
@@ -1218,8 +1314,8 @@ proptest! {
             tree.intents[0].bindings[0] = binding;
         }
         let identity = tree.hash(&TestHasher);
-        let first = admit_tree(&tree, identity, &chain, &TestHasher);
-        let second = admit_tree(&tree, identity, &chain, &TestHasher);
+        let first = admit_tree(&tree, &tree.assume_self_attested(), identity, &chain, &TestHasher);
+        let second = admit_tree(&tree, &tree.assume_self_attested(), identity, &chain, &TestHasher);
         assert_eq!(first, second);
     }
 }
@@ -1303,7 +1399,13 @@ fn a_record_stands_for_a_seal_and_for_no_other_call() {
         resources: Vec::new(),
     };
     let admit_with = |tree: &EnvelopeTree, chain: &dyn ChainRecords| {
-        admit_tree(tree, tree.hash(&TestHasher), chain, &TestHasher)
+        admit_tree(
+            tree,
+            &tree.assume_self_attested(),
+            tree.hash(&TestHasher),
+            chain,
+            &TestHasher,
+        )
     };
 
     // The seal: nothing committed answers for the component yet, which

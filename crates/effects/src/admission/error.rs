@@ -317,6 +317,18 @@ pub enum AdmissionError {
     /// The intent's signature presented to a method whose rules read no
     /// cell under the signer's own prefix.
     ///
+    /// The attesting sets handed to admission do not match the intents.
+    ///
+    /// One set per intent, and the caller supplies them: the signatures
+    /// are the envelope's, never the tree's. A mismatch is a caller
+    /// defect rather than a refusal a composer could earn.
+    #[error("{found} attesting sets for {expected} intents")]
+    AttestationArity {
+        /// The intents the tree carries.
+        expected: usize,
+        /// The sets handed in.
+        found: usize,
+    },
     /// A proof drawn from a node that is not an earlier node of the same
     /// intent — the proof's producer must have run, and aborted the
     /// transaction if its own gate refused, before anything consumes it.
@@ -772,7 +784,8 @@ impl AdmissionError {
             },
             // A budget, a shape, or a whole composition: nowhere to send
             // a reader that the sentence does not already say.
-            Self::TooManyNodes { .. }
+            Self::AttestationArity { .. }
+            | Self::TooManyNodes { .. }
             | Self::TooManyIntents { .. }
             | Self::DuplicateIntent { .. }
             | Self::CyclicSockets { .. }
