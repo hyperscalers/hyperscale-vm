@@ -1,8 +1,9 @@
 //! How Rust values become bound node arguments.
 //!
 //! Scalars and addresses become literals; a [`Bucket`] becomes the edge it
-//! stands for, carrying its derived resource type; a [`SocketRef`] becomes the enclosing
-//! intent's socket. [`Value`] is the escape hatch for the literal
+//! stands for, carrying its derived resource type; a [`SocketRef`] becomes
+//! the enclosing intent's socket; a [`Given`] becomes the member's give it
+//! holds. [`Value`] is the escape hatch for the literal
 //! kinds no plain Rust type maps to — keys, tuples, lists. Both traits are
 //! sealed: the set of things that can bind is the signed form's, not the
 //! caller's, and growing it is a change to this crate rather than an impl
@@ -14,6 +15,7 @@ use hyperscale_vm_types::{
 };
 
 use crate::builder::{Bucket, BuildError, GraphBuilder, SocketRef};
+use crate::envelope::Given;
 
 mod sealed {
     /// The sealing marker for [`Arg`](super::Arg) and
@@ -179,16 +181,28 @@ impl Arg for SocketRef {
     }
 }
 
+impl sealed::Sealed for Given {}
+impl Arg for Given {
+    fn bind(self, builder: &mut GraphBuilder) -> GraphArg {
+        if !self.held_by(builder.id()) {
+            builder.refuse(BuildError::ForeignGive);
+        }
+        self.into_arg()
+    }
+}
+
 /// An argument that fills a declared bucket parameter.
 ///
-/// Exactly the two things a bucket position admits: an edge the author
-/// holds, and the socket a composition will fill. Naming the pair is
-/// what lets a wrapper over a method taking funds be called from inside an
-/// intent, where the funds arrive from another intent's graph.
+/// Exactly the three things a bucket position admits: an edge the author
+/// holds, the socket a composition will fill, and a give of a member the
+/// author composes. Naming them is what lets a wrapper over a method
+/// taking funds be called from inside an intent, where the funds arrive
+/// from another intent's graph.
 pub trait BucketArg: Arg {}
 
 impl BucketArg for Bucket {}
 impl BucketArg for SocketRef {}
+impl BucketArg for Given {}
 
 /// An argument that fills a declared address parameter.
 ///

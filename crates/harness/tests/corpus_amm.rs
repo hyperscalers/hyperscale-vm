@@ -8,7 +8,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_fixtures::{amm, shares};
 use hyperscale_vm_harness::driver::{amount_of, declared_vault, vault};
 use hyperscale_vm_kernel::MemoryStore;
-use hyperscale_vm_manifest_builder::{EnvelopeBuilder, EnvelopeError, IntentBuilder};
+use hyperscale_vm_manifest_builder::{EnvelopeError, IntentBuilder};
 use hyperscale_vm_sdk::client::VaultField;
 use hyperscale_vm_sdk::{Declines, DeclinesAs};
 use hyperscale_vm_stdlib::account;
@@ -487,7 +487,7 @@ fn an_unadmitted_venue_cannot_trade_the_restricted_class() {
 /// for it.
 fn approval_request(approver: Claim) -> Intent {
     let chain = world();
-    let mut decl = IntentBuilder::declaration(&chain, &TestHasher, ALICE, TEST_HEADER);
+    let mut decl = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     let approval = decl.declare_proof(approver);
     let funds = account::withdraw(&mut decl, ALICE, RES_X, 500).expect("withdraw types");
     let out = decl
@@ -507,15 +507,14 @@ fn approval_request(approver: Claim) -> Intent {
 /// own intent acts as.
 fn approved_composition(request: Intent) -> Result<EnvelopeTree, EnvelopeError> {
     let chain = world();
-    let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, REGISTRAR, TEST_HEADER);
-    let offered = env.grant();
-    let wants = env
+    let mut root = IntentBuilder::new(&chain, &TestHasher, REGISTRAR, TEST_HEADER);
+    let wants = root
         .adopt(SignedIntent::unsigned(request))?
+        .sockets
         .one()
         .expect("the request declares one socket");
-    env.seal(root)?.none()?;
-    env.bind(wants, offered)?;
-    env.build()
+    root.bind(wants, REGISTRAR)?;
+    root.build()
 }
 
 /// The venue holding no credential at all, and the class it trades

@@ -18,7 +18,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore};
-use hyperscale_vm_manifest_builder::{EnvelopeBuilder, TypedError};
+use hyperscale_vm_manifest_builder::{IntentBuilder, TypedError};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     Address, AddressClass, EffectTarget, Outcome, Presence, PrincipalAddr, ResourceAddr,
@@ -98,15 +98,14 @@ fn governed(entry: RuleBytes) -> ResourceAddr {
 /// rule, which is the whole point.
 fn governed_tree(entry: RuleBytes) -> Result<EnvelopeTree> {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER, TEST_HEADER);
+    let mut root = IntentBuilder::new(&chain, &TestHasher, HOLDER, TEST_HEADER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
         let funds = account::withdraw(b, HOLDER, governed(entry.clone()), 40)?;
         account::deposit(b, HOLDER, funds)
     };
     build(&mut root).context("the withdrawal types against the account")?;
-    env.register_resource(governed_meta(entry));
-    env.seal(root).context("the root grants")?.none()?;
-    env.build().context("the tree builds")
+    root.register_resource(governed_meta(entry));
+    root.build().context("the tree builds")
 }
 
 /// A holder's store, holding the governed resource and — where `carries`
@@ -175,15 +174,13 @@ fn a_credential_governs_a_withdrawal_no_package_declared() -> Result<()> {
 fn an_unpresented_record_refuses_at_admission() -> Result<()> {
     let entry = sealed(&StoredRule::held(BADGE, Holding::Balance));
     let chain = world();
-    let (env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER, TEST_HEADER);
+    let mut root = IntentBuilder::new(&chain, &TestHasher, HOLDER, TEST_HEADER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
         let funds = account::withdraw(b, HOLDER, governed(entry.clone()), 40)?;
         account::deposit(b, HOLDER, funds)
     };
     build(&mut root).context("the withdrawal types")?;
-    let mut env = env;
-    env.seal(root).context("the root grants")?.none()?;
-    let tree = env.build().context("the tree builds")?;
+    let tree = root.build().context("the tree builds")?;
     let identity = tree.hash(&TestHasher);
     let refusal = admit_tree(&tree, identity, &chain, &TestHasher)
         .expect_err("an unpresented record leaves the entries unresolvable");
@@ -202,7 +199,7 @@ fn an_unpresented_record_refuses_at_admission() -> Result<()> {
 fn a_changed_rule_is_a_different_resource() -> Result<()> {
     let entry = sealed(&StoredRule::held(BADGE, Holding::Balance));
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER, TEST_HEADER);
+    let mut root = IntentBuilder::new(&chain, &TestHasher, HOLDER, TEST_HEADER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
         let funds = account::withdraw(b, HOLDER, governed(entry.clone()), 40)?;
         account::deposit(b, HOLDER, funds)
@@ -216,9 +213,8 @@ fn a_changed_rule_is_a_different_resource() -> Result<()> {
         rules: Vec::new(),
     }));
     assert_ne!(forged.address(&TestHasher), governed(entry));
-    env.register_resource(forged);
-    env.seal(root).context("the root grants")?.none()?;
-    let tree = env.build().context("the tree builds")?;
+    root.register_resource(forged);
+    let tree = root.build().context("the tree builds")?;
     let identity = tree.hash(&TestHasher);
     let refusal = admit_tree(&tree, identity, &chain, &TestHasher)
         .expect_err("a forged record registers a different resource");
@@ -283,16 +279,15 @@ fn a_resource_no_vault_may_hold_refuses_at_admission() -> Result<()> {
 fn a_withdrawal_credential_leaves_receiving_alone() -> Result<()> {
     let entry = sealed(&StoredRule::held(BADGE, Holding::Balance));
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER, TEST_HEADER);
+    let mut root = IntentBuilder::new(&chain, &TestHasher, HOLDER, TEST_HEADER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
         let funds = account::withdraw(b, HOLDER, governed(entry.clone()), 40)?;
         // To a party holding no credential of any kind.
         account::deposit(b, STRANGER, funds)
     };
     build(&mut root).context("the transfer types")?;
-    env.register_resource(governed_meta(entry.clone()));
-    env.seal(root).context("the root grants")?.none()?;
-    let tree = env.build().context("the tree builds")?;
+    root.register_resource(governed_meta(entry.clone()));
+    let tree = root.build().context("the tree builds")?;
 
     let sent = batch_entry(&tree)?;
     let (outcome, end) = run(
@@ -459,15 +454,14 @@ fn admitting(entry: RuleBytes) -> ResourceAddr {
 /// same ordinary transfer a package that declared nothing composes.
 fn admitted_tree(entry: RuleBytes, recipient: PrincipalAddr) -> Result<EnvelopeTree> {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, HOLDER, TEST_HEADER);
+    let mut root = IntentBuilder::new(&chain, &TestHasher, HOLDER, TEST_HEADER);
     let build = |b: &mut _| -> std::result::Result<(), TypedError> {
         let funds = account::withdraw(b, HOLDER, admitting(entry.clone()), 40)?;
         account::deposit(b, recipient, funds)
     };
     build(&mut root).context("the transfer types against the account")?;
-    env.register_resource(admitting_meta(entry));
-    env.seal(root).context("the root grants")?.none()?;
-    env.build().context("the tree builds")
+    root.register_resource(admitting_meta(entry));
+    root.build().context("the tree builds")
 }
 
 /// A deposit credential governs the crediting side, and a transfer to a

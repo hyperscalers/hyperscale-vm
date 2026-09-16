@@ -30,12 +30,12 @@
 
 use hyperscale_vm_effects::{
     AdmittedTree, CallArg, Constraint, EnvelopeTree, Hasher, IntentHeader, PackageHash,
-    PrefixShardResolver, Records, TestHasher, admit_tree, per_shard,
+    PrefixShardResolver, Records, SignedIntent, TestHasher, admit_tree, per_shard,
 };
 use hyperscale_vm_embed::abi::{ABI, EVENTS, MEMORY, STATE};
 use hyperscale_vm_harness::driver::{Lanes, run_lanes, seed_vault};
 use hyperscale_vm_kernel::{BatchTx, EnvInputs, MemoryStore, Receipt};
-use hyperscale_vm_manifest_builder::EnvelopeBuilder;
+use hyperscale_vm_manifest_builder::{IntentBuilder, Interface};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     AbortReason, Address, EffectTarget, Mode, NetworkId, Outcome, PrincipalAddr, ResourceAddr,
@@ -88,37 +88,31 @@ fn world() -> Records {
     chain
 }
 
-/// Alice pays X for Bob's Y: each withdraws its own leg, exports it, and
-/// deposits what the other sent. Neither graph names the other, and the
-/// envelope is the two edges between them.
+/// Alice pays X for Bob's Y: Bob withdraws his leg, gives it, and
+/// deposits what his socket brings; Alice withdraws hers, wires it into
+/// his socket, and deposits his give. Neither graph names the other, and
+/// the tree is the two edges between them.
 fn traded() -> EnvelopeTree {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
-
-    let taken = root.declare(RES_Y, [Constraint::MinAmount(RETURNS)]);
-    let funds = account::withdraw(&mut root, ALICE, RES_X, PAYS).expect("withdraw types");
-    let paid_x = root.export(funds);
-    account::deposit(&mut root, ALICE, taken).expect("deposit types");
-
-    let mut sub = env.subintent(BOB, TEST_HEADER);
+    let mut sub = IntentBuilder::new(&chain, &TestHasher, BOB, TEST_HEADER);
     let taken = sub.declare(RES_X, [Constraint::MinAmount(PAYS)]);
     let funds = account::withdraw(&mut sub, BOB, RES_Y, RETURNS).expect("withdraw types");
-    let paid_y = sub.export(funds);
+    sub.give(funds);
     account::deposit(&mut sub, BOB, taken).expect("deposit types");
+    let sub = sub
+        .into_decl()
+        .expect("the subintent discharges its declaration");
 
-    let wants_y = env
-        .seal(root)
-        .expect("the root discharges its declaration")
-        .one()
-        .expect("the root declares one socket");
-    let wants_x = env
-        .seal(sub)
-        .expect("the subintent discharges its declaration")
-        .one()
-        .expect("the subintent declares one socket");
-    env.bind(wants_y, paid_y).expect("the socket takes an edge");
-    env.bind(wants_x, paid_x).expect("the socket takes an edge");
-    env.build().expect("every socket is bound")
+    let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
+    let Interface { sockets, gives } = root
+        .adopt(SignedIntent::unsigned(sub))
+        .expect("the subintent adopts");
+    let wants_x = sockets.one().expect("the subintent declares one socket");
+    let paid_y = gives.one().expect("the subintent declares one give");
+    let funds = account::withdraw(&mut root, ALICE, RES_X, PAYS).expect("withdraw types");
+    root.bind(wants_x, funds).expect("the socket takes an edge");
+    account::deposit(&mut root, ALICE, paid_y.min(RETURNS)).expect("deposit types");
+    root.build().expect("every socket is bound")
 }
 
 /// Admit and route the tree the way a block would, into the one entry

@@ -282,6 +282,8 @@ pub struct Report {
     /// an intent whose sockets carry the whole composition declares no
     /// nodes of its own, and appears in no origin to be found by.
     pub intents: Vec<IntentRecord>,
+    /// The attesting set each intent declares, beside its record.
+    pub(crate) attesting: Vec<Vec<PrincipalAddr>>,
     /// What the methods this transaction's calls name may emit between
     /// them, in bytes.
     ///
@@ -414,10 +416,10 @@ impl Report {
     /// `schemes`, with `artifact_bytes` of package code behind its calls.
     ///
     /// `schemes` names one entry per signature the envelope will bind,
-    /// which is one per party in [`Self::signers`] and not one per
-    /// intent: a conjunction asks several parties for one node, so an
-    /// intent can need more than one and the two counts part company as
-    /// soon as one does. The chain counts the signatures the envelope
+    /// which is one per attester of the root in [`Self::signers`] and
+    /// not one per intent: a root attested by two keys binds two, and a
+    /// member's attestations ride inside the tree. The chain counts the
+    /// signatures the envelope
     /// actually carries, so a short vector understates the quote rather
     /// than the charge — a wallet that passes one scheme per intent
     /// signs a ceiling admission then refuses. `artifact_bytes` is
@@ -641,21 +643,20 @@ impl Report {
         Ok(by_intent)
     }
 
-    /// Every account the transaction needs an intent for: the accounts
-    /// each intent acts as, and nothing else. Exact, because it is the
-    /// tree's own list — a principal claim reaches a gate only from the
-    /// signature of an intent acting as that account or from a grant of
-    /// one, so every account a gate is answered by is already here, and
-    /// a stored rule names its accounts in state, which no report reads.
+    /// Who signs what: each intent's hash and the principals whose keys
+    /// must attest it, in tree order, the root first. Exact, because it
+    /// is the tree's own declaration — an intent names its attesting
+    /// set in signed content, and each account it acts as is judged
+    /// against that set at its own shard.
     ///
-    /// Accounts, not keys: which keys attest an intent is the account's
-    /// own rule to state, and its shard judges that at materialization.
-    #[must_use]
-    pub fn signers(&self) -> BTreeSet<PrincipalAddr> {
+    /// Principals, not accounts: the accounts an intent acts as are on
+    /// [`intents`](Self::intents), and which keys an account's rule
+    /// accepts is the account's own to state.
+    pub fn signers(&self) -> impl Iterator<Item = (IntentHash, &[PrincipalAddr])> {
         self.intents
             .iter()
-            .flat_map(IntentRecord::accounts)
-            .collect()
+            .zip(&self.attesting)
+            .map(|(record, attesting)| (record.intent, attesting.as_slice()))
     }
 
     /// The nodes whose access no signature can satisfy. A transaction
@@ -695,13 +696,25 @@ pub fn preflight_tree(
 ) -> Result<Report, PreflightError> {
     let identity = tree.hash(hasher);
     let admitted = admit_tree(tree, identity, chain, hasher)?;
-    report(admitted.admitted, admitted.intents, chain, network)
+    let attesting = tree
+        .intents()
+        .iter()
+        .map(|intent| intent.attested_by.clone())
+        .collect();
+    report(
+        admitted.admitted,
+        admitted.intents,
+        attesting,
+        chain,
+        network,
+    )
 }
 
 /// Assemble the report.
 fn report(
     admitted: Admitted,
     intents: Vec<IntentRecord>,
+    attesting: Vec<Vec<PrincipalAddr>>,
     chain: &dyn ChainRecords,
     network: &str,
 ) -> Result<Report, PreflightError> {
@@ -767,6 +780,7 @@ fn report(
             intents
                 .iter()
                 .flat_map(IntentRecord::accounts)
+                .chain(attesting.iter().flatten().copied())
                 .map(PrincipalAddr::address),
         );
     for address in addresses {
@@ -780,6 +794,7 @@ fn report(
         admitted,
         authority,
         intents,
+        attesting,
         event_bytes,
         event_bytes_by_node: per_call,
         named,

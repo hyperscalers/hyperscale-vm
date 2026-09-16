@@ -15,7 +15,7 @@ use hyperscale_vm_effects::{
     footprint,
 };
 use hyperscale_vm_manifest_builder::{
-    Authority, EnvelopeBuilder, IntentBuilder, PreflightError, TypedBuilder, preflight_tree,
+    Authority, IntentBuilder, Interface, PreflightError, Report, TypedBuilder, preflight_tree,
 };
 use hyperscale_vm_stdlib::{account, staking};
 use hyperscale_vm_types::{
@@ -80,6 +80,14 @@ fn world() -> Records {
     chain.instances.serve_principals(pkg("account"));
     chain.instances.create(&TestHasher, pool_meta());
     chain
+}
+
+/// The attesting set the report names for each intent, in tree order.
+fn attesting(report: &Report) -> Vec<Vec<PrincipalAddr>> {
+    report
+        .signers()
+        .map(|(_, attesting)| attesting.to_vec())
+        .collect()
 }
 
 const SHARDS: PrefixShardResolver = PrefixShardResolver { bits: 2 };
@@ -200,7 +208,7 @@ fn a_withdrawal_names_its_own_signer_and_a_deposit_names_nobody() {
     assert_eq!(report.authority.len(), 2);
     assert_eq!(report.authority[0].authority, Authority::Signature(ALICE));
     assert_eq!(report.authority[1].authority, Authority::Anyone);
-    assert_eq!(report.signers(), std::iter::once(ALICE).collect());
+    assert_eq!(attesting(&report), [vec![ALICE]]);
     assert_eq!(report.unsatisfiable().count(), 0);
 }
 
@@ -230,7 +238,7 @@ fn the_operator_surface_is_the_badge_holders_custody() {
             instance: None,
         }
     );
-    assert_eq!(report.signers(), std::iter::once(OPERATOR).collect());
+    assert_eq!(attesting(&report), [vec![OPERATOR]]);
     assert_eq!(report.unsatisfiable().count(), 0);
     // The report names the badge it just handed the caller, so a wallet
     // can render the credential the surface asks for.
@@ -284,29 +292,24 @@ fn a_network_word_the_encoding_refuses_fails_once() {
 #[test]
 fn a_composition_names_every_signer_it_needs() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
-
-    let taken = root.declare(RES_Y, [Constraint::MinAmount(10)]);
-    let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
-    let paid_x = root.export(funds);
-    account::deposit(&mut root, ALICE, taken).unwrap();
-
-    let mut sub = env.subintent(BOB, TEST_HEADER);
+    let mut sub = IntentBuilder::new(&chain, &TestHasher, BOB, TEST_HEADER);
     let taken = sub.declare(RES_X, [Constraint::MinAmount(100)]);
     let funds = account::withdraw(&mut sub, BOB, RES_Y, 10).unwrap();
-    let paid_y = sub.export(funds);
+    sub.give(funds);
     account::deposit(&mut sub, BOB, taken).unwrap();
 
-    let wants_y = env.seal(root).unwrap().one().unwrap();
-    let wants_x = env.seal(sub).unwrap().one().unwrap();
-    env.bind(wants_y, paid_y).unwrap();
-    env.bind(wants_x, paid_x).unwrap();
-    let tree = env.build().unwrap();
+    let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
+    let Interface { sockets, gives } = root
+        .adopt(SignedIntent::unsigned(sub.into_decl().unwrap()))
+        .unwrap();
+    let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
+    root.bind(sockets.one().unwrap(), funds).unwrap();
+    account::deposit(&mut root, ALICE, gives.one().unwrap().min(10)).unwrap();
+    let tree = root.build().unwrap();
 
     let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
-    // Both withdrawals name their own account, and the subintent's signer
-    // signs its declaration; here the two sets coincide.
-    assert_eq!(report.signers(), [ALICE, BOB].into_iter().collect());
+    // Each intent is attested by the account it acts as, the root first.
+    assert_eq!(attesting(&report), [vec![ALICE], vec![BOB]]);
     assert_eq!(report.intents.len(), 2);
     assert_eq!(report.intents[1].accounts().collect::<Vec<_>>(), [BOB]);
     // The nullifier the composition would spend, named before signing.
@@ -324,13 +327,16 @@ fn a_composition_names_every_signer_it_needs() {
 #[test]
 fn a_root_that_calls_nothing_is_still_one_of_the_intents() {
     let chain = world();
-    let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
-    let mut sub = env.subintent(BOB, TEST_HEADER);
+    let mut sub = IntentBuilder::new(&chain, &TestHasher, BOB, TEST_HEADER);
     let funds = account::withdraw(&mut sub, BOB, RES_X, 10).unwrap();
     account::deposit(&mut sub, BOB, funds).unwrap();
-    env.seal(root).unwrap().none().unwrap();
-    env.seal(sub).unwrap().none().unwrap();
-    let tree = env.build().unwrap();
+    let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
+    let Interface { sockets, gives } = root
+        .adopt(SignedIntent::unsigned(sub.into_decl().unwrap()))
+        .unwrap();
+    sockets.none().unwrap();
+    gives.none().unwrap();
+    let tree = root.build().unwrap();
 
     let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
     let nodes = report.manifest().nodes.len();
@@ -393,24 +399,20 @@ fn an_intent_is_exposed_only_by_the_cells_its_signer_holds() {
 #[test]
 fn a_shared_cell_is_named_rather_than_charged_to_either_intent() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
-
-    let taken = root.declare(RES_X, [Constraint::MinAmount(10)]);
-    let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
-    let paid_alice = root.export(funds);
-    account::deposit(&mut root, BOB, taken).unwrap();
-
-    let mut sub = env.subintent(BOB, TEST_HEADER);
+    let mut sub = IntentBuilder::new(&chain, &TestHasher, BOB, TEST_HEADER);
     let taken = sub.declare(RES_X, [Constraint::MinAmount(100)]);
     let funds = account::withdraw(&mut sub, BOB, RES_X, 10).unwrap();
-    let paid_bob = sub.export(funds);
+    sub.give(funds);
     account::deposit(&mut sub, ALICE, taken).unwrap();
 
-    let wants_from_bob = env.seal(root).unwrap().one().unwrap();
-    let wants_from_alice = env.seal(sub).unwrap().one().unwrap();
-    env.bind(wants_from_bob, paid_bob).unwrap();
-    env.bind(wants_from_alice, paid_alice).unwrap();
-    let tree = env.build().unwrap();
+    let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
+    let Interface { sockets, gives } = root
+        .adopt(SignedIntent::unsigned(sub.into_decl().unwrap()))
+        .unwrap();
+    let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
+    root.bind(sockets.one().unwrap(), funds).unwrap();
+    account::deposit(&mut root, BOB, gives.one().unwrap().min(10)).unwrap();
+    let tree = root.build().unwrap();
 
     let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
     let nodes = report.manifest().nodes.len();
@@ -479,24 +481,20 @@ fn a_shared_cell_is_named_rather_than_charged_to_either_intent() {
 #[test]
 fn the_compute_column_sums_to_the_terms_and_splits_per_intent() {
     let chain = world();
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
-
-    let taken = root.declare(RES_Y, [Constraint::MinAmount(10)]);
-    let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
-    let paid_x = root.export(funds);
-    account::deposit(&mut root, ALICE, taken).unwrap();
-
-    let mut sub = env.subintent(BOB, TEST_HEADER);
+    let mut sub = IntentBuilder::new(&chain, &TestHasher, BOB, TEST_HEADER);
     let taken = sub.declare(RES_X, [Constraint::MinAmount(100)]);
     let funds = account::withdraw(&mut sub, BOB, RES_Y, 10).unwrap();
-    let paid_y = sub.export(funds);
+    sub.give(funds);
     account::deposit(&mut sub, BOB, taken).unwrap();
 
-    let wants_y = env.seal(root).unwrap().one().unwrap();
-    let wants_x = env.seal(sub).unwrap().one().unwrap();
-    env.bind(wants_y, paid_y).unwrap();
-    env.bind(wants_x, paid_x).unwrap();
-    let tree = env.build().unwrap();
+    let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
+    let Interface { sockets, gives } = root
+        .adopt(SignedIntent::unsigned(sub.into_decl().unwrap()))
+        .unwrap();
+    let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
+    root.bind(sockets.one().unwrap(), funds).unwrap();
+    account::deposit(&mut root, ALICE, gives.one().unwrap().min(10)).unwrap();
+    let tree = root.build().unwrap();
 
     let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
     let nodes = report.manifest().nodes.len();
@@ -621,7 +619,7 @@ fn a_stored_rule_on_another_account_is_reported_unread() {
         .find(|required| required.method == "freeze")
         .expect("the freeze is gated");
     assert_eq!(freezing.authority, Authority::StoredRule);
-    assert_eq!(report.signers(), BTreeSet::from([BOB]));
+    assert_eq!(attesting(&report), [vec![BOB]]);
     assert_eq!(report.unsatisfiable().count(), 0);
 }
 
@@ -635,7 +633,7 @@ fn a_disjunction_reports_its_branches_and_names_no_certain_signer() {
     // Alice's own request, signed before any composer exists, with a
     // socket where the desk's approval goes; the withdrawal's own gate
     // is answered by the signature this intent carries.
-    let mut request = IntentBuilder::declaration(&chain, &TestHasher, ALICE, TEST_HEADER);
+    let mut request = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     let approval = request.declare_proof(Claim::of_subject(DESK));
     let funds = request
         .presenting(approval, |b| b.call(ALICE, "withdraw", (note, 5u128)))
@@ -646,17 +644,16 @@ fn a_disjunction_reports_its_branches_and_names_no_certain_signer() {
     let request = request.into_decl().unwrap();
 
     // The desk's composition grants the account its own intent acts as.
-    let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
-    let offered = env.grant();
-    let wants = env
+    let mut root = IntentBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
+    let wants = root
         .adopt(SignedIntent::unsigned(request))
         .unwrap()
+        .sockets
         .one()
         .unwrap();
-    env.seal(root).unwrap().none().unwrap();
-    env.bind(wants, offered).unwrap();
-    env.register_resource(either_note_meta());
-    let tree = env.build().unwrap();
+    root.bind(wants, DESK).unwrap();
+    root.register_resource(either_note_meta());
+    let tree = root.build().unwrap();
 
     let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
     let withdrawing = report
@@ -678,9 +675,9 @@ fn a_disjunction_reports_its_branches_and_names_no_certain_signer() {
         }
     );
     // The choice of branch is the holder's, so neither branch signer is
-    // certain — only the holder's own gate is.
-    assert!(report.signers().contains(&ALICE));
-    assert!(!report.signers().contains(&BOB));
+    // certain — only the holder's own gate is. The desk attests its own
+    // root and Alice her request; Bob attests nothing.
+    assert_eq!(attesting(&report), [vec![DESK], vec![ALICE]]);
     assert_eq!(report.unsatisfiable().count(), 0);
 }
 
@@ -767,7 +764,7 @@ fn a_component_claim_the_transaction_mints_is_satisfiable() {
     let venue = venue_meta().address(&TestHasher);
     let ticket = ticket_meta().address(&TestHasher);
 
-    let (mut env, mut root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
+    let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     let approval = root.call_proving(venue, "approve", ()).unwrap();
     let funds = root
         .presenting(approval, |b| b.call(ALICE, "withdraw", (ticket, 3u128)))
@@ -775,9 +772,8 @@ fn a_component_claim_the_transaction_mints_is_satisfiable() {
         .one()
         .unwrap();
     account::deposit(&mut root, BOB, funds).unwrap();
-    env.seal(root).unwrap().none().unwrap();
-    env.register_resource(ticket_meta());
-    let tree = env.build().unwrap();
+    root.register_resource(ticket_meta());
+    let tree = root.build().unwrap();
 
     let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
     let withdrawing = report
@@ -802,7 +798,7 @@ fn a_component_claim_the_transaction_mints_is_satisfiable() {
 fn a_conjunction_reports_what_each_branch_asks() {
     let chain = world();
     let note = note_meta().address(&TestHasher);
-    let mut request = IntentBuilder::declaration(&chain, &TestHasher, BOB, TEST_HEADER);
+    let mut request = IntentBuilder::new(&chain, &TestHasher, BOB, TEST_HEADER);
     let approval = request.declare_proof(Claim::of_subject(DESK));
     let funds = request
         .presenting(approval, |b| b.call(BOB, "withdraw", (note, 40u128)))
@@ -812,17 +808,16 @@ fn a_conjunction_reports_what_each_branch_asks() {
     account::deposit(&mut request, BOB, funds).unwrap();
     let request = request.into_decl().unwrap();
 
-    let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
-    let offered = env.grant();
-    let wants = env
+    let mut root = IntentBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
+    let wants = root
         .adopt(SignedIntent::unsigned(request))
         .unwrap()
+        .sockets
         .one()
         .unwrap();
-    env.seal(root).unwrap().none().unwrap();
-    env.bind(wants, offered).unwrap();
-    env.register_resource(note_meta());
-    let tree = env.build().unwrap();
+    root.bind(wants, DESK).unwrap();
+    root.register_resource(note_meta());
+    let tree = root.build().unwrap();
 
     let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
 
@@ -840,9 +835,8 @@ fn a_conjunction_reports_what_each_branch_asks() {
     );
     // A signer named inside a threshold is still an address the report
     // names, and a conjunction branch is a signature the transaction
-    // certainly needs.
+    // certainly needs: the desk attests the root and Bob his request.
     assert!(report.text(DESK).is_some());
-    assert!(report.signers().contains(&DESK));
-    assert!(report.signers().contains(&BOB));
+    assert_eq!(attesting(&report), [vec![DESK], vec![BOB]]);
     assert_eq!(report.unsatisfiable().count(), 0);
 }

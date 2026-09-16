@@ -54,6 +54,9 @@ pub enum BuildError {
     /// A socket consumed by an intent that did not declare it.
     #[error("a socket is consumed by the intent that declared it")]
     ForeignSocket,
+    /// A member's give consumed by an intent that did not compose it.
+    #[error("a give is consumed by the intent that composes its member")]
+    ForeignGive,
     /// A yield exported carrying constraints — a yield's constraints
     /// declare the socket it fills, and taking them here would drop
     /// them silently.
@@ -178,15 +181,15 @@ impl Bucket {
     }
 }
 
-/// The enclosing intent's declared socket, by position — the
-/// typed socket an envelope binds to another intent's exported edge.
+/// The enclosing intent's declared socket, by position — the typed
+/// socket the intent's composer fills from something it holds.
 ///
 /// Minted by [`IntentBuilder::declare`] alone and, like a [`Bucket`],
-/// affine: one token binds one argument, so a graph the builder emits
-/// consumes each socket at most once by construction. A declaration
-/// assembled elsewhere references sockets freely, which is why the count
-/// is still judged — at the seal, and by admission over the whole
-/// envelope.
+/// affine: one token binds one argument or is passed on to one member's
+/// socket, so a graph the builder emits consumes each socket at most
+/// once by construction. A declaration assembled elsewhere references
+/// sockets freely, which is why the count is still judged — at the
+/// finish, and by admission over the whole tree.
 ///
 /// [`IntentBuilder::declare`]: crate::envelope::IntentBuilder::declare
 #[derive(Debug)]
@@ -200,10 +203,8 @@ pub struct SocketRef {
     pub(crate) position: u32,
 }
 
-/// Distinguishes concurrently live handle spaces — builders and
-/// envelopes draw from one sequence, so a [`Bucket`] made by one
-/// builder cannot be quietly spent in another's index space, and no
-/// envelope shares a provenance number with anything else alive.
+/// Distinguishes concurrently live handle spaces, so a [`Bucket`] made
+/// by one builder cannot be quietly spent in another's index space.
 static NEXT_SPACE: AtomicU64 = AtomicU64::new(0);
 
 /// Mint a fresh handle-space id.
@@ -474,9 +475,9 @@ impl GraphBuilder {
         self.id
     }
 
-    /// Consume an output as a yield edge: bound by the enclosing
-    /// envelope's [`Binding`] to another intent's socket,
-    /// rather than by a node of this graph.
+    /// Consume an output as a yield edge: given to the intent above, or
+    /// bound by the intent's own wiring ([`Binding`]) into a member's
+    /// socket, rather than consumed by a node of this graph.
     ///
     /// A bucket carrying constraints, one made by a different builder,
     /// or one already carrying a refusal poisons the builder — a

@@ -17,11 +17,11 @@
 //! stop being the author's claims, and an edge whose type the producing
 //! signature determines asserts that type by itself.
 //!
-//! Above the graph, an [`EnvelopeBuilder`] composes intents through the
-//! sockets they declare — ones the composer writes, and ones somebody
-//! else already signed — wiring an edge or a proof into each, and
-//! [`preflight_tree()`] answers what the chain will make of the result
-//! before any of it is signed.
+//! Above the graph, an [`IntentBuilder`] declares an intent's interface
+//! and composes signed intents as its members — wiring what it holds
+//! into each one's sockets and taking what each gives — at whatever
+//! depth of the tree it sits, and [`preflight_tree()`] answers what the
+//! chain will make of the result before any of it is signed.
 //!
 //! The builder sits strictly on the client side of the trust boundary.
 //! It renders no judgement; admission re-derives every property it
@@ -46,7 +46,8 @@ pub mod unpack;
 pub use args::{AddressArg, Arg, Args, BucketArg};
 pub use builder::{Bucket, BuildError, GraphBuilder, SocketRef};
 pub use envelope::{
-    BindRefusal, EnvelopeBuilder, EnvelopeError, IntentBuilder, Offered, OpenSocket, Sockets,
+    BindRefusal, EnvelopeError, Given, Gives, IntentBuilder, Interface, Offered, OpenSocket,
+    Sockets,
 };
 pub use preflight::{
     Authority, ByIntent, IntentCost, NodeCompute, PreflightError, Report, Required, preflight_tree,

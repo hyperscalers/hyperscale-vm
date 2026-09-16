@@ -230,7 +230,7 @@ fn summarise(graph: &ManifestGraph, chain: &Records) {
     let names = vocabulary();
     let signers: Vec<String> = report
         .signers()
-        .iter()
+        .flat_map(|(_, attesting)| attesting)
         .map(|signer| {
             names
                 .get(*signer)
