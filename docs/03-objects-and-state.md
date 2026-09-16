@@ -51,7 +51,7 @@ Bond-at-write must not make receiving assets the recipient's problem. Two mechan
 - **Deferred bond.** A first deposit may create the shell and vault carrying a recorded `bond_debt` at the standard rate instead of a paid bond. While indebted, an account accepts deposits up to a substate cap, each adding to the debt; **native-token inflows settle the debt before crediting the balance** — a kernel rule, deterministic, so the account bonds itself the first time it is funded. Once cleared, the account is ordinary.
 - **The unbonded premium.** A deposit creating deferred-bond state pays a non-refundable premium sized so unbonded bytes cost at least the bonded time-value over the expected dormancy horizon — dust-bloat through unbonded accounts is strictly costlier than bonding, so no eviction or revival machinery is needed even for the never-funded case. Attested byte totals include unbonded bytes, so validator compensation is unaffected by bond status.
 - **Sponsorship remains.** A sender — an app onboarding its users — may simply pay the bond outright at deposit.
-- **Gasless onboarding composes.** A composition's fee payer is the composition's, so a brand-new user can sign an intent, receive assets into a virtual account under deferred bond debt, and transact without ever holding the native token. No protocol special-casing; the mechanisms compose.
+- **Gasless onboarding composes.** A transaction's fee payer is the root's, so a brand-new user can sign an intent, receive assets into a virtual account under deferred bond debt, and transact without ever holding the native token. No protocol special-casing; the mechanisms compose.
 
 ## 5. No global singletons
 
