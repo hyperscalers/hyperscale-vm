@@ -15,12 +15,15 @@
 
 use std::collections::BTreeSet;
 
-use hyperscale_vm_types::{MAX_ATTESTATIONS, ResourceAddr};
+use hyperscale_vm_types::{
+    IntentHash, MAX_ATTESTATIONS, MAX_INTENTS, MAX_MANIFEST_NODES, ResourceAddr,
+};
 
 use super::AdmissionError;
 use super::compose::{Fill, Proven};
 use crate::claim::Claim;
 use crate::graph::{EdgeRef, GiveRef, GraphNode};
+use crate::hash::{Hash32, Hasher};
 use crate::intent::{
     Binding, ClaimSource, Give, Intent, MAX_ACCOUNTS, MAX_TREE_DEPTH, Socket, ValueSource,
 };
@@ -80,6 +83,11 @@ pub struct Flattened<'a> {
     /// Each intent's composer, and its position among that composer's
     /// members. `None` for the root.
     parent: Vec<Option<(usize, usize)>>,
+    /// Each intent's members, by their positions in the walk, in the
+    /// order the composer holds them.
+    children: Vec<Vec<usize>>,
+    /// Each intent's depth: one for the root, one more per level.
+    depth: Vec<usize>,
 }
 
 impl<'a> Flattened<'a> {
@@ -93,50 +101,140 @@ impl<'a> Flattened<'a> {
     fn composer_of(&self, intent: usize) -> Option<(usize, usize)> {
         self.parent[intent]
     }
+
+    /// The `position`-th member of `composer`, as the walk numbered it.
+    fn member(&self, composer: usize, position: usize) -> usize {
+        self.children[composer][position]
+    }
+
+    /// Every intent's hash, in tree order, each computed once: members
+    /// before their composer, so a composer's preimage takes its
+    /// members' hashes as computed rather than recomputing the subtree
+    /// beneath each.
+    pub fn hashes(&self, hasher: &dyn Hasher) -> Vec<IntentHash> {
+        let mut computed = vec![IntentHash(Hash32([0; 32])); self.intents.len()];
+        for (at, intent) in self.intents.iter().enumerate().rev() {
+            let members: Vec<IntentHash> = self.children[at]
+                .iter()
+                .map(|&member| computed[member])
+                .collect();
+            computed[at] = intent.hash_over(&members, hasher);
+        }
+        computed
+    }
 }
 
 /// One step of the preorder walk: the intent, its composer and position,
 /// and its depth.
 type Visit<'a> = (&'a Intent, Option<(usize, usize)>, usize);
 
-/// Walk `root` in preorder, holding every intent to what the tree admits
-/// of it: a depth under [`MAX_TREE_DEPTH`], at least one account, and
-/// terms on the root alone.
+/// Walk `root` in preorder, numbering every intent and recording which
+/// composes which and how deep each sits. Judges nothing.
+pub fn walk(root: &Intent) -> Flattened<'_> {
+    let mut intents = Vec::new();
+    let mut parent = Vec::new();
+    let mut children: Vec<Vec<usize>> = Vec::new();
+    let mut depth = Vec::new();
+    let mut stack: Vec<Visit<'_>> = vec![(root, None, 1)];
+    while let Some((intent, composer, level)) = stack.pop() {
+        let at = intents.len();
+        if let Some((composer, _)) = composer {
+            children[composer].push(at);
+        }
+        intents.push(intent);
+        parent.push(composer);
+        children.push(Vec::with_capacity(intent.members.len()));
+        depth.push(level);
+        for (position, member) in intent.members.iter().enumerate().rev() {
+            stack.push((&member.signed.intent, Some((at, position)), level + 1));
+        }
+    }
+    Flattened {
+        intents,
+        parent,
+        children,
+        depth,
+    }
+}
+
+/// Walk `root` in preorder, holding the tree to its shape: no more
+/// intents than [`MAX_INTENTS`], none deeper than [`MAX_TREE_DEPTH`],
+/// no more nodes between them than [`MAX_MANIFEST_NODES`]; every intent
+/// acting as at least one account and at most [`MAX_ACCOUNTS`], none
+/// twice; attested by at least one principal and at most
+/// [`MAX_ATTESTATIONS`], none twice; and every member wired once per
+/// socket it declares.
+///
+/// The whole of what admission holds a tree to before it reads any
+/// binding, and what [`decode_tree`](crate::decode_tree) holds a
+/// stranger's bytes to before anything walks them — so nothing
+/// downstream runs over a tree past its caps.
 ///
 /// # Errors
 ///
 /// Any [`AdmissionError`] the structure earns.
 pub fn flatten(root: &Intent) -> Result<Flattened<'_>, AdmissionError> {
-    let mut intents = Vec::new();
-    let mut parent = Vec::new();
-    let mut stack: Vec<Visit<'_>> = vec![(root, None, 1)];
-    while let Some((intent, composer, depth)) = stack.pop() {
-        let at = intents.len();
-        if depth > MAX_TREE_DEPTH {
-            return Err(AdmissionError::TreeTooDeep { intent: as_u32(at) });
+    let flat = walk(root);
+    if flat.intents.len() > MAX_INTENTS {
+        return Err(AdmissionError::TooManyIntents);
+    }
+    let nodes: usize = flat
+        .intents
+        .iter()
+        .map(|intent| intent.graph.nodes.len())
+        .sum();
+    if nodes > MAX_MANIFEST_NODES {
+        return Err(AdmissionError::TooManyNodes);
+    }
+    for (at, intent) in flat.intents.iter().enumerate() {
+        let intent_index = as_u32(at);
+        if flat.depth[at] > MAX_TREE_DEPTH {
+            return Err(AdmissionError::TreeTooDeep {
+                intent: intent_index,
+            });
         }
         if intent.accounts.is_empty() {
-            return Err(AdmissionError::NoAccount { intent: as_u32(at) });
+            return Err(AdmissionError::NoAccount {
+                intent: intent_index,
+            });
         }
         if intent.accounts.len() > MAX_ACCOUNTS {
-            return Err(AdmissionError::TooManyAccounts { intent: as_u32(at) });
+            return Err(AdmissionError::TooManyAccounts {
+                intent: intent_index,
+            });
+        }
+        if intent.accounts.iter().collect::<BTreeSet<_>>().len() != intent.accounts.len() {
+            return Err(AdmissionError::DuplicateAccount {
+                intent: intent_index,
+            });
         }
         if intent.attested_by.is_empty() {
-            return Err(AdmissionError::NoAttester { intent: as_u32(at) });
+            return Err(AdmissionError::NoAttester {
+                intent: intent_index,
+            });
         }
         if intent.attested_by.len() > MAX_ATTESTATIONS {
-            return Err(AdmissionError::TooManyAttesters { intent: as_u32(at) });
+            return Err(AdmissionError::TooManyAttesters {
+                intent: intent_index,
+            });
         }
         if intent.attested_by.iter().collect::<BTreeSet<_>>().len() != intent.attested_by.len() {
-            return Err(AdmissionError::DuplicateAttester { intent: as_u32(at) });
+            return Err(AdmissionError::DuplicateAttester {
+                intent: intent_index,
+            });
         }
-        intents.push(intent);
-        parent.push(composer);
-        for (position, member) in intent.members.iter().enumerate().rev() {
-            stack.push((&member.signed.intent, Some((at, position)), depth + 1));
+        for (position, member) in intent.members.iter().enumerate() {
+            let declared = member.signed.intent.sockets.len();
+            if member.wiring.len() != declared {
+                return Err(AdmissionError::BindingArity {
+                    intent: as_u32(flat.member(at, position)),
+                    expected: declared,
+                    found: member.wiring.len(),
+                });
+            }
         }
     }
-    Ok(Flattened { intents, parent })
+    Ok(flat)
 }
 
 /// Resolve every interface of a flattened tree.
@@ -209,11 +307,7 @@ impl Resolver<'_> {
 
     /// The `position`-th member of `composer`, as the walk numbered it.
     fn member(&self, composer: usize, position: usize) -> usize {
-        self.structure
-            .parent
-            .iter()
-            .position(|parent| *parent == Some((composer, position)))
-            .expect("the walk placed every member it numbered")
+        self.structure.member(composer, position)
     }
 
     /// Follow `give` of `intent` down to the edge that produces it.
@@ -337,14 +431,9 @@ impl Resolver<'_> {
             // The root: nothing above it fills anything.
             return Err(unknown_binding(at));
         };
+        // One binding per declared socket, held by the walk before any
+        // is read.
         let wiring = &self.intents[composer].members[position].wiring;
-        if wiring.len() != self.intents[intent].sockets.len() {
-            return Err(AdmissionError::BindingArity {
-                intent: at.0,
-                expected: self.intents[intent].sockets.len(),
-                found: wiring.len(),
-            });
-        }
         match (&self.intents[intent].sockets[socket], wiring[socket]) {
             (Socket::Value { resource, .. }, Binding::Value(source)) => {
                 self.fill_value(composer, *resource, source, at)

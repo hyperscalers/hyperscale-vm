@@ -84,9 +84,9 @@ pub use intent::{
     Binding, COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, ClaimSource, CrossingCell, CrossingSite,
     ESCROW_CLAIM_SLOT, ESCROW_RECORD_SLOT, Give, Intent, IntentHeader, IntentRecord, IntentTree,
     MARKER_CELL_BYTES, MAX_ACCOUNTS, MAX_INTENTS, MAX_TREE_DEPTH, Marked, Marker, Member,
-    NULLIFIER_SLOT, Nullifier, SignedIntent, Socket, TREE_WIRE_DEPTH, ValueSource, admit_tree,
-    attest, committed_tx_key, crossing_expiry_ms, decode_tree, encode_tree, escrow_claim_key,
-    escrow_record_key, nullifier_expiry_ms, nullifier_key,
+    NULLIFIER_SLOT, Nullifier, SignedIntent, Socket, TREE_WIRE_DEPTH, TreeDecodeError, ValueSource,
+    admit_tree, attest, committed_tx_key, crossing_expiry_ms, decode_tree, encode_tree,
+    escrow_claim_key, escrow_record_key, nullifier_expiry_ms, nullifier_key,
 };
 pub use invoke::{CallArg, EdgeBound, IssuanceGrant, NodeCall, distinct_ids};
 pub use manifest::{Bounds, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};

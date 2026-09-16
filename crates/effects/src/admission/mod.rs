@@ -38,14 +38,13 @@ use compose::{Fill, Proven, bind_edge, check_bindings};
 pub(crate) use compose::{IntentView, check_instance_value_depth, check_value_depth, interleave};
 pub use error::{AdmissionError, Placed};
 use hyperscale_vm_types::{
-    Address, CallTarget, Effect, EffectTarget, IntentHash, MAX_MANIFEST_NODES, Mode, Presence,
-    ResourceAddr,
+    Address, CallTarget, Effect, EffectTarget, IntentHash, Mode, Presence, ResourceAddr,
 };
 pub use inject::{Asks, Injected};
 use inject::{
     inject_destruction_rules, inject_issuance_rules, inject_movement_rules, inject_reach_rules,
 };
-pub(crate) use tree::{flatten, resolve_tree};
+pub(crate) use tree::{flatten, resolve_tree, walk};
 
 use crate::claim::Claim;
 use crate::dsl::{
@@ -329,10 +328,8 @@ pub(crate) fn admit_intents(
     grants: &PresentedGrants,
     hasher: &dyn Hasher,
 ) -> Result<Admitted, AdmissionError> {
+    // Under `MAX_MANIFEST_NODES`: the tree's shape held it there.
     let total: usize = intents.iter().map(|view| view.graph.nodes.len()).sum();
-    if total > MAX_MANIFEST_NODES {
-        return Err(AdmissionError::TooManyNodes);
-    }
 
     check_bindings(intents)?;
 

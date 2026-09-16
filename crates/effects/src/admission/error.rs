@@ -155,6 +155,14 @@ pub enum AdmissionError {
         /// The intent, in tree order.
         intent: u32,
     },
+    /// An account named twice in one intent's `accounts`: one nullifier
+    /// and one sign-in stated twice, which admission refuses rather
+    /// than dedups.
+    #[error("intent {intent} acts as one account twice")]
+    DuplicateAccount {
+        /// The intent, in tree order.
+        intent: u32,
+    },
     /// An intent whose composer's bindings for it do not match its
     /// sockets.
     #[error("intent {intent} declares {expected} sockets, is wired {found}")]
@@ -857,6 +865,7 @@ impl AdmissionError {
             Self::TreeTooDeep { intent }
             | Self::NoAccount { intent }
             | Self::TooManyAccounts { intent }
+            | Self::DuplicateAccount { intent }
             | Self::NoAttester { intent }
             | Self::TooManyAttesters { intent }
             | Self::DuplicateAttester { intent }

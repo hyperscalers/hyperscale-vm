@@ -49,7 +49,7 @@ pub use hyperscale_vm_types::{MAX_INTENTS, attest};
 use crate::PACKAGE_SLOT_BASE;
 use crate::admission::{
     AdmissionError, Admitted, IntentView, MAX_SOCKETS, admit_intents, check_instance_value_depth,
-    check_value_depth, flatten, resolve_tree,
+    check_value_depth, flatten, resolve_tree, walk,
 };
 use crate::claim::Claim;
 use crate::dsl::PresentedGrants;
@@ -380,6 +380,23 @@ impl Intent {
     /// requires of the literals the graph hash feeds on.
     #[must_use]
     pub fn hash(&self, hasher: &dyn Hasher) -> IntentHash {
+        let members: Vec<IntentHash> = self
+            .members
+            .iter()
+            .map(|member| member.signed.intent.hash(hasher))
+            .collect();
+        self.hash_over(&members, hasher)
+    }
+
+    /// [`Intent::hash`] with the members' hashes supplied — one per
+    /// member, in order — for a walk that hashes a tree bottom-up and
+    /// computes each intent's hash once.
+    ///
+    /// # Panics
+    ///
+    /// As [`Intent::hash`], and on a count that is not the members'.
+    #[must_use]
+    pub fn hash_over(&self, members: &[IntentHash], hasher: &dyn Hasher) -> IntentHash {
         let Self {
             header,
             accounts,
@@ -387,11 +404,16 @@ impl Intent {
             graph,
             sockets,
             gives,
-            members,
+            members: composed,
         } = self;
+        assert_eq!(
+            members.len(),
+            composed.len(),
+            "one hash per member, in the composer's order"
+        );
         let graph = graph.hash(hasher);
         let mut parts: Vec<Vec<u8>> =
-            Vec::with_capacity(4 + sockets.len() + gives.len() + 2 * members.len());
+            Vec::with_capacity(4 + sockets.len() + gives.len() + 2 * composed.len());
         parts.push(to_vec(header).expect("a header is scalars"));
         parts.push(to_vec(accounts).expect("accounts are bounded addresses"));
         parts.push(to_vec(attested_by).expect("attesting principals are bounded addresses"));
@@ -402,8 +424,8 @@ impl Intent {
         for give in gives {
             parts.push(to_vec(give).expect("a give is two indices"));
         }
-        for member in members {
-            parts.push(member.signed.intent.hash(hasher).0.0.to_vec());
+        for (member, hash) in composed.iter().zip(members) {
+            parts.push(hash.0.0.to_vec());
             parts.push(to_vec(&member.wiring).expect("wiring is bounded indices"));
         }
         let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
@@ -584,8 +606,18 @@ impl IntentTree {
         }
     }
 
+    /// Every intent's hash, in tree order, each computed once.
+    ///
+    /// [`Intent::hash`] recomputes the subtree beneath every member it
+    /// covers; this walks the tree bottom-up instead, so a tree of `n`
+    /// intents costs `n` hashes rather than one per ancestor of each.
+    #[must_use]
+    pub fn hashes(&self, hasher: &dyn Hasher) -> Vec<IntentHash> {
+        walk(&self.root).hashes(hasher)
+    }
+
     /// How many nodes the tree lowers to, over every intent it carries
-    /// — the count of compute ceilings the root's terms sign.
+    /// — the count of compute ceilings the envelope's terms sign.
     #[must_use]
     pub fn node_count(&self) -> usize {
         self.intents()
@@ -1229,15 +1261,34 @@ pub fn encode_tree(tree: &IntentTree) -> Vec<u8> {
     to_vec_with_depth(tree, TREE_WIRE_DEPTH).expect("a tree within its caps encodes")
 }
 
+/// Why bytes are not a tree admission could run over.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TreeDecodeError {
+    /// Not a tree, or one nested past the depth the vocabulary admits.
+    #[error("tree decode: {0}")]
+    Decode(#[from] DecodeError),
+    /// A tree, and one past the shape admission holds a tree to.
+    #[error("tree shape: {0}")]
+    Shape(#[from] AdmissionError),
+}
+
 /// A tree read back off the bytes an envelope carries, under
-/// [`TREE_WIRE_DEPTH`].
+/// [`TREE_WIRE_DEPTH`], and held to its shape before it is returned.
+///
+/// The shape is the intent, depth and node caps, every intent's
+/// accounts and attesting set, and every member's wiring arity.
+/// Everything that walks a decoded tree — the hashing, the target
+/// lookups, admission — runs over a tree inside its caps, and nothing a
+/// stranger sends costs more than one bounded walk before it is refused.
 ///
 /// # Errors
 ///
-/// [`DecodeError`] for bytes that are not a tree, or one nested past
-/// the depth the vocabulary admits.
-pub fn decode_tree(bytes: &[u8]) -> Result<IntentTree, DecodeError> {
-    from_slice_with_depth(bytes, TREE_WIRE_DEPTH)
+/// [`TreeDecodeError`] for bytes that are not a tree, or a tree past
+/// its shape.
+pub fn decode_tree(bytes: &[u8]) -> Result<IntentTree, TreeDecodeError> {
+    let tree: IntentTree = from_slice_with_depth(bytes, TREE_WIRE_DEPTH)?;
+    flatten(&tree.root)?;
+    Ok(tree)
 }
 
 /// Admit a tree.
@@ -1258,8 +1309,8 @@ pub fn decode_tree(bytes: &[u8]) -> Result<IntentTree, DecodeError> {
 ///
 /// # Panics
 ///
-/// Only on an index past `u32`, which the [`MAX_INTENTS`] check above it
-/// excludes.
+/// Only on an index past `u32`, which the [`MAX_INTENTS`] check in the
+/// tree's shape excludes.
 pub fn admit_tree(
     tree: &IntentTree,
     identity: ManifestHash,
@@ -1268,9 +1319,6 @@ pub fn admit_tree(
 ) -> Result<Admitted, AdmissionError> {
     let flat = flatten(&tree.root)?;
     let intents = flat.intents();
-    if intents.len() > MAX_INTENTS {
-        return Err(AdmissionError::TooManyIntents);
-    }
     // Ahead of every intent hash: hashing takes the depth bound as
     // given.
     for intent in intents {
@@ -1280,16 +1328,14 @@ pub fn admit_tree(
     // The intent hash alone. It is what names every escrow record and
     // claim the tree derives — so two intents that hash alike derive one
     // key for two edges.
+    let identities = flat.hashes(hasher);
     let mut seen = BTreeSet::new();
-    let mut identities = Vec::with_capacity(intents.len());
-    for (index, intent) in intents.iter().enumerate() {
-        let hash = intent.hash(hasher);
-        if !seen.insert(hash) {
+    for (index, hash) in identities.iter().enumerate() {
+        if !seen.insert(*hash) {
             return Err(AdmissionError::DuplicateIntent {
                 index: u32::try_from(index).expect("bounded by MAX_INTENTS"),
             });
         }
-        identities.push(hash);
     }
     let resolved = resolve_tree(&flat)?;
     let records: Vec<IntentRecord> = intents

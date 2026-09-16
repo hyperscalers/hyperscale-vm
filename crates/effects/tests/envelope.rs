@@ -17,16 +17,16 @@ use hyperscale_vm_effects::{
     IntentRecord, IntentTree, JudgedLeaf, MAX_ACCOUNTS, MAX_SOCKETS, MAX_TREE_DEPTH,
     MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, Marked, Marker, Member, NULLIFIER_SLOT,
     NodeInput, PackageHash, PrefixShardResolver, Records, ResourceKind, Rule, ShardResolver,
-    SignedIntent, Socket, TREE_WIRE_DEPTH, TestHasher, Value, ValueSource, admit_tree,
-    bucketed_child_key, child_key, decode_tree, encode_tree, escrow_claim_key, escrow_record_key,
-    explain_admission_tree, nullifier_key, per_shard,
+    SignedIntent, Socket, TREE_WIRE_DEPTH, TestHasher, TreeDecodeError, Value, ValueSource,
+    admit_tree, bucketed_child_key, child_key, decode_tree, encode_tree, escrow_claim_key,
+    escrow_record_key, explain_admission_tree, nullifier_key, per_shard,
 };
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     ARTIFACT_GRACE_MS, Address, COMMITTED_GRACE_MS, CROSSING_GRACE_MS, CallTarget, Effect,
-    EffectTarget, MAX_ATTESTATIONS, MAX_INTENTS, Mode, Moves, NetworkId, PrincipalAddr,
-    ResourceAddr, SWEEP_BUCKET_SHIFT, SweepBucket, TxHash,
+    EffectTarget, MAX_ATTESTATIONS, MAX_INTENTS, MAX_MANIFEST_NODES, Mode, Moves, NetworkId,
+    PrincipalAddr, ResourceAddr, SWEEP_BUCKET_SHIFT, SweepBucket, TxHash,
 };
 use proptest::prelude::{any, proptest};
 
@@ -268,6 +268,18 @@ fn an_attesting_set_is_non_empty_bounded_and_repeats_nobody() {
     let mut delegated = composed_tree(100).root;
     delegated.attested_by = vec![BOB];
     assert_ne!(base, delegated.hash(&TestHasher));
+}
+
+/// An account named twice is one nullifier and one sign-in stated
+/// twice, refused where a repeated attester is.
+#[test]
+fn an_intent_acts_as_no_account_twice() {
+    let mut twice = composed_tree(100);
+    twice.root.accounts = vec![ALICE, ALICE];
+    assert_eq!(
+        admit_composed(&twice),
+        Err(AdmissionError::DuplicateAccount { intent: 0 })
+    );
 }
 
 /// A refusal placed by flattened node index is explained at the call
@@ -1256,6 +1268,20 @@ fn wiring_must_cover_the_declared_sockets() {
         })
     );
 
+    // In the other direction too: wiring on a member that declares no
+    // socket is signed content that binds nothing.
+    let mut over = composed_tree(100);
+    over.root.members[0].signed.intent.sockets.clear();
+    over.root.members[0].signed.intent.graph.nodes[1] = deposit_edge(BOB, 0);
+    assert_eq!(
+        admit_composed(&over),
+        Err(AdmissionError::BindingArity {
+            intent: 1,
+            expected: 0,
+            found: 1,
+        })
+    );
+
     let mut dangling = composed_tree(100);
     dangling.root.members[0].wiring[0] = Binding::Value(ValueSource::Edge(edge(7, 0)));
     assert_eq!(
@@ -2004,6 +2030,53 @@ fn the_intent_cap_is_checked_before_anything_else() {
         admit_composed(&past_cap),
         Err(AdmissionError::TooManyIntents)
     );
+    // And at decode, before anything walks or hashes the tree.
+    assert_eq!(
+        decode_tree(&encode_tree(&past_cap)),
+        Err(TreeDecodeError::Shape(AdmissionError::TooManyIntents))
+    );
+}
+
+/// The node cap is over the whole tree, and a tree past it is refused
+/// at decode: no graph is at its own cap, and nothing downstream sees
+/// the sum.
+#[test]
+fn the_node_cap_is_over_the_tree_and_checked_at_decode() {
+    let mut wide = composed_tree(100);
+    // Everything the member declares, the root now also deposits: the
+    // member's give is taken once, so the padding consumes nothing.
+    let padding = MAX_MANIFEST_NODES - 2;
+    wide.root
+        .graph
+        .nodes
+        .extend((0..padding).map(|_| deposit_edge(ALICE, 0)));
+    assert_eq!(wide.node_count(), MAX_MANIFEST_NODES + 2);
+    assert_eq!(
+        decode_tree(&encode_tree(&wide)),
+        Err(TreeDecodeError::Shape(AdmissionError::TooManyNodes))
+    );
+    assert_eq!(admit_composed(&wide), Err(AdmissionError::TooManyNodes));
+}
+
+/// The bottom-up walk computes what the recursive definition does, for
+/// every intent, in tree order.
+#[test]
+fn the_tree_hashes_bottom_up_as_each_intent_hashes_itself() {
+    let mut inner = composed_tree(100).root;
+    inner.accounts = vec![CAROL];
+    inner.attested_by = vec![CAROL];
+    let mut tree = composed_tree(100);
+    tree.root.members.push(Member {
+        signed: SignedIntent::unsigned(inner),
+        wiring: Vec::new(),
+    });
+    let expected: Vec<IntentHash> = tree
+        .intents()
+        .iter()
+        .map(|intent| intent.hash(&TestHasher))
+        .collect();
+    assert_eq!(tree.hashes(&TestHasher), expected);
+    assert_eq!(expected.len(), 4);
 }
 
 proptest! {
