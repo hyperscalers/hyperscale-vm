@@ -96,10 +96,10 @@ pub enum EvidenceRef {
     ///
     /// A node reference names a node of the same intent, and a signer
     /// signs their own intent whole, so nothing inside an intent can
-    /// reach a proof somebody else's node proves. A socket can: the
+    /// reach authority somebody else holds. A socket can: the
     /// declaration shapes it with the claim it wants and the composition
-    /// names the node that proves one, so the signer signs which
-    /// authority they asked for and the composer answers for finding it.
+    /// names what supplies one, so the signer signs which authority they
+    /// asked for and the composer answers for finding it.
     Socket(u32),
 }
 

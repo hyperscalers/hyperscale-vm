@@ -4,7 +4,7 @@
 //! from a variant to the place a reader is sent — so a renderer over
 //! refusals is total by construction rather than by review.
 
-use hyperscale_vm_types::{Address, EffectConflict, ResourceAddr};
+use hyperscale_vm_types::{Address, EffectConflict, PrincipalAddr, ResourceAddr};
 
 use super::MAX_SOCKETS;
 use crate::claim::Claim;
@@ -170,6 +170,56 @@ pub enum AdmissionError {
         declared: &'static str,
         /// What the composition filled it with.
         offered: &'static str,
+    },
+    /// An authority socket granted a claim by an intent that did not
+    /// compose the envelope.
+    ///
+    /// Only the composition's signer has seen every intent hash the
+    /// envelope carries, so only they can know what their own account's
+    /// authority is being spent on. An offered intent was signed before
+    /// the envelope existed and consents to nothing in it, which is why
+    /// a grant sourced from one is refused rather than judged.
+    #[error(
+        "intent {intent} socket {socket} is granted by intent {granter}, which did not compose \
+         this envelope"
+    )]
+    UnscopedGrant {
+        /// The intent whose socket it is.
+        intent: u32,
+        /// Its position in that declaration.
+        socket: u32,
+        /// The intent the grant was sourced from.
+        granter: u32,
+    },
+    /// A grant of an account the granting intent does not act as.
+    ///
+    /// What stands behind a granted claim is the sign-in the account's
+    /// own shard judged, and an intent has exactly one of those. Without
+    /// this the granted account would be a field the composer fills
+    /// freely, and naming a stranger there would mint their authority
+    /// out of nothing.
+    #[error("intent {intent} socket {socket}: the granting intent does not act as {account:?}")]
+    GrantNotHeld {
+        /// The intent whose socket it is.
+        intent: u32,
+        /// Its position in that declaration.
+        socket: u32,
+        /// The account the grant named.
+        account: PrincipalAddr,
+    },
+    /// An authority socket granted some other claim than the one its own
+    /// declaration named.
+    ///
+    /// The declaring signer says which authority they are asking for, so
+    /// a grant of another account's — or of a socket asking for a badge,
+    /// which no account's signature carries — is refused rather than
+    /// presented.
+    #[error("intent {intent} socket {socket} asks for another claim than the one granted")]
+    GrantClaimMismatch {
+        /// The intent whose socket it is.
+        intent: u32,
+        /// Its position in that declaration.
+        socket: u32,
     },
     /// A value socket filled with an edge carrying some other resource
     /// than the shape it was declared with.
@@ -773,6 +823,9 @@ impl AdmissionError {
             | Self::TooManySockets { intent, .. }
             | Self::UnknownBinding { intent, .. }
             | Self::SocketKindMismatch { intent, .. }
+            | Self::UnscopedGrant { intent, .. }
+            | Self::GrantNotHeld { intent, .. }
+            | Self::GrantClaimMismatch { intent, .. }
             | Self::SocketResourceMismatch { intent, .. }
             | Self::UnconsumedSocket { intent, .. }
             | Self::SocketReused { intent, .. } => Placed {

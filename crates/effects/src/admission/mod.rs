@@ -48,7 +48,7 @@ use crate::dsl::{
     Condition, Declaration, DeclaredAccess, EvalBudget, EvalInputs, PresentedGrants,
     evaluate_declaration, evaluate_expr,
 };
-use crate::envelope::{Binding, MARKER_CELL_BYTES, Socket};
+use crate::envelope::{Binding, ClaimSource, MARKER_CELL_BYTES, Socket};
 use crate::graph::{EvidenceRef, GraphArg, GraphNode, ManifestGraph};
 use crate::hash::{Hash32, Hasher};
 use crate::instance::{InstanceMeta, ResolveError};
@@ -1190,7 +1190,7 @@ impl Admission<'_> {
                         Socket::Authority(wanted),
                         Binding::Authority {
                             intent: filled_from,
-                            producer,
+                            from,
                         },
                     )) = usize::try_from(*reference).ok().and_then(|position| {
                         Some((
@@ -1205,29 +1205,38 @@ impl Admission<'_> {
                             socket: *reference,
                         });
                     };
-                    let source = usize::try_from(filled_from)
-                        .ok()
-                        .and_then(|source| self.flat_of.get(source))
-                        .and_then(|flat| usize::try_from(producer).ok().and_then(|at| flat.get(at)))
-                        .and_then(|flat| usize::try_from(*flat).ok())
-                        .ok_or_else(|| AdmissionError::UnknownSocket {
-                            intent: Self::intent_of(intent_index),
-                            node: local,
-                            socket: *reference,
-                        })?;
-                    // The interleave orders a node after every socket it
-                    // reaches, so the proving node has been judged and
-                    // its claims are in hand.
-                    let proven = self
-                        .proven
-                        .get(source)
-                        .expect("the interleave orders the proving node earlier");
-                    if !proven.contains(wanted) {
-                        return Err(AdmissionError::SocketClaimMismatch {
-                            intent: Self::intent_of(intent_index),
-                            node: local,
-                            socket: *reference,
-                        });
+                    // A node's verdict has to be in hand and has to be
+                    // the claim asked for. A grant carries no node: the
+                    // bindings check established that the composition
+                    // acts as the account its declaration named, and
+                    // that account's claim stands from the start.
+                    if let ClaimSource::Node(producer) = from {
+                        let source = usize::try_from(filled_from)
+                            .ok()
+                            .and_then(|source| self.flat_of.get(source))
+                            .and_then(|flat| {
+                                usize::try_from(producer).ok().and_then(|at| flat.get(at))
+                            })
+                            .and_then(|flat| usize::try_from(*flat).ok())
+                            .ok_or_else(|| AdmissionError::UnknownSocket {
+                                intent: Self::intent_of(intent_index),
+                                node: local,
+                                socket: *reference,
+                            })?;
+                        // The interleave orders a node after every
+                        // socket it reaches, so the proving node has
+                        // been judged and its claims are in hand.
+                        let proven = self
+                            .proven
+                            .get(source)
+                            .expect("the interleave orders the proving node earlier");
+                        if !proven.contains(wanted) {
+                            return Err(AdmissionError::SocketClaimMismatch {
+                                intent: Self::intent_of(intent_index),
+                                node: local,
+                                socket: *reference,
+                            });
+                        }
                     }
                     evidence.push(*wanted);
                 }

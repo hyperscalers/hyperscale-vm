@@ -108,6 +108,81 @@ fn payment_request(amount: u128) -> IntentDecl {
         .expect("the request consumes its own socket")
 }
 
+/// Bob's offer: a withdrawal from Alice's vault, gated on an authority
+/// he asks for by claim and cannot supply himself.
+fn delegated_request() -> IntentDecl {
+    let chain = world();
+    let mut decl = IntentBuilder::declaration(&chain, &TestHasher, BOB, TEST_HEADER);
+    let alice = decl.declare_proof(Claim::of_subject(ALICE));
+    let funds = decl
+        .presenting(alice, |decl| account::withdraw(decl, ALICE, RES_X, 100))
+        .expect("the socket proof rides the gate in scope");
+    account::deposit(&mut decl, BOB, funds).expect("the deposit types");
+    decl.into_decl()
+        .expect("the request consumes its own socket")
+}
+
+/// The composition grants the account it acts as, and the offer it
+/// adopted is answered by it.
+///
+/// The offer was signed before the envelope existed — it says which
+/// authority it needs and never who supplies it. Nothing in either graph
+/// proves the claim: what stands behind it is the sign-in Alice's own
+/// shard judges over the keys that attested this composition.
+#[test]
+fn a_composition_grants_the_account_it_acts_as() {
+    let request = delegated_request();
+    // What Bob signed. Nothing the composition does may move it.
+    let signed = request.hash(&TestHasher);
+
+    let chain = world();
+    let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
+    let granted = root.grant();
+    let wants = env
+        .adopt(BOB, request)
+        .expect("the request adopts")
+        .one()
+        .expect("the request declares one socket");
+    env.seal(root)
+        .expect("the composition seals")
+        .none()
+        .expect("the composition declares no socket");
+    env.bind(wants, granted)
+        .expect("the composition grants its own account");
+    let tree = env.build().expect("every socket is filled");
+    assert_eq!(
+        tree.intents[1].decl.hash(&TestHasher),
+        signed,
+        "nothing the composition did moved what Bob signed",
+    );
+    admits(&tree);
+}
+
+/// A grant routed to a value socket is refused at the wiring, with both
+/// handles handed back: a grant is authority, and authority does not
+/// fill an argument.
+#[test]
+fn a_grant_does_not_fill_a_value_socket() {
+    let chain = world();
+    let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
+    let granted = root.grant();
+    let wants = env
+        .adopt(BOB, payment_request(100))
+        .expect("the request adopts")
+        .one()
+        .expect("the request declares one socket");
+    let refusal = env
+        .bind(wants, granted)
+        .expect_err("a value socket takes an edge");
+    assert_eq!(
+        refusal.cause,
+        EnvelopeError::ProofForValueSocket {
+            intent: 1,
+            socket: 0
+        }
+    );
+}
+
 #[test]
 fn a_presented_declaration_is_carried_verbatim() {
     let request = payment_request(100);

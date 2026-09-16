@@ -34,9 +34,9 @@ use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
 
 use hyperscale_vm_effects::{
-    Binding, ChainRecords, Claim, Constraint, EdgeRef, EnvelopeTree, EvidenceRef, GraphArg, Hasher,
-    InstanceMeta, Intent, IntentDecl, IntentHeader, MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph,
-    ResourceMeta, Socket,
+    Binding, ChainRecords, Claim, ClaimSource, Constraint, EdgeRef, EnvelopeTree, EvidenceRef,
+    GraphArg, Hasher, InstanceMeta, Intent, IntentDecl, IntentHeader, MAX_SOCKETS, MAX_VALUE_DEPTH,
+    ManifestGraph, ResourceMeta, Socket,
 };
 use hyperscale_vm_types::{MAX_SUBINTENTS, PrincipalAddr, ResourceAddr};
 
@@ -142,7 +142,8 @@ pub enum EnvelopeError {
         /// The arity the composer unpacked into.
         claimed: usize,
     },
-    /// A proof offered to a socket that declares value.
+    /// Authority — a proof, or a grant — offered to a socket that
+    /// declares value.
     #[error("intent {intent} socket {socket} carries value, which no proof fills")]
     ProofForValueSocket {
         /// The declaring intent.
@@ -251,11 +252,12 @@ pub struct Offered {
     offering: Offering,
 }
 
-/// Which of the two an offering names.
+/// What an offering names.
 #[derive(Clone, Copy, Debug)]
 enum Offering {
     Edge(EdgeRef),
     Proof(u32),
+    Grant,
 }
 
 /// A wrong-half offering, refused with both handles handed back.
@@ -414,6 +416,26 @@ impl<'a> IntentBuilder<'a> {
             envelope: self.envelope,
             intent: self.intent,
             offering: Offering::Edge(edge),
+        }
+    }
+
+    /// Grant the authority of the account this intent acts as, for some
+    /// other intent's declared socket.
+    ///
+    /// The composition lending its own sign-in downward. Nothing proves
+    /// it and no node carries it: the account's shard attested the keys
+    /// that signed this intent, so the claim stands from the start and
+    /// the socket it fills waits on nothing.
+    ///
+    /// Admission takes it from the composition alone, so a grant offered
+    /// by an adopted intent is refused there — an intent signed before
+    /// the envelope existed has seen nothing it would be consenting to.
+    #[must_use]
+    pub const fn grant(&self) -> Offered {
+        Offered {
+            envelope: self.envelope,
+            intent: self.intent,
+            offering: Offering::Grant,
         }
     }
 
@@ -640,6 +662,18 @@ impl<'a> EnvelopeBuilder<'a> {
         }
     }
 
+    /// The account intent `index` acts as: the composition's own at `0`,
+    /// and each further intent's at its envelope position.
+    fn account_of(&self, index: u32) -> PrincipalAddr {
+        let slot = usize::try_from(index).expect("minted indices fit");
+        slot.checked_sub(1).map_or(self.composer, |offered| {
+            *self
+                .signers
+                .get(offered)
+                .expect("an offering names an intent the envelope holds")
+        })
+    }
+
     /// One open socket per socket `intent` declares, in declaration
     /// order.
     fn open_sockets(&self, intent: u32, declared: usize) -> Sockets {
@@ -711,9 +745,13 @@ impl<'a> EnvelopeBuilder<'a> {
             },
             (Socket::Authority(_), Offering::Proof(producer)) => Binding::Authority {
                 intent: offered.intent,
-                producer,
+                from: ClaimSource::Node(producer),
             },
-            (Socket::Value { .. }, Offering::Proof(_)) => {
+            (Socket::Authority(_), Offering::Grant) => Binding::Authority {
+                intent: offered.intent,
+                from: ClaimSource::Account(self.account_of(offered.intent)),
+            },
+            (Socket::Value { .. }, Offering::Proof(_) | Offering::Grant) => {
                 let cause = EnvelopeError::ProofForValueSocket {
                     intent: socket.intent,
                     socket: socket.position,

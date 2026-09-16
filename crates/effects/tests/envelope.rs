@@ -7,13 +7,14 @@ use std::collections::BTreeSet;
 use hyperscale_hbor::from_slice;
 use hyperscale_vm_effects::vocabulary::AUTH;
 use hyperscale_vm_effects::{
-    AdmissionError, AdmittedTree, Binding, Bounds, ChainRecords, Claim, Constraint, CrossingCell,
-    CrossingSite, ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, EnvelopeTree, GraphArg, GraphNode,
-    Hash32, Hasher, InstanceMeta, Intent, IntentDecl, IntentHash, IntentHeader, JudgedLeaf,
-    MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, Marked, Marker, NULLIFIER_SLOT,
-    NodeInput, PackageHash, PrefixShardResolver, Records, ResourceKind, Rule, ShardResolver,
-    Socket, TestHasher, Value, admit, admit_tree, bucketed_child_key, child_key, escrow_claim_key,
-    escrow_record_key, explain_admission_tree, nullifier_key, per_shard,
+    AdmissionError, AdmittedTree, Binding, Bounds, ChainRecords, Claim, ClaimSource, Constraint,
+    CrossingCell, CrossingSite, ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, EnvelopeTree,
+    EvidenceRef, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, Intent, IntentDecl, IntentHash,
+    IntentHeader, JudgedLeaf, MAX_SOCKETS, MAX_VALUE_DEPTH, ManifestGraph, ManifestHash, Marked,
+    Marker, NULLIFIER_SLOT, NodeInput, PackageHash, PrefixShardResolver, Records, ResourceKind,
+    Rule, ShardResolver, Socket, TestHasher, Value, admit, admit_tree, bucketed_child_key,
+    child_key, escrow_claim_key, escrow_record_key, explain_admission_tree, nullifier_key,
+    per_shard,
 };
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
@@ -284,7 +285,7 @@ fn a_socket_filled_from_the_other_channel_names_the_mismatch() {
     let mut tree = composed_tree(100);
     tree.intents[0].bindings[0] = Binding::Authority {
         intent: 1,
-        producer: 0,
+        from: ClaimSource::Node(0),
     };
     assert_eq!(
         admit_composed(&tree).expect_err("a proof does not fill a value socket"),
@@ -1159,7 +1160,7 @@ fn an_authority_socket_is_presented_not_passed() {
     tree.intents[0].decl.sockets = vec![Socket::Authority(Claim::of_subject(BOB.address()))];
     tree.intents[0].bindings = vec![Binding::Authority {
         intent: 1,
-        producer: 0,
+        from: ClaimSource::Node(0),
     }];
     assert_eq!(
         admit_composed(&tree),
@@ -1168,6 +1169,174 @@ fn an_authority_socket_is_presented_not_passed() {
             param: 0,
             socket: 0,
         })
+    );
+}
+
+/// A composition granting its own account's authority into a socket
+/// another party declared, and the maker's call gated on it.
+///
+/// `account` is what the composition puts up, `wants` the claim
+/// the offered intent asked for, and `granter` the intent the grant is
+/// sourced from — the three things a grant is judged on, each bent on
+/// its own below.
+fn granted_tree(granter: u32, account: PrincipalAddr, wants: Claim) -> EnvelopeTree {
+    EnvelopeTree {
+        intents: vec![
+            // The composition: it consumes what the offer withdraws, and
+            // grants the authority that lets the offer withdraw it.
+            Intent {
+                decl: IntentDecl {
+                    header: TEST_HEADER,
+                    graph: ManifestGraph {
+                        nodes: vec![deposit_param(ALICE, 0)],
+                    },
+                    sockets: vec![Socket::Value {
+                        resource: RES_X,
+                        constraints: vec![Constraint::MinAmount(100)],
+                    }],
+                },
+                account: ALICE,
+                bindings: vec![Binding::Value {
+                    intent: 1,
+                    edge: EdgeRef {
+                        producer: 0,
+                        output: 0,
+                    },
+                }],
+            },
+            // Bob's offer: a withdrawal from Alice's vault, gated on an
+            // authority his own intent declares and never supplies.
+            Intent {
+                decl: IntentDecl {
+                    header: TEST_HEADER,
+                    graph: ManifestGraph {
+                        nodes: vec![GraphNode {
+                            evidence: BTreeSet::from([EvidenceRef::Socket(0)]),
+                            ..GraphNode::new(
+                                ALICE,
+                                "withdraw",
+                                vec![
+                                    GraphArg::Literal(Value::Address(RES_X.into())),
+                                    GraphArg::Literal(Value::U128(100)),
+                                ],
+                            )
+                        }],
+                    },
+                    sockets: vec![Socket::Authority(wants)],
+                },
+                account: BOB,
+                bindings: vec![Binding::Authority {
+                    intent: granter,
+                    from: ClaimSource::Account(account),
+                }],
+            },
+        ],
+        instances: Vec::new(),
+        resources: Vec::new(),
+    }
+}
+
+/// The composition grants the account it acts as, and the offer's gate
+/// is answered by it — no node proves anything, and nothing in either
+/// graph signs in.
+///
+/// The ordering is the other half of what this pins. The composition's
+/// own node waits on the offer's withdrawal, so a grant that carried a
+/// dependency on the granting intent's graph would close a cycle and
+/// this tree would not admit at all. An account's authority stands
+/// before any node runs, which is what leaves the interleave free.
+#[test]
+fn a_composition_grants_the_account_it_acts_as() {
+    let tree = granted_tree(0, ALICE, Claim::of_subject(ALICE));
+    let admitted = admit_composed(&tree).expect("the composition grants its own account");
+    // The offer's withdrawal is emitted first: it waits on nothing, and
+    // the composition's deposit waits on it.
+    assert_eq!(admitted.admitted.manifest().nodes.len(), 2);
+    assert_eq!(admitted.admitted.manifest().nodes[0].method, "withdraw");
+    assert_eq!(admitted.admitted.manifest().nodes[1].method, "deposit");
+}
+
+/// A grant sourced from an offered intent is refused.
+///
+/// Only the composition's signer has seen every intent hash the envelope
+/// carries. An intent offered into it was signed before the envelope
+/// existed, so a grant sourced from one would spend its signer's
+/// authority on a call they never saw.
+#[test]
+fn a_grant_from_an_offered_intent_is_refused() {
+    let tree = granted_tree(1, BOB, Claim::of_subject(BOB));
+    assert_eq!(
+        admit_composed(&tree).expect_err("an offered intent grants nothing"),
+        AdmissionError::UnscopedGrant {
+            intent: 1,
+            socket: 0,
+            granter: 1,
+        }
+    );
+}
+
+/// A grant of an account the granting intent does not act as is refused.
+///
+/// The check the granted account exists for. What stands behind the
+/// claim is the sign-in the account's own shard judged, and the
+/// composition has exactly one of those — so without this, naming a
+/// stranger in the binding would mint their authority out of nothing,
+/// and the socket asking for it would be answered.
+#[test]
+fn a_grant_of_an_account_the_granter_is_not_is_refused() {
+    let tree = granted_tree(0, BOB, Claim::of_subject(BOB));
+    assert_eq!(
+        admit_composed(&tree).expect_err("the composition acts as Alice, not Bob"),
+        AdmissionError::GrantNotHeld {
+            intent: 1,
+            socket: 0,
+            account: BOB,
+        }
+    );
+}
+
+/// A grant of some other claim than the socket asked for is refused, and
+/// a socket asking for a badge is refused the same way.
+///
+/// The declaring signer said which authority they wanted. An account's
+/// signature carries that account's claim and no other, so neither a
+/// different account nor a held badge can arrive through a grant.
+#[test]
+fn a_grant_answers_only_the_claim_the_socket_named() {
+    let mismatch = AdmissionError::GrantClaimMismatch {
+        intent: 1,
+        socket: 0,
+    };
+    let tree = granted_tree(0, ALICE, Claim::of_subject(BOB));
+    assert_eq!(
+        admit_composed(&tree).expect_err("the socket asked for Bob"),
+        mismatch
+    );
+    let tree = granted_tree(0, ALICE, Claim::of_subject(RES_X));
+    assert_eq!(
+        admit_composed(&tree).expect_err("no signature carries a badge"),
+        mismatch
+    );
+}
+
+/// A value socket granted a claim is the channel mismatch, not a grant
+/// refusal: a grant is authority, and authority does not fill an
+/// argument.
+#[test]
+fn a_value_socket_granted_a_claim_names_the_mismatch() {
+    let mut tree = composed_tree(100);
+    tree.intents[0].bindings[0] = Binding::Authority {
+        intent: 0,
+        from: ClaimSource::Account(ALICE),
+    };
+    assert_eq!(
+        admit_composed(&tree).expect_err("a grant does not fill a value socket"),
+        AdmissionError::SocketKindMismatch {
+            intent: 0,
+            socket: 0,
+            declared: "value",
+            offered: "a proof",
+        }
     );
 }
 
@@ -1271,7 +1440,9 @@ fn the_envelope_hash_covers_the_bindings_the_composer_chose() {
     retargeted.intents[0].bindings[0] = Binding::Value {
         intent: retargeted.intents[0].bindings[0].intent().wrapping_add(1),
         edge: EdgeRef {
-            producer: retargeted.intents[0].bindings[0].producer(),
+            producer: retargeted.intents[0].bindings[0]
+                .producer()
+                .expect("a value binding names its producing node"),
             output: 0,
         },
     };
@@ -1286,7 +1457,9 @@ fn the_envelope_hash_covers_the_bindings_the_composer_chose() {
     resliced.intents[0].bindings[0] = Binding::Value {
         intent: resliced.intents[0].bindings[0].intent(),
         edge: EdgeRef {
-            producer: resliced.intents[0].bindings[0].producer(),
+            producer: resliced.intents[0].bindings[0]
+                .producer()
+                .expect("a value binding names its producing node"),
             output: 1,
         },
     };

@@ -6,9 +6,10 @@
 //! sockets it declares. A socket carries either of the two things that
 //! cross an intent boundary: a value edge, which exactly one node
 //! argument consumes, or a proof, which as many of the intent's nodes
-//! present as ask for it. The composer fills every socket from another
-//! intent's node and signs the whole envelope; nothing about the tree
-//! is renegotiated at admission.
+//! present as ask for it. The composer fills every socket — from
+//! another intent's node, or by granting the authority of the account
+//! it acts as — and signs the whole envelope; nothing about the tree is
+//! renegotiated at admission.
 //!
 //! [`admit_tree`] flattens the tree into one routing manifest: intents
 //! keep their author order and their sockets interleave them
@@ -135,9 +136,9 @@ pub enum Socket {
     ///
     /// The claim is the declaration's, so a holder signs *which
     /// authority they are asking for* and never who supplies it — and
-    /// admission presents that claim alone, never whatever else the
-    /// proving node happened to prove, so a composition cannot smuggle
-    /// authority into an intent its signer never offered.
+    /// admission presents that claim alone, never whatever else its
+    /// source carries, so a composition cannot smuggle authority into an
+    /// intent its signer never offered.
     Authority(Claim),
 }
 
@@ -263,17 +264,41 @@ pub enum Binding {
         /// The produced edge within that intent's graph.
         edge: EdgeRef,
     },
-    /// The claim node `producer` of `intent` proves.
+    /// A claim `intent` supplies: proved by one of its nodes, or
+    /// granted from the account it acts as.
     Authority {
-        /// The producing intent, numbered as above.
+        /// The supplying intent, numbered as above.
         intent: u32,
-        /// The proving node within that intent's graph.
-        producer: u32,
+        /// What in it stands behind the claim.
+        from: ClaimSource,
     },
 }
 
+/// What inside the supplying intent stands behind an authority binding's
+/// claim.
+///
+/// Two things in an intent can, and they stand behind different claims.
+/// A node proves what it read state to verify — a badge in a vault, a
+/// component's own gate — and the claim is that node's verdict. An
+/// account proves nothing and needs to: its shard attested the keys that
+/// signed the intent, so the claim is the signature's, and it stands
+/// before any node runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+pub enum ClaimSource {
+    /// The claim node `producer` of that intent proves.
+    Node(u32),
+    /// The account that intent acts as, granted by the signer who signed
+    /// it.
+    ///
+    /// The account is stated here rather than read off the intent, so a
+    /// grant says what it gives and admission judges the two against
+    /// each other. Deriving it instead would make the field that decides
+    /// whose authority this is one nobody wrote.
+    Account(PrincipalAddr),
+}
+
 impl Binding {
-    /// The intent whose node this binding names.
+    /// The intent this binding sources from.
     #[must_use]
     pub const fn intent(self) -> u32 {
         match self {
@@ -281,12 +306,23 @@ impl Binding {
         }
     }
 
-    /// The node within it.
+    /// The node within it, where the binding names one.
+    ///
+    /// A grant names none: an account's authority stands before any node
+    /// runs, so the socket it fills waits on nothing and the interleave
+    /// has no edge to draw.
     #[must_use]
-    pub const fn producer(self) -> u32 {
+    pub const fn producer(self) -> Option<u32> {
         match self {
-            Self::Value { edge, .. } => edge.producer,
-            Self::Authority { producer, .. } => producer,
+            Self::Value { edge, .. } => Some(edge.producer),
+            Self::Authority {
+                from: ClaimSource::Node(producer),
+                ..
+            } => Some(producer),
+            Self::Authority {
+                from: ClaimSource::Account(_),
+                ..
+            } => None,
         }
     }
 }
@@ -1019,9 +1055,9 @@ pub fn encode_tree(tree: &EnvelopeTree) -> Vec<u8> {
 ///
 /// `identity` is the signed envelope's hash — the root of every fresh
 /// derivation. Distinct signed envelopes never mint the same fresh key,
-/// even when they carry the same tree. `composer` is who signed the root
-/// intent, and so whose identity the root's proof names; each subintent
-/// names its own signer.
+/// even when they carry the same tree. `attested_by` carries the
+/// principals whose keys signed each intent, in envelope order; the
+/// account each intent acts as is the tree's own.
 ///
 /// # Errors
 ///
@@ -1030,8 +1066,8 @@ pub fn encode_tree(tree: &EnvelopeTree) -> Vec<u8> {
 ///
 /// # Panics
 ///
-/// Only on an index past `u32`, which the [`MAX_SUBINTENTS`] check above
-/// it excludes.
+/// Only on an index past `u32`, which the [`MAX_INTENTS`] check above it
+/// excludes.
 pub fn admit_tree(
     tree: &EnvelopeTree,
     attested_by: &[Vec<PrincipalAddr>],

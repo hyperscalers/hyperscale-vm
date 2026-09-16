@@ -10,7 +10,8 @@
 use hyperscale_vm_types::{IntentHash, PrincipalAddr, ResourceAddr};
 
 use super::{AdmissionError, MAX_SOCKETS};
-use crate::envelope::{Binding, Socket};
+use crate::claim::Claim;
+use crate::envelope::{Binding, ClaimSource, Socket};
 use crate::graph::{Constraint, GraphArg, ManifestGraph};
 use crate::hash::Hash32;
 use crate::instance::InstanceMeta;
@@ -219,6 +220,10 @@ impl<'a> IntentView<'a> {
     }
 }
 
+/// The composition's own intent, which every envelope's first intent is
+/// and which is the only one whose signer has seen the whole envelope.
+const COMPOSITION: u32 = 0;
+
 /// Bindings and parameter consumption, intent by intent: one binding
 /// per socket, every binding naming a real source, every
 /// parameter consumed by exactly one node argument.
@@ -239,15 +244,23 @@ pub(super) fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), Admission
         }
         for (position, binding) in intent.bindings.iter().enumerate() {
             let socket = u32::try_from(position).expect("bounded by MAX_SOCKETS");
-            let source = usize::try_from(binding.intent())
+            let unknown = || AdmissionError::UnknownBinding {
+                intent: intent_index,
+                socket,
+            };
+            let Some(source) = usize::try_from(binding.intent())
                 .ok()
-                .and_then(|source| intents.get(source));
-            let producer = usize::try_from(binding.producer()).unwrap_or(usize::MAX);
-            if source.is_none_or(|source| producer >= source.graph.nodes.len()) {
-                return Err(AdmissionError::UnknownBinding {
-                    intent: intent_index,
-                    socket,
-                });
+                .and_then(|source| intents.get(source))
+            else {
+                return Err(unknown());
+            };
+            // A binding naming a node is bounded by that intent's graph;
+            // a grant names none, and what bounds it is `check_grant`.
+            if let Some(producer) = binding.producer() {
+                let producer = usize::try_from(producer).unwrap_or(usize::MAX);
+                if producer >= source.graph.nodes.len() {
+                    return Err(unknown());
+                }
             }
             // The binding's channel against the socket's declared one,
             // judged here so every later destructure over the pair holds
@@ -273,6 +286,21 @@ pub(super) fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), Admission
                         Binding::Authority { .. } => "a proof",
                     },
                 });
+            }
+            if let (
+                Socket::Authority(wanted),
+                Binding::Authority {
+                    intent: granter,
+                    from: ClaimSource::Account(account),
+                },
+            ) = (declared, *binding)
+            {
+                check_grant(
+                    (granter, source.account),
+                    account,
+                    *wanted,
+                    (intent_index, socket),
+                )?;
             }
         }
         let mut uses = vec![0u32; intent.sockets.len()];
@@ -310,6 +338,44 @@ pub(super) fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), Admission
     Ok(())
 }
 
+/// Judge one grant: the composition lending the account it acts as into
+/// another intent's declared authority socket.
+///
+/// Three things, and the first two are the whole of the guarantee. Only
+/// the composition's signer has seen every intent hash the envelope
+/// carries, so only they can know what their own authority is being
+/// spent on; and an account's claim is held by the intent that acts as
+/// it, so the granted account is judged against the granting intent's
+/// own rather than taken on the composer's word. Without the second, a
+/// composer naming a stranger would mint that stranger's authority out
+/// of nothing. The socket's own declaration then fixes which claim may
+/// arrive, as it does for a proof.
+fn check_grant(
+    (granter, holds): (u32, PrincipalAddr),
+    account: PrincipalAddr,
+    wanted: Claim,
+    (intent, socket): (u32, u32),
+) -> Result<(), AdmissionError> {
+    if granter != COMPOSITION {
+        return Err(AdmissionError::UnscopedGrant {
+            intent,
+            socket,
+            granter,
+        });
+    }
+    if holds != account {
+        return Err(AdmissionError::GrantNotHeld {
+            intent,
+            socket,
+            account,
+        });
+    }
+    if wanted != Claim::of_subject(account.address()) {
+        return Err(AdmissionError::GrantClaimMismatch { intent, socket });
+    }
+    Ok(())
+}
+
 /// Deterministic interleave: repeatedly emit the lowest-indexed intent
 /// whose next node has every socket it reaches already filled. Intents
 /// keep their author order, so acyclicity is judged at socket
@@ -337,10 +403,10 @@ pub fn interleave(
             };
             // Every socket this node reaches, whichever way it reaches
             // one: an argument consuming the edge that fills it, and
-            // evidence presenting the proof that does. Both are
-            // dependencies on another intent's node, and a proof left
-            // out of this scan would let a node present a claim proven
-            // after it ran.
+            // evidence presenting the proof that does. A socket filled
+            // from another intent's node is a dependency on it, and a
+            // proof left out of this scan would let a node present a
+            // claim proven after it ran.
             for socket in node.sockets() {
                 // An out-of-range socket carries no dependency; the
                 // node check below rejects it.
@@ -350,8 +416,13 @@ pub fn interleave(
                 else {
                     continue;
                 };
+                // A grant stands before any node runs, so the socket
+                // it fills waits on nothing.
+                let Some(producer) = binding.producer() else {
+                    continue;
+                };
                 let source = usize::try_from(binding.intent()).unwrap_or(usize::MAX);
-                let producer = usize::try_from(binding.producer()).unwrap_or(usize::MAX);
+                let producer = usize::try_from(producer).unwrap_or(usize::MAX);
                 if cursor
                     .get(source)
                     .is_none_or(|&emitted| producer >= emitted)
