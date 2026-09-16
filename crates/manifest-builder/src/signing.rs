@@ -1,8 +1,8 @@
 //! Wrapping a composed tree in an envelope, and signing it.
 //!
 //! The last step a client takes, and the first one that needs a secret.
-//! Everything below this builds a graph; this puts fee terms, a validity
-//! window and a network word around one and hands it to a key.
+//! Everything below this builds a tree; this puts the terms on its root
+//! and hands the envelope to a key.
 //!
 //! Neither the hash nor the curve is here. What a signature covers is the
 //! envelope's own digest, which the vocabulary defines; the hash reaching
@@ -11,93 +11,60 @@
 //! knowing what blake3 or ed25519 are.
 
 use hyperscale_hbor::EncodeError;
-use hyperscale_vm_effects::{EnvelopeTree, Hasher, encode_tree};
+use hyperscale_vm_effects::{
+    EnvelopeTree, Hasher, Intent, IntentHeader, ManifestGraph, encode_tree,
+};
+pub use hyperscale_vm_types::Terms;
 use hyperscale_vm_types::{
-    AccountSigner, NetworkId, PrincipalAddr, SchemeId, SubintentSig, TransactionBody,
-    TransactionEnvelope,
+    AccountSigner, PrincipalAddr, SchemeId, SubintentSig, TransactionEnvelope,
 };
 
-/// What a signer commits to beyond the manifest.
+/// An unsigned envelope around `tree`, its root stating `terms`.
 ///
-/// Terms that always travel together: they are the envelope's rather than
-/// the graph's, and a caller choosing one chooses all of them.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Terms {
-    /// The most the signer will pay to have this transaction carried.
-    pub max_fee: u128,
-    /// The signed compute ceilings, in fuel: one per node of the lowered
-    /// manifest, in node order. A publish carries one.
-    pub gas_limits: Vec<u64>,
-    /// The signed priority, in basis points over the table price.
-    pub priority_bp: u32,
-    /// When the transaction may be included: the inclusive start of the
-    /// window, in weighted-time milliseconds.
-    pub validity_start_ms: u64,
-    /// The window's exclusive end.
-    pub validity_end_ms: u64,
-    /// Content riding the signature and nothing else.
-    ///
-    /// A transaction's hash covers the whole signed envelope, so two
-    /// otherwise identical submissions inside one validity window are one
-    /// transaction and the second deduplicates away. Varying this is how a
-    /// caller keeps them distinct.
-    pub message: Vec<u8>,
-}
-
-/// An unsigned envelope around `tree`, naming `payer` and `network`.
-///
-/// The scheme is [`SchemeId::NONE`] and the material is empty: an envelope
-/// names no scheme until somebody signs it, and nothing verifies under
-/// none.
+/// The window and the network are the root's own header, stated when
+/// the root was opened. The scheme is [`SchemeId::NONE`] and the
+/// material is empty: an envelope names no scheme until somebody signs
+/// it, and nothing verifies under none.
 #[must_use]
 pub fn wrap(
     tree: &EnvelopeTree,
     subintent_sigs: Vec<SubintentSig>,
-    payer: PrincipalAddr,
-    network: NetworkId,
     terms: Terms,
 ) -> TransactionEnvelope {
+    let mut tree = tree.clone();
+    if let Some(root) = tree.intents.first_mut() {
+        root.terms = Some(terms);
+    }
     TransactionEnvelope {
-        body: TransactionBody::Call(encode_tree(tree)),
+        tree: encode_tree(&tree),
+        artifact: None,
         subintent_sigs,
-        fee_payer: payer,
-        max_fee: terms.max_fee,
-        gas_limits: terms.gas_limits,
-        priority_bp: terms.priority_bp,
-        validity_start_ms: terms.validity_start_ms,
-        validity_end_ms: terms.validity_end_ms,
-        message: terms.message,
-        network,
         signer_scheme: SchemeId::NONE,
         signer: Vec::new(),
         signature: Vec::new(),
     }
 }
 
-/// An unsigned envelope publishing `artifact`, naming `payer` and
-/// `network`.
+/// An unsigned envelope publishing `artifact`: a root acting as
+/// `publisher` under `header` that calls nothing, stating `terms`, and
+/// the artifact beside it.
 ///
-/// The `Publish` twin of [`wrap`]: same terms, same signing path, and a
-/// body that carries the artifact's bytes instead of a call tree. A
-/// host with keys signs it with [`sign`], exactly as it signs a call.
+/// The `Publish` twin of [`wrap`]: same terms, same signing path, and
+/// an artifact where a call has a graph. A host with keys signs it with
+/// [`sign`], exactly as it signs a call.
 #[must_use]
 pub fn wrap_publish(
     artifact: Vec<u8>,
-    payer: PrincipalAddr,
-    network: NetworkId,
+    publisher: PrincipalAddr,
+    header: IntentHeader,
     terms: Terms,
 ) -> TransactionEnvelope {
+    let mut root = Intent::leaf(header, publisher, ManifestGraph::default());
+    root.terms = Some(terms);
     TransactionEnvelope {
-        body: TransactionBody::Publish(artifact),
+        tree: encode_tree(&EnvelopeTree::of_one(root)),
+        artifact: Some(artifact),
         subintent_sigs: Vec::new(),
-        fee_payer: payer,
-        max_fee: terms.max_fee,
-        gas_limits: terms.gas_limits,
-        priority_bp: terms.priority_bp,
-        validity_start_ms: terms.validity_start_ms,
-        validity_end_ms: terms.validity_end_ms,
-        message: terms.message,
-        network,
         signer_scheme: SchemeId::NONE,
         signer: Vec::new(),
         signature: Vec::new(),
@@ -114,9 +81,9 @@ pub fn wrap_publish(
 /// # Errors
 ///
 /// [`EncodeError`] when the envelope's content does not encode — a
-/// locally built body past the wire cap, which a decoded one never is.
-/// A signer is handed the refusal rather than a signature over bytes no
-/// envelope can carry.
+/// locally built artifact past the wire cap, which a decoded one never
+/// is. A signer is handed the refusal rather than a signature over bytes
+/// no envelope can carry.
 pub fn sign<S: AccountSigner>(
     mut envelope: TransactionEnvelope,
     key: &S,
@@ -129,16 +96,16 @@ pub fn sign<S: AccountSigner>(
     Ok(envelope)
 }
 
-/// One offered intent's signature over its declaration hash.
+/// One member's signature over its intent hash.
 ///
 /// The scheme is stamped beside the material it describes, so a signer's
 /// key and their claim about which curve produced it are written in one
 /// place and cannot drift apart.
 #[must_use]
-pub fn sign_subintent<S: AccountSigner>(key: &S, declaration_hash: &[u8; 32]) -> SubintentSig {
+pub fn sign_subintent<S: AccountSigner>(key: &S, intent_hash: &[u8; 32]) -> SubintentSig {
     SubintentSig {
         scheme: key.scheme(),
         public_key: key.public_key_bytes(),
-        signature: key.sign_digest(declaration_hash),
+        signature: key.sign_digest(intent_hash),
     }
 }

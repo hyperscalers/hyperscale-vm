@@ -16,23 +16,26 @@
 //! reach the identical one.
 //!
 //! What stays here is the walk: one pass over the flattened node order,
-//! and the lowered form it produces. The four subjects beside it are
+//! and the lowered form it produces. The five subjects beside it are
 //! [`error`] (the verdict vocabulary and where each refusal points),
-//! [`compose`] (what a signed form is, before any signature is read),
-//! [`inject`] (the entries a resource's own rules put on a frame), and
-//! [`abi`] (what a judged frame lowers to for the engine).
+//! [`tree`] (the tree recovered from the members each intent names, and
+//! every interface resolved to the node that fills it), [`compose`]
+//! (what a signed form is, before any signature is read), [`inject`]
+//! (the entries a resource's own rules put on a frame), and [`abi`]
+//! (what a judged frame lowers to for the engine).
 
 mod abi;
 mod compose;
 mod error;
 mod inject;
+mod tree;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use abi::{CallBinding, lower_call};
+use compose::{Fill, Proven, bind_edge, check_bindings};
 pub(crate) use compose::{IntentView, check_instance_value_depth, check_value_depth, interleave};
-use compose::{bind_edge, check_bindings};
 pub use error::{AdmissionError, Placed};
 use hyperscale_vm_types::{
     Address, CallTarget, Effect, EffectTarget, IntentHash, MAX_MANIFEST_NODES, Mode, Presence,
@@ -42,14 +45,15 @@ pub use inject::{Asks, Injected};
 use inject::{
     inject_destruction_rules, inject_issuance_rules, inject_movement_rules, inject_reach_rules,
 };
+pub(crate) use tree::{Interface, resolve_tree};
 
 use crate::claim::Claim;
 use crate::dsl::{
     Condition, Declaration, DeclaredAccess, EvalBudget, EvalInputs, PresentedGrants,
     evaluate_declaration, evaluate_expr,
 };
-use crate::envelope::{Binding, ClaimSource, MARKER_CELL_BYTES, Socket};
-use crate::graph::{EvidenceRef, GraphArg, GraphNode, ManifestGraph};
+use crate::envelope::{MARKER_CELL_BYTES, Socket};
+use crate::graph::{Constraint, EvidenceRef, GiveRef, GraphArg, GraphNode, ManifestGraph};
 use crate::hash::{Hash32, Hasher};
 use crate::instance::{InstanceMeta, ResolveError};
 use crate::invoke::{IssuanceGrant, NodeCall};
@@ -301,12 +305,11 @@ impl Admitted {
 /// Admit a graph: check well-formedness, linearity, and type agreement
 /// against package metadata, and lower it to the routing manifest.
 ///
-/// A bare graph is the degenerate envelope: one intent acting as
-/// `composer` and attested by the key that account derives, no
-/// parameters, nothing offered into it, its own hash as the identity. Envelope
-/// trees go through [`crate::envelope::admit_tree`], which supplies the
-/// identity from the signed envelope and the attesting set from its
-/// signatures.
+/// A bare graph is the degenerate tree: one intent acting as `composer`
+/// and attested by the key that account derives, no interface, no
+/// members, its own hash as the identity. Trees go through
+/// [`crate::envelope::admit_tree`], which supplies the identity from
+/// the signed envelope and the attesting set from its signatures.
 ///
 /// The attesting set is the premise rather than a fact, so a caller
 /// whose signatures name somebody else — a delegate's key on this
@@ -352,12 +355,13 @@ pub fn admit_presenting(
 ) -> Result<Admitted, AdmissionError> {
     check_value_depth(graph)?;
     let identity = graph.hash(hasher);
+    let interface = Interface::default();
     admit_intents(
         &[IntentView {
             graph,
             sockets: &[],
-            bindings: &[],
-            account: composer,
+            interface: &interface,
+            accounts: std::slice::from_ref(&composer),
             attested_by,
             // A bare graph is signed whole by its composer, so what its
             // signer signed is the graph itself.
@@ -429,8 +433,9 @@ pub(crate) fn admit_intents(
         ..
     } = admission;
 
-    // Every intent's sign-in, injected once per intent: a read of the
-    // account's `auth` cell, and one condition over it.
+    // Every account's sign-in, injected once per account per intent: a
+    // read of the account's `auth` cell, and one condition over it
+    // against the keys that attested the intent.
     //
     // Judged at materialization on the shard that holds the cell, so it
     // lands before any leg of this transaction commits and every replica
@@ -440,8 +445,11 @@ pub(crate) fn admit_intents(
     // before the transaction is included at all — so neither restates
     // the other.
     let mut declaration = declaration;
-    for intent in intents {
-        let cell = child_key(hasher, intent.account.address(), AUTH, &[]);
+    for (intent, account) in intents
+        .iter()
+        .flat_map(|intent| intent.accounts.iter().map(move |account| (intent, account)))
+    {
+        let cell = child_key(hasher, account.address(), AUTH, &[]);
         let effect = Effect {
             target: EffectTarget::Point(cell),
             mode: Mode::Read,
@@ -929,6 +937,17 @@ impl Admission<'_> {
                     bound.push(value);
                     inputs.push(input);
                 }
+                GraphArg::Give { give, constraints } => {
+                    let (value, input) = self.bind_give(
+                        intent_index,
+                        *give,
+                        constraints,
+                        *param,
+                        (node_index, param_index),
+                    )?;
+                    bound.push(value);
+                    inputs.push(input);
+                }
             }
         }
         Ok((bound, inputs))
@@ -1037,12 +1056,56 @@ impl Admission<'_> {
         u32::try_from(intent_index).expect("intents are bounded by MAX_INTENTS")
     }
 
+    /// Bind the edge a member gives.
+    ///
+    /// Resolved by the tree to the node that produces it, and bound as
+    /// an ordinary edge from there, under this argument's own
+    /// constraints.
+    fn bind_give(
+        &mut self,
+        intent_index: usize,
+        give: GiveRef,
+        constraints: &[Constraint],
+        param: ParamType,
+        at: (u32, u32),
+    ) -> Result<(Value, NodeInput), AdmissionError> {
+        let (node_index, param_index) = at;
+        if !param.is_edge() {
+            return Err(AdmissionError::EdgeForValueParam {
+                node: node_index,
+                param: param_index,
+            });
+        }
+        let yielded = self.intents[intent_index]
+            .interface
+            .give(give)
+            .ok_or_else(|| AdmissionError::UnknownGive {
+                intent: Self::intent_of(intent_index),
+                give: give.give,
+            })?;
+        let source_intent =
+            usize::try_from(yielded.intent).map_err(|_| AdmissionError::TooManyNodes)?;
+        let producer =
+            usize::try_from(yielded.edge.producer).map_err(|_| AdmissionError::TooManyNodes)?;
+        let source = self.flat_of[source_intent][producer];
+        bind_edge(
+            &self.outputs,
+            &mut self.consumed,
+            (source, yielded.edge.output),
+            constraints,
+            param,
+            at,
+            |_| Ok(()),
+        )
+    }
+
     /// Bind the edge a socket was filled with.
     ///
-    /// The socket types what may arrive and the composition names what
+    /// The socket types what may arrive and the composer names what
     /// did, so both are checked here: the socket's declared resource
-    /// against the edge's, and the declaring intent's own constraints
-    /// against it as if it were an ordinary argument.
+    /// against the edge's, and the declaring intent's own constraints —
+    /// with those of every socket the edge passed through — against it
+    /// as if it were an ordinary argument.
     fn bind_socket(
         &mut self,
         intent_index: usize,
@@ -1054,12 +1117,10 @@ impl Admission<'_> {
         let intent = &self.intents[intent_index];
         let (node_index, param_index) = at;
 
-        let Some((decl, binding)) = usize::try_from(reference).ok().and_then(|position| {
-            Some((
-                intent.sockets.get(position)?,
-                intent.bindings.get(position)?,
-            ))
-        }) else {
+        let Some((decl, fill)) = usize::try_from(reference)
+            .ok()
+            .and_then(|position| Some((intent.sockets.get(position)?, intent.fill(reference)?)))
+        else {
             return Err(AdmissionError::UnknownSocket {
                 intent: Self::intent_of(intent_index),
                 node: local,
@@ -1078,11 +1139,12 @@ impl Admission<'_> {
                 resource: declared,
                 constraints,
             },
-            Binding::Value {
+            Fill::Value {
                 intent: source_intent,
                 edge,
+                through,
             },
-        ) = (decl, *binding)
+        ) = (decl, fill)
         else {
             // A socket shaped for authority fills no argument: an
             // argument takes value, and a proof is not value.
@@ -1093,15 +1155,17 @@ impl Admission<'_> {
             });
         };
         let source_intent =
-            usize::try_from(source_intent).map_err(|_| AdmissionError::TooManyNodes)?;
+            usize::try_from(*source_intent).map_err(|_| AdmissionError::TooManyNodes)?;
         let producer = usize::try_from(edge.producer).map_err(|_| AdmissionError::TooManyNodes)?;
         let source = self.flat_of[source_intent][producer];
         let declared = *declared;
+        let constraints: Vec<Constraint> =
+            constraints.iter().chain(through.iter()).copied().collect();
         let (value, input) = bind_edge(
             &self.outputs,
             &mut self.consumed,
             (source, edge.output),
-            constraints,
+            &constraints,
             param,
             (node_index, param_index),
             |resource| {
@@ -1142,15 +1206,20 @@ impl Admission<'_> {
         for reference in &node.evidence {
             match reference {
                 EvidenceRef::IntentSignature => {
-                    // The account's virtual badge. Nobody holds it and
-                    // no node proves it: the intent acts as this
-                    // account, and the account's own shard attests that
-                    // the keys behind the intent are ones its stored
-                    // rule admits, as a condition judged before any body
-                    // runs. So what a signature presents here is the
-                    // account itself, and a rule naming it follows the
-                    // rotations of whatever key opens it.
-                    evidence.push(Claim::of_subject(intent.account.address()));
+                    // The accounts' virtual badges. Nobody holds them
+                    // and no node proves them: the intent acts as these
+                    // accounts, and each account's own shard attests
+                    // that the keys behind the intent are ones its
+                    // stored rule admits, as a condition judged before
+                    // any body runs. So what a signature presents here
+                    // is every account itself, and a rule naming one
+                    // follows the rotations of whatever key opens it.
+                    evidence.extend(
+                        intent
+                            .accounts
+                            .iter()
+                            .map(|account| Claim::of_subject(account.address())),
+                    );
                 }
                 EvidenceRef::Node(producer) => {
                     // An earlier node of the same intent, whose proven
@@ -1193,23 +1262,20 @@ impl Admission<'_> {
                     evidence.extend_from_slice(claims);
                 }
                 EvidenceRef::Socket(reference) => {
-                    // A socket the declaration typed and the composition
+                    // A socket the declaration typed and the composer
                     // filled. What is presented is the claim the
                     // *declaration* named — never whatever else the
-                    // proving node happened to prove — so a composition
+                    // proving node happened to prove — so a composer
                     // cannot hand an intent authority its signer never
                     // asked for.
                     let Some((
                         Socket::Authority(wanted),
-                        Binding::Authority {
+                        Fill::Authority {
                             intent: filled_from,
                             from,
                         },
                     )) = usize::try_from(*reference).ok().and_then(|position| {
-                        Some((
-                            intent.sockets.get(position)?,
-                            *intent.bindings.get(position)?,
-                        ))
+                        Some((intent.sockets.get(position)?, intent.fill(*reference)?))
                     })
                     else {
                         return Err(AdmissionError::UnknownSocket {
@@ -1220,11 +1286,11 @@ impl Admission<'_> {
                     };
                     // A node's verdict has to be in hand and has to be
                     // the claim asked for. A grant carries no node: the
-                    // bindings check established that the composition
-                    // acts as the account its declaration named, and
-                    // that account's claim stands from the start.
-                    if let ClaimSource::Node(producer) = from {
-                        let source = usize::try_from(filled_from)
+                    // tree established that the granting intent acts as
+                    // the account the grant named, and that account's
+                    // claim stands from the start.
+                    if let Proven::Node(producer) = *from {
+                        let source = usize::try_from(*filled_from)
                             .ok()
                             .and_then(|source| self.flat_of.get(source))
                             .and_then(|flat| {

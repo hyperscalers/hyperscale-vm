@@ -29,9 +29,23 @@ pub struct EdgeRef {
     pub output: u32,
 }
 
+/// One value a member offers: the `give`-th entry of the `gives` of the
+/// composing intent's `member`-th member.
+///
+/// The one way a composer names anything inside a member. A member's
+/// interface is what its signer published, so what the composer reaches
+/// is a position in it and never a node of the member's graph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
+pub struct GiveRef {
+    /// The member, by its position in the composing intent's `members`.
+    pub member: u32,
+    /// The give, by its position in that member's `gives`.
+    pub give: u32,
+}
+
 /// A declarative edge annotation, checked at admission where static and at
-/// execution otherwise. The same constraint language binds an offered
-/// intent's yields.
+/// execution otherwise. The same constraint language binds a member's
+/// gives and an intent's sockets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub enum Constraint {
     /// The edge must carry at least this amount at execution.
@@ -56,9 +70,21 @@ pub enum GraphArg {
         constraints: Vec<Constraint>,
     },
     /// The edge filling the enclosing intent's `n`-th socket, which the
-    /// composition binds to another intent's output. Only meaningful
-    /// inside an envelope tree; a bare graph declares no sockets.
+    /// intent composing this one wires to something it holds. Only
+    /// meaningful inside a tree; a bare graph declares no sockets.
     Socket(u32),
+    /// Consumption of an edge a member gives, with its constraints.
+    ///
+    /// The other way value enters an intent from outside its own graph,
+    /// and the one that flows down the tree rather than up: a socket is
+    /// filled by the composer above, a give is taken from a member
+    /// below. Only meaningful inside a tree; a bare graph has no members.
+    Give {
+        /// The give consumed.
+        give: GiveRef,
+        /// The consumer's declared constraints on it.
+        constraints: Vec<Constraint>,
+    },
 }
 
 /// The bound on identities one call may present as evidence.
@@ -136,7 +162,7 @@ impl GraphNode {
     pub(crate) fn sockets(&self) -> impl Iterator<Item = u32> + '_ {
         let args = self.args.iter().filter_map(|arg| match arg {
             GraphArg::Socket(socket) => Some(*socket),
-            GraphArg::Literal(_) | GraphArg::Edge { .. } => None,
+            GraphArg::Literal(_) | GraphArg::Edge { .. } | GraphArg::Give { .. } => None,
         });
         let presented = self
             .evidence
@@ -146,6 +172,19 @@ impl GraphNode {
                 EvidenceRef::IntentSignature | EvidenceRef::Node(_) => None,
             });
         args.chain(presented)
+    }
+
+    /// Every give this node consumes.
+    ///
+    /// The argument channel alone: authority never travels upward, so no
+    /// evidence names a member. Ordering asks it for the same reason it
+    /// asks [`sockets`](Self::sockets) — a give makes the node depend on
+    /// the member's node that produces it.
+    pub(crate) fn gives(&self) -> impl Iterator<Item = GiveRef> + '_ {
+        self.args.iter().filter_map(|arg| match arg {
+            GraphArg::Give { give, .. } => Some(*give),
+            GraphArg::Literal(_) | GraphArg::Edge { .. } | GraphArg::Socket(_) => None,
+        })
     }
 
     /// A call presenting no evidence — what a method admitting anyone

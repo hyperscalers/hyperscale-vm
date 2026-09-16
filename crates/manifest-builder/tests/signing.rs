@@ -13,15 +13,16 @@
 //! questions can sign an envelope, and a verifier that agrees with it can
 //! accept the result.
 
+use hyperscale_hbor::from_slice;
 use hyperscale_vm_effects::{
-    EnvelopeTree, Hasher, Intent, IntentDecl, IntentHeader, PackageHash, Records, TestHasher,
+    EnvelopeTree, Hasher, Intent, IntentHeader, PackageHash, Records, TestHasher, encode_tree,
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_manifest_builder::signing::{Terms, sign, wrap, wrap_publish};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     AccountSigner, MAX_ARTIFACT_BYTES, NetworkId, PrincipalAddr, ResourceAddr, SchemeId,
-    SchemeVerifier, TransactionBody, TransactionEnvelope,
+    SchemeVerifier, TransactionEnvelope,
 };
 
 const ALICE: PrincipalAddr = PrincipalAddr::new([0x10; 31]);
@@ -103,11 +104,10 @@ fn world() -> Records {
 /// Terms for the two-node transfer every test here composes.
 fn terms() -> Terms {
     Terms {
+        fee_payer: ALICE,
         max_fee: 1_000,
         gas_limits: vec![500_000, 500_000],
         priority_bp: 0,
-        validity_start_ms: 0,
-        validity_end_ms: 60_000,
         message: Vec::new(),
     }
 }
@@ -122,27 +122,11 @@ fn a_transaction_signs_and_verifies_inside_this_workspace() {
     account::deposit(&mut builder, BOB, funds).expect("an account is paid");
     let graph = builder.build().expect("every output is consumed");
 
-    let tree = EnvelopeTree {
-        intents: vec![Intent {
-            decl: IntentDecl {
-                header: HEADER,
-                graph,
-                sockets: Vec::new(),
-            },
-            account: ALICE,
-            bindings: Vec::new(),
-        }],
-        instances: Vec::new(),
-        resources: Vec::new(),
-    };
+    let tree = EnvelopeTree::of_one(Intent::leaf(HEADER, ALICE, graph));
 
     let key = TestSigner(7);
-    let envelope = sign(
-        wrap(&tree, Vec::new(), ALICE, NETWORK, terms()),
-        &key,
-        &TestHasher,
-    )
-    .expect("an envelope within its caps signs");
+    let envelope = sign(wrap(&tree, Vec::new(), terms()), &key, &TestHasher)
+        .expect("an envelope within its caps signs");
 
     assert_eq!(envelope.signer_scheme, SchemeId::ED25519);
     assert!(TestVerifier.verify(
@@ -161,27 +145,15 @@ fn the_signature_covers_what_the_envelope_says() {
     let mut builder = TypedBuilder::new(&chain, &TestHasher, ALICE);
     let funds = account::withdraw(&mut builder, ALICE, RES, 100).expect("an account withdraws");
     account::deposit(&mut builder, BOB, funds).expect("an account is paid");
-    let tree = EnvelopeTree {
-        intents: vec![Intent {
-            decl: IntentDecl {
-                header: HEADER,
-                graph: builder.build().expect("every output is consumed"),
-                sockets: Vec::new(),
-            },
-            account: ALICE,
-            bindings: Vec::new(),
-        }],
-        instances: Vec::new(),
-        resources: Vec::new(),
-    };
+    let tree = EnvelopeTree::of_one(Intent::leaf(
+        HEADER,
+        ALICE,
+        builder.build().expect("every output is consumed"),
+    ));
 
     let key = TestSigner(7);
-    let signed = sign(
-        wrap(&tree, Vec::new(), ALICE, NETWORK, terms()),
-        &key,
-        &TestHasher,
-    )
-    .expect("an envelope within its caps signs");
+    let signed = sign(wrap(&tree, Vec::new(), terms()), &key, &TestHasher)
+        .expect("an envelope within its caps signs");
     let (material, signature) = (signed.signer.clone(), signed.signature.clone());
     let accepts = |envelope: &TransactionEnvelope| {
         TestVerifier.verify(
@@ -201,13 +173,21 @@ fn the_signature_covers_what_the_envelope_says() {
     rekeyed.signer = vec![9; 32];
     assert!(!accepts(&rekeyed));
 
-    // So is everything the composer chose.
-    let mut repriced = signed.clone();
-    repriced.max_fee += 1;
+    // So is everything the composer chose: the terms and the header
+    // sit on the root inside the tree, and the tree is signed content.
+    let reroot = |envelope: &TransactionEnvelope, edit: fn(&mut Intent)| {
+        let mut tree: EnvelopeTree = from_slice(&envelope.tree).expect("the tree decodes");
+        edit(&mut tree.intents[0]);
+        let mut edited = envelope.clone();
+        edited.tree = encode_tree(&tree);
+        edited
+    };
+    let repriced = reroot(&signed, |root| {
+        root.terms.as_mut().expect("the root states terms").max_fee += 1;
+    });
     assert!(!accepts(&repriced));
 
-    let mut retargeted = signed;
-    retargeted.network = NetworkId(1);
+    let retargeted = reroot(&signed, |root| root.header.network = NetworkId(1));
     assert!(!accepts(&retargeted));
 }
 
@@ -221,7 +201,7 @@ fn the_signature_covers_what_the_envelope_says() {
 fn a_publish_envelope_signs_and_verifies() {
     let key = TestSigner(7);
     let signed = sign(
-        wrap_publish(vec![0xAB; 64], ALICE, NETWORK, terms()),
+        wrap_publish(vec![0xAB; 64], ALICE, HEADER, terms()),
         &key,
         &TestHasher,
     )
@@ -244,9 +224,10 @@ fn a_publish_envelope_signs_and_verifies() {
     // The artifact is signed content: a body flipped after signing no
     // longer verifies.
     let mut tampered = signed;
-    let TransactionBody::Publish(bytes) = &mut tampered.body else {
-        panic!("wrap_publish builds a publish body");
-    };
+    let bytes = tampered
+        .artifact
+        .as_mut()
+        .expect("wrap_publish carries an artifact");
     bytes[0] ^= 1;
     assert!(
         !accepts(&tampered),
@@ -264,6 +245,6 @@ fn a_publish_envelope_signs_and_verifies() {
 #[test]
 fn an_over_cap_publish_body_refuses_to_sign() {
     let key = TestSigner(7);
-    let envelope = wrap_publish(vec![0u8; MAX_ARTIFACT_BYTES + 1], ALICE, NETWORK, terms());
+    let envelope = wrap_publish(vec![0u8; MAX_ARTIFACT_BYTES + 1], ALICE, HEADER, terms());
     assert!(sign(envelope, &key, &TestHasher).is_err());
 }

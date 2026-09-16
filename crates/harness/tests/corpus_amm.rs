@@ -2,7 +2,7 @@
 //! math, output floors, and the share vault's rounding.
 
 use hyperscale_vm_effects::{
-    AdmissionError, Claim, EnvelopeTree, Hash32, IntentDecl, IntentHeader, ManifestGraph, SlotId,
+    AdmissionError, Claim, EnvelopeTree, Hash32, Intent, IntentHeader, ManifestGraph, SlotId,
     TestHasher, Value, child_key, holdings_collection,
 };
 use hyperscale_vm_fixtures::{amm, shares};
@@ -485,7 +485,7 @@ fn an_unadmitted_venue_cannot_trade_the_restricted_class() {
 /// the pool's, and her own deposit, whose credit is hers — because a
 /// proof is not conserved and one claim answers every socket that asks
 /// for it.
-fn approval_request(approver: Claim) -> IntentDecl {
+fn approval_request(approver: Claim) -> Intent {
     let chain = world();
     let mut decl = IntentBuilder::declaration(&chain, &TestHasher, ALICE, TEST_HEADER);
     let approval = decl.declare_proof(approver);
@@ -505,12 +505,12 @@ fn approval_request(approver: Claim) -> IntentDecl {
 
 /// The composition that fills it: the registrar grants the account its
 /// own intent acts as.
-fn approved_composition(request: IntentDecl) -> Result<EnvelopeTree, EnvelopeError> {
+fn approved_composition(request: Intent) -> Result<EnvelopeTree, EnvelopeError> {
     let chain = world();
     let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, REGISTRAR, TEST_HEADER);
     let offered = env.grant();
     let wants = env
-        .adopt(ALICE, request)?
+        .adopt(request)?
         .one()
         .expect("the request declares one socket");
     env.seal(root)?.none()?;
@@ -552,7 +552,7 @@ fn an_approved_trade_settles_through_a_venue_holding_no_credential() {
     let signed = request.hash(&TestHasher);
     let tree = approved_composition(request).expect("the registrar composes the approval");
     assert_eq!(
-        tree.intents[1].decl.hash(&TestHasher),
+        tree.intents[1].hash(&TestHasher),
         signed,
         "nothing the composition did moved what the buyer signed",
     );

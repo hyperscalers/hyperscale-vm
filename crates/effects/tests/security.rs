@@ -25,8 +25,8 @@ use std::collections::BTreeSet;
 use common::{ALICE, BOB, pkg, world};
 use hyperscale_vm_effects::{
     AdmissionError, EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour, GraphArg, GraphNode,
-    Hash32, InstanceMeta, Intent, IntentDecl, IntentHeader, Issuance, JudgedLeaf, ManifestGraph,
-    Records, ResourceMeta, Rule, TestHasher, Value, admit_tree, granting_issued_resource,
+    Hash32, InstanceMeta, Intent, IntentHeader, Issuance, JudgedLeaf, ManifestGraph, Records,
+    ResourceMeta, Rule, TestHasher, Value, admit_tree, granting_issued_resource,
     holdings_collection,
 };
 use hyperscale_vm_fixtures::security;
@@ -134,39 +134,35 @@ fn transfer(resource: ResourceAddr) -> EnvelopeTree {
 /// The same transfer, landing under `recipient`.
 fn transfer_to(resource: ResourceAddr, recipient: PrincipalAddr) -> EnvelopeTree {
     EnvelopeTree {
-        intents: vec![Intent {
-            decl: IntentDecl {
-                header: TEST_HEADER,
-                graph: ManifestGraph {
-                    nodes: vec![
-                        GraphNode {
-                            target: ALICE.into(),
-                            method: "withdraw".into(),
-                            args: vec![
-                                GraphArg::Literal(Value::Address(resource.address())),
-                                GraphArg::Literal(Value::U128(40)),
-                            ],
-                            evidence: BTreeSet::from([EvidenceRef::IntentSignature]),
-                        },
-                        GraphNode {
-                            target: recipient.into(),
-                            method: "deposit".into(),
-                            args: vec![GraphArg::Edge {
-                                edge: EdgeRef {
-                                    producer: 0,
-                                    output: 0,
-                                },
-                                constraints: Vec::new(),
-                            }],
-                            evidence: BTreeSet::default(),
-                        },
-                    ],
-                },
-                sockets: Vec::new(),
+        intents: vec![Intent::leaf(
+            TEST_HEADER,
+            ALICE,
+            ManifestGraph {
+                nodes: vec![
+                    GraphNode {
+                        target: ALICE.into(),
+                        method: "withdraw".into(),
+                        args: vec![
+                            GraphArg::Literal(Value::Address(resource.address())),
+                            GraphArg::Literal(Value::U128(40)),
+                        ],
+                        evidence: BTreeSet::from([EvidenceRef::IntentSignature]),
+                    },
+                    GraphNode {
+                        target: recipient.into(),
+                        method: "deposit".into(),
+                        args: vec![GraphArg::Edge {
+                            edge: EdgeRef {
+                                producer: 0,
+                                output: 0,
+                            },
+                            constraints: Vec::new(),
+                        }],
+                        evidence: BTreeSet::default(),
+                    },
+                ],
             },
-            account: ALICE,
-            bindings: Vec::new(),
-        }],
+        )],
         instances: Vec::new(),
         resources: Vec::new(),
     }

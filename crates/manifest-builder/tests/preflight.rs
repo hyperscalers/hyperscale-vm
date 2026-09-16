@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
     Claim, Clause, Constraint, EnvelopeTree, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta,
-    IntentDecl, IntentHeader, ManifestGraph, MethodSignature, PackageHash, PackageMetadata,
+    Intent, IntentHeader, ManifestGraph, MethodSignature, PackageHash, PackageMetadata,
     PrefixShardResolver, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes,
     ShardResolver, StoredRule, TestHasher, Totality, Value, admit, admit_tree, footprint,
 };
@@ -86,14 +86,7 @@ const SHARDS: PrefixShardResolver = PrefixShardResolver { bits: 2 };
 /// The degenerate tree a plain transaction is: one intent under the test
 /// header, no sockets, nothing bound.
 fn one_intent(account: PrincipalAddr, graph: &ManifestGraph) -> EnvelopeTree {
-    EnvelopeTree::of_one(
-        account,
-        IntentDecl {
-            header: TEST_HEADER,
-            graph: graph.clone(),
-            sockets: Vec::new(),
-        },
-    )
+    EnvelopeTree::of_one(Intent::leaf(TEST_HEADER, account, graph.clone()))
 }
 
 #[test]
@@ -321,7 +314,7 @@ fn a_composition_names_every_signer_it_needs() {
     // signs its declaration; here the two sets coincide.
     assert_eq!(report.signers(), [ALICE, BOB].into_iter().collect());
     assert_eq!(report.intents.len(), 2);
-    assert_eq!(report.intents[1].account, BOB);
+    assert_eq!(report.intents[1].accounts().collect::<Vec<_>>(), [BOB]);
     // The nullifier the composition would spend, named before signing.
     assert_eq!(report.identity(), tree.hash(&TestHasher));
 }
@@ -351,9 +344,9 @@ fn a_root_that_calls_nothing_is_still_one_of_the_intents() {
 
     assert_eq!(split.intents.len(), 2, "the empty root and Bob's subintent");
     assert_eq!(split.intents[0].intent, report.intents[0].intent);
-    assert_eq!(split.intents[0].account, ALICE);
+    assert_eq!(split.intents[0].accounts, [ALICE]);
     assert_eq!(split.intents[0].nodes, 0, "the root calls nothing");
-    assert_eq!(split.intents[1].account, BOB);
+    assert_eq!(split.intents[1].accounts, [BOB]);
     assert_eq!(
         split.intents[1].exposure,
         std::iter::once((RES_X, 10)).collect(),
@@ -385,7 +378,7 @@ fn an_intent_is_exposed_only_by_the_cells_its_signer_holds() {
     let split = report.by_intent(&gas_limits).unwrap();
 
     assert_eq!(split.intents.len(), 1, "one intent, no subintents");
-    assert_eq!(split.intents[0].account, ALICE);
+    assert_eq!(split.intents[0].accounts, [ALICE]);
     assert_eq!(
         split.intents[0].exposure,
         std::iter::once((RES_X, 100)).collect(),
@@ -457,8 +450,8 @@ fn a_shared_cell_is_named_rather_than_charged_to_either_intent() {
     );
     // Each intent names the account it acts as, rather than a weight
     // from a vector nothing guarantees is one per intent.
-    assert_eq!(split.intents[0].account, ALICE);
-    assert_eq!(split.intents[1].account, BOB);
+    assert_eq!(split.intents[0].accounts, [ALICE]);
+    assert_eq!(split.intents[1].accounts, [BOB]);
 
     // And the cells both intents reach are named, which is the whole
     // reason the bytes are not split.
@@ -540,7 +533,7 @@ fn the_compute_column_sums_to_the_terms_and_splits_per_intent() {
         .filter(|row| row.intent == sub_hash)
         .map(|row| row.node)
         .collect();
-    assert_eq!(sub_nodes.len(), tree.intents[1].decl.graph.nodes.len());
+    assert_eq!(sub_nodes.len(), tree.intents[1].graph.nodes.len());
     assert!(
         sub_nodes.iter().any(|node| *node > 0),
         "the interleave puts a subintent node after a root node"
@@ -658,7 +651,7 @@ fn a_disjunction_reports_its_branches_and_names_no_certain_signer() {
     // The desk's composition grants the account its own intent acts as.
     let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
     let offered = env.grant();
-    let wants = env.adopt(ALICE, request).unwrap().one().unwrap();
+    let wants = env.adopt(request).unwrap().one().unwrap();
     env.seal(root).unwrap().none().unwrap();
     env.bind(wants, offered).unwrap();
     env.register_resource(either_note_meta());
@@ -820,7 +813,7 @@ fn a_conjunction_reports_what_each_branch_asks() {
 
     let (mut env, root) = EnvelopeBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
     let offered = env.grant();
-    let wants = env.adopt(BOB, request).unwrap().one().unwrap();
+    let wants = env.adopt(request).unwrap().one().unwrap();
     env.seal(root).unwrap().none().unwrap();
     env.bind(wants, offered).unwrap();
     env.register_resource(note_meta());

@@ -198,6 +198,7 @@ impl Printer<'_> {
         match arg {
             GraphArg::Literal(value) => self.value(value),
             GraphArg::Socket(position) => Ok(format!("${position}")),
+            GraphArg::Give { give, .. } => Ok(format!("${}.{}", give.member, give.give)),
             GraphArg::Edge { edge, constraints } => {
                 let (name, shown) = self
                     .bindings
@@ -333,7 +334,7 @@ fn edge_types(
                             EdgeContent::Fungible
                         },
                     }),
-                GraphArg::Socket(_) => None,
+                GraphArg::Socket(_) | GraphArg::Give { .. } => None,
             };
             known.push(value.is_some());
             values.push(value.unwrap_or_else(unknown));

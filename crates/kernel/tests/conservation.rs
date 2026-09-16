@@ -8,7 +8,7 @@
 //! would pin nothing about which resource went to which side.
 
 use hyperscale_vm_effects::{
-    Hash32, IntentHash, IntentRecord, ResourceKind, SlotId, TestHasher, Value, child_key,
+    Hash32, IntentHash, IntentRecord, Nullifier, ResourceKind, SlotId, TestHasher, Value, child_key,
 };
 
 /// Any expiry; these tests never reach one.
@@ -508,13 +508,15 @@ mod instances {
     }
 }
 
-/// The record a spend carries: the subintent, its signer's cell, and
+/// The record a spend carries: the intent, its account's cell, and
 /// when the record stops being owed.
-const fn nullifier_record(intent: IntentHash, nullifier: SubstateKey) -> IntentRecord {
+fn nullifier_record(intent: IntentHash, nullifier: SubstateKey) -> IntentRecord {
     IntentRecord {
         intent,
-        account: PrincipalAddr::new([1; 31]),
-        nullifier,
+        nullifiers: vec![Nullifier {
+            account: PrincipalAddr::new([1; 31]),
+            key: nullifier,
+        }],
         expiry_ms: TEST_EXPIRY_MS,
     }
 }

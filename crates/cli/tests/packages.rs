@@ -330,13 +330,14 @@ fn a_manifest_without_the_module_key_names_the_key_to_add() {
 }
 
 /// The publish intent round-trips the codec carrying exactly the bytes
-/// the gate admitted, unsigned and naming its payer and network.
+/// the gate admitted, unsigned, its root naming the payer and network.
 #[test]
 fn the_publish_envelope_carries_the_admitted_artifact() {
     use hyperscale_hbor::from_slice as decode;
     use hyperscale_vm_cli::{NetworkId, PrincipalAddr, publish_envelope};
+    use hyperscale_vm_effects::EnvelopeTree;
     use hyperscale_vm_gate::admit_package;
-    use hyperscale_vm_types::{SchemeId, TransactionBody, TransactionEnvelope};
+    use hyperscale_vm_types::{SchemeId, TransactionEnvelope};
 
     let dir = guests().join("flashloan");
     let bytes = artifact(&dir, Provenance::Published).expect("flashloan builds");
@@ -344,12 +345,17 @@ fn the_publish_envelope_carries_the_admitted_artifact() {
     let intent = publish_envelope(bytes.clone(), payer, NetworkId(7)).expect("the intent encodes");
 
     let decoded: TransactionEnvelope = decode(&intent).expect("the intent round-trips");
-    assert_eq!(decoded.network, NetworkId(7));
-    assert_eq!(decoded.fee_payer, payer);
+    let tree: EnvelopeTree = decode(&decoded.tree).expect("the tree round-trips");
+    let root = tree.root();
+    assert_eq!(root.header.network, NetworkId(7));
+    assert_eq!(root.accounts, [payer]);
+    assert_eq!(
+        root.terms.as_ref().map(|terms| terms.fee_payer),
+        Some(payer)
+    );
+    assert!(root.graph.nodes.is_empty(), "a publish calls nothing");
     assert_eq!(decoded.signer_scheme, SchemeId::NONE, "unsigned");
-    let TransactionBody::Publish(carried) = decoded.body else {
-        panic!("a publish body");
-    };
+    let carried = decoded.artifact.expect("a publish carries its artifact");
     assert_eq!(carried, bytes, "exactly the artifact the gate admitted");
     admit_package(&carried).expect("the same gate admits the carried bytes");
 }

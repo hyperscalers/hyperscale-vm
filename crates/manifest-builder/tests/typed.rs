@@ -90,7 +90,7 @@ fn asserted(graph: &ManifestGraph, node: usize) -> Vec<Option<ResourceAddr>> {
                     Constraint::MinAmount(_) | Constraint::MaxAmount(_) => None,
                 })
             }
-            GraphArg::Literal(_) | GraphArg::Socket(_) => None,
+            GraphArg::Literal(_) | GraphArg::Socket(_) | GraphArg::Give { .. } => None,
         })
         .collect()
 }

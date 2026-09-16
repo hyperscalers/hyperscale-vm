@@ -29,7 +29,9 @@ use hyperscale_hbor::to_vec;
 // The address vocabulary a caller writes on the command line, re-exported
 // beside the renderer that reads one.
 pub use hyperscale_vm_effects::{Address, AddressClass, PackageMetadata, Value};
-use hyperscale_vm_effects::{ProtocolHasher, ResourceMeta, explain_resource, grants_read_config};
+use hyperscale_vm_effects::{
+    IntentHeader, ProtocolHasher, ResourceMeta, explain_resource, grants_read_config,
+};
 // The rendering `explain` prints, re-exported so the command reaches one
 // dependency for the whole pipeline it drives.
 pub use hyperscale_vm_effects::{explain, explain_method};
@@ -391,11 +393,12 @@ pub fn artifact(dir: &Path, provenance: Provenance) -> Result<Vec<u8>, BuildErro
 /// The canonical unsigned publish intent for `artifact`, as the bytes a
 /// host with keys decodes, terms, signs, and submits.
 ///
-/// The scheme is none and the terms are zero: which fee a payer offers
-/// and which window they sign for are theirs to state before signing,
-/// and the CLI's whole say is the body — the artifact it just admitted,
-/// wrapped the way [`hyperscale_vm_manifest_builder::signing::sign`]
-/// expects to receive it.
+/// The scheme is none, the terms are zero and the window is empty:
+/// which fee a payer offers and which window they sign for are theirs
+/// to state before signing, and the CLI's whole say is the artifact it
+/// just admitted, wrapped the way
+/// [`hyperscale_vm_manifest_builder::signing::sign`] expects to receive
+/// it.
 ///
 /// # Errors
 ///
@@ -409,13 +412,17 @@ pub fn publish_envelope(
     let envelope = wrap_publish(
         artifact,
         payer,
-        network,
+        IntentHeader {
+            network,
+            validity_start_ms: 0,
+            validity_end_ms: 0,
+            discriminator: 0,
+        },
         Terms {
+            fee_payer: payer,
             max_fee: 0,
             gas_limits: vec![0],
             priority_bp: 0,
-            validity_start_ms: 0,
-            validity_end_ms: 0,
             message: Vec::new(),
         },
     );

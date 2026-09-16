@@ -50,10 +50,12 @@ use std::fmt::Write as _;
 
 use hyperscale_hbor::{ShapeField, ShapeVariant, TypeShape};
 use hyperscale_vm_types::{
-    Address, AddressClass, EffectTarget, Moves, Presence, SubstateKey, UnmetCondition,
+    Address, AddressClass, EffectTarget, IntentHash, Moves, Presence, SubstateKey, UnmetCondition,
 };
 
-use crate::admission::{AdmissionError, Admitted, Asks, Injected, IntentView, Placed, interleave};
+use crate::admission::{
+    AdmissionError, Admitted, Asks, Injected, IntentView, Placed, interleave, resolve_tree,
+};
 use crate::claim::Claim;
 use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr, preorder_len};
 use crate::envelope::{EnvelopeTree, NULLIFIER_SLOT};
@@ -521,25 +523,37 @@ pub fn explain_admission(
 /// node that consumes its socket, whichever intent wrote it — so the
 /// walk is re-run here over the tree rather than guessed from
 /// concatenation. The intents themselves are the tree's own, in tree
-/// order.
+/// order, and `hasher` is the one the tree names its members by.
 #[must_use]
 pub fn explain_admission_tree(
     tree: &EnvelopeTree,
     records: &dyn ChainRecords,
+    hasher: &dyn Hasher,
     refusal: &AdmissionError,
 ) -> String {
-    let views: Vec<IntentView<'_>> = tree
+    let graphs: Vec<&ManifestGraph> = tree.intents.iter().map(|intent| &intent.graph).collect();
+    // A tree that does not resolve, or that the interleave cannot
+    // order, has no flattened numbering to resolve against, and its
+    // refusal says so on its own.
+    let identities: Vec<IntentHash> = tree
         .intents
         .iter()
-        .map(|intent| {
-            IntentView::for_ordering(&intent.decl.graph, &intent.decl.sockets, &intent.bindings)
-        })
+        .map(|intent| intent.hash(hasher))
         .collect();
-    let total: usize = views.iter().map(|view| view.graph.nodes.len()).sum();
-    // A tree the interleave cannot order has no flattened numbering to
-    // resolve against, and its refusal says so on its own.
-    let order = interleave(&views, total).ok().map(|(_, order)| order);
-    let graphs: Vec<&ManifestGraph> = views.iter().map(|view| view.graph).collect();
+    let order = resolve_tree(&tree.intents, &identities)
+        .ok()
+        .and_then(|resolved| {
+            let views: Vec<IntentView<'_>> = tree
+                .intents
+                .iter()
+                .zip(resolved.views())
+                .map(|(intent, interface)| {
+                    IntentView::for_ordering(&intent.graph, &intent.sockets, interface)
+                })
+                .collect();
+            let total: usize = views.iter().map(|view| view.graph.nodes.len()).sum();
+            interleave(&views, total).ok().map(|(_, order)| order)
+        });
     explain_placed(&graphs, order.as_deref(), records, refusal)
 }
 
@@ -674,6 +688,9 @@ fn arg_text(arg: &GraphArg) -> String {
             edge.output, edge.producer
         ),
         GraphArg::Socket(reference) => format!("socket {reference} of its own intent"),
+        GraphArg::Give { give, .. } => {
+            format!("give {} of its member {}", give.give, give.member)
+        }
     }
 }
 

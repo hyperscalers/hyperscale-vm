@@ -22,9 +22,9 @@ use common::{ALICE, BOB, meta_granting, pkg, world};
 use hyperscale_vm_effects::vocabulary::{HALT, VAULT};
 use hyperscale_vm_effects::{
     AdmissionError, AdmittedTree, Claim, EdgeRef, EnvelopeTree, EvidenceRef, GrantedBehaviour,
-    GraphArg, GraphNode, Hash32, Holding, InstanceMeta, Intent, IntentDecl, IntentHeader,
-    JudgedLeaf, ManifestGraph, Records, ResourceGrants, ResourceKind, ResourceMeta, Rule,
-    RuleBytes, SlotRef, StoredRule, TestHasher, Value, admit_tree, child_key,
+    GraphArg, GraphNode, Hash32, Holding, InstanceMeta, Intent, IntentHeader, JudgedLeaf,
+    ManifestGraph, Records, ResourceGrants, ResourceKind, ResourceMeta, Rule, RuleBytes, SlotRef,
+    StoredRule, TestHasher, Value, admit_tree, child_key,
 };
 use hyperscale_vm_fixtures::custodian;
 use hyperscale_vm_types::{
@@ -136,36 +136,32 @@ fn credential(owner: impl Into<Address>) -> SubstateKey {
 /// which keeps two families of vaults rather than one.
 fn paid_out(custodian: ComponentAddr, holder: PrincipalAddr) -> EnvelopeTree {
     EnvelopeTree {
-        intents: vec![Intent {
-            decl: IntentDecl {
-                header: TEST_HEADER,
-                graph: ManifestGraph {
-                    nodes: vec![
-                        GraphNode {
-                            target: custodian.into(),
-                            method: "withdraw".into(),
-                            args: vec![GraphArg::Literal(Value::U128(40))],
-                            evidence: BTreeSet::default(),
-                        },
-                        GraphNode {
-                            target: holder.into(),
-                            method: "deposit".into(),
-                            args: vec![GraphArg::Edge {
-                                edge: EdgeRef {
-                                    producer: 0,
-                                    output: 0,
-                                },
-                                constraints: Vec::new(),
-                            }],
-                            evidence: BTreeSet::default(),
-                        },
-                    ],
-                },
-                sockets: Vec::new(),
+        intents: vec![Intent::leaf(
+            TEST_HEADER,
+            ALICE,
+            ManifestGraph {
+                nodes: vec![
+                    GraphNode {
+                        target: custodian.into(),
+                        method: "withdraw".into(),
+                        args: vec![GraphArg::Literal(Value::U128(40))],
+                        evidence: BTreeSet::default(),
+                    },
+                    GraphNode {
+                        target: holder.into(),
+                        method: "deposit".into(),
+                        args: vec![GraphArg::Edge {
+                            edge: EdgeRef {
+                                producer: 0,
+                                output: 0,
+                            },
+                            constraints: Vec::new(),
+                        }],
+                        evidence: BTreeSet::default(),
+                    },
+                ],
             },
-            account: ALICE,
-            bindings: Vec::new(),
-        }],
+        )],
         instances: Vec::new(),
         resources: Vec::new(),
     }
@@ -179,36 +175,32 @@ fn paid_out(custodian: ComponentAddr, holder: PrincipalAddr) -> EnvelopeTree {
 /// it back here is what makes the whole movement the custodian's own.
 fn round_trip(custodian: ComponentAddr) -> EnvelopeTree {
     EnvelopeTree {
-        intents: vec![Intent {
-            decl: IntentDecl {
-                header: TEST_HEADER,
-                graph: ManifestGraph {
-                    nodes: vec![
-                        GraphNode {
-                            target: custodian.into(),
-                            method: "withdraw".into(),
-                            args: vec![GraphArg::Literal(Value::U128(40))],
-                            evidence: BTreeSet::default(),
-                        },
-                        GraphNode {
-                            target: custodian.into(),
-                            method: "deposit".into(),
-                            args: vec![GraphArg::Edge {
-                                edge: EdgeRef {
-                                    producer: 0,
-                                    output: 0,
-                                },
-                                constraints: Vec::new(),
-                            }],
-                            evidence: BTreeSet::default(),
-                        },
-                    ],
-                },
-                sockets: Vec::new(),
+        intents: vec![Intent::leaf(
+            TEST_HEADER,
+            ALICE,
+            ManifestGraph {
+                nodes: vec![
+                    GraphNode {
+                        target: custodian.into(),
+                        method: "withdraw".into(),
+                        args: vec![GraphArg::Literal(Value::U128(40))],
+                        evidence: BTreeSet::default(),
+                    },
+                    GraphNode {
+                        target: custodian.into(),
+                        method: "deposit".into(),
+                        args: vec![GraphArg::Edge {
+                            edge: EdgeRef {
+                                producer: 0,
+                                output: 0,
+                            },
+                            constraints: Vec::new(),
+                        }],
+                        evidence: BTreeSet::default(),
+                    },
+                ],
             },
-            account: ALICE,
-            bindings: Vec::new(),
-        }],
+        )],
         instances: Vec::new(),
         resources: vec![governed_meta()],
     }
@@ -453,22 +445,18 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
         let target = instance.address(&TestHasher);
         chain.instances.create(&TestHasher, instance);
         let env = EnvelopeTree {
-            intents: vec![Intent {
-                decl: IntentDecl {
-                    header: TEST_HEADER,
-                    graph: ManifestGraph {
-                        nodes: vec![GraphNode {
-                            target: target.into(),
-                            method: "receive".into(),
-                            args: Vec::new(),
-                            evidence: BTreeSet::default(),
-                        }],
-                    },
-                    sockets: Vec::new(),
+            intents: vec![Intent::leaf(
+                TEST_HEADER,
+                ALICE,
+                ManifestGraph {
+                    nodes: vec![GraphNode {
+                        target: target.into(),
+                        method: "receive".into(),
+                        args: Vec::new(),
+                        evidence: BTreeSet::default(),
+                    }],
                 },
-                account: ALICE,
-                bindings: Vec::new(),
-            }],
+            )],
             instances: Vec::new(),
             resources: vec![meta],
         };
@@ -531,39 +519,35 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
 /// the one method in the corpus carrying the total mark.
 fn transferred(from: PrincipalAddr, to: PrincipalAddr, resource: ResourceAddr) -> EnvelopeTree {
     EnvelopeTree {
-        intents: vec![Intent {
-            decl: IntentDecl {
-                header: TEST_HEADER,
-                graph: ManifestGraph {
-                    nodes: vec![
-                        GraphNode {
-                            target: from.into(),
-                            method: "withdraw".into(),
-                            args: vec![
-                                GraphArg::Literal(Value::Address(resource.address())),
-                                GraphArg::Literal(Value::U128(40)),
-                            ],
-                            evidence: [EvidenceRef::IntentSignature].into(),
-                        },
-                        GraphNode {
-                            target: to.into(),
-                            method: "deposit".into(),
-                            args: vec![GraphArg::Edge {
-                                edge: EdgeRef {
-                                    producer: 0,
-                                    output: 0,
-                                },
-                                constraints: Vec::new(),
-                            }],
-                            evidence: BTreeSet::default(),
-                        },
-                    ],
-                },
-                sockets: Vec::new(),
+        intents: vec![Intent::leaf(
+            TEST_HEADER,
+            ALICE,
+            ManifestGraph {
+                nodes: vec![
+                    GraphNode {
+                        target: from.into(),
+                        method: "withdraw".into(),
+                        args: vec![
+                            GraphArg::Literal(Value::Address(resource.address())),
+                            GraphArg::Literal(Value::U128(40)),
+                        ],
+                        evidence: [EvidenceRef::IntentSignature].into(),
+                    },
+                    GraphNode {
+                        target: to.into(),
+                        method: "deposit".into(),
+                        args: vec![GraphArg::Edge {
+                            edge: EdgeRef {
+                                producer: 0,
+                                output: 0,
+                            },
+                            constraints: Vec::new(),
+                        }],
+                        evidence: BTreeSet::default(),
+                    },
+                ],
             },
-            account: ALICE,
-            bindings: Vec::new(),
-        }],
+        )],
         instances: Vec::new(),
         resources: Vec::new(),
     }
@@ -647,11 +631,11 @@ fn one_flag_is_read_once_however_many_directions_the_access_moves_in() {
     let mut env = round_trip(custodian);
     // The withdrawn value goes back through the till, whose one access
     // moves in both directions, and what the till pays out is deposited.
-    env.intents[0].decl.graph.nodes[1].method = "churn".into();
-    env.intents[0].decl.graph.nodes[1]
+    env.intents[0].graph.nodes[1].method = "churn".into();
+    env.intents[0].graph.nodes[1]
         .args
         .push(GraphArg::Literal(Value::U128(15)));
-    env.intents[0].decl.graph.nodes.push(GraphNode {
+    env.intents[0].graph.nodes.push(GraphNode {
         target: custodian.into(),
         method: "deposit".into(),
         args: vec![GraphArg::Edge {

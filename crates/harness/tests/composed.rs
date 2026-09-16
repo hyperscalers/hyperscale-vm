@@ -139,8 +139,8 @@ fn a_composed_transaction_settles_on_both_runtimes() -> Result<()> {
     let world = world();
     let tree = composed_tree(ALICE, 100);
     let (entry, admitted) = batch_entry(&world, &tree)?;
-    let record = admitted.intents[1];
-    let nullifier = record.nullifier;
+    let record = &admitted.intents[1];
+    let nullifier = record.nullifiers[0].key;
 
     let (outcome, end) = run_both(&seeded_store(), std::slice::from_ref(&entry));
     assert!(matches!(
@@ -176,8 +176,8 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
     let (alice_entry, alice_admitted) = batch_entry(&world, &composed_tree(ALICE, 100))?;
     let (carol_entry, carol_admitted) = batch_entry(&world, &composed_tree(CAROL, 120))?;
     assert_eq!(
-        alice_admitted.intents[1].nullifier,
-        carol_admitted.intents[1].nullifier
+        alice_admitted.intents[1].nullifiers,
+        carol_admitted.intents[1].nullifiers
     );
     let alice_wins = alice_entry.tx < carol_entry.tx;
     let batch = vec![alice_entry.clone(), carol_entry.clone()];
@@ -201,7 +201,7 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
     assert_eq!(
         outcome.receipts[&loser.tx].outcome,
         Outcome::NullifierSpent {
-            key: alice_admitted.intents[1].nullifier,
+            key: alice_admitted.intents[1].nullifiers[0].key,
         }
     );
 
@@ -217,9 +217,9 @@ fn racing_compositions_commit_exactly_one() -> Result<()> {
     // The subintent leg settled exactly once.
     assert_eq!(amount_of(&end, vault(BOB, RES_Y)), 20);
     assert_eq!(amount_of(&end, vault(BOB, RES_X)), pay);
-    let record = alice_admitted.intents[1];
+    let record = &alice_admitted.intents[1];
     assert_eq!(
-        cells(&end).get(&record.nullifier),
+        cells(&end).get(&record.nullifiers[0].key),
         Some(
             &Marker {
                 tx: winner.tx,
@@ -237,7 +237,7 @@ fn a_spent_nullifier_blocks_the_next_batch() -> Result<()> {
     let world = world();
     let (alice_entry, alice_admitted) = batch_entry(&world, &composed_tree(ALICE, 100))?;
     let (carol_entry, _) = batch_entry(&world, &composed_tree(CAROL, 120))?;
-    let nullifier = alice_admitted.intents[1].nullifier;
+    let nullifier = alice_admitted.intents[1].nullifiers[0].key;
 
     let (_, committed) = run_both(&seeded_store(), std::slice::from_ref(&alice_entry));
 

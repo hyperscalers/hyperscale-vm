@@ -8,9 +8,9 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    EnvelopeTree, Hash32, Hasher, InstanceMeta, Intent, IntentDecl, IntentHeader, ManifestGraph,
-    PackageHash, PrefixShardResolver, Records, ResourceKind, ShardId, ShardResolver, TestHasher,
-    Value, issued_resource,
+    EnvelopeTree, Hash32, Hasher, InstanceMeta, Intent, IntentHeader, ManifestGraph, PackageHash,
+    PrefixShardResolver, Records, ResourceKind, ShardId, ShardResolver, TestHasher, Value,
+    issued_resource,
 };
 use hyperscale_vm_fixtures::{amm, payouts};
 use hyperscale_vm_manifest_builder::{
@@ -215,24 +215,16 @@ fn main() {
 /// The preflight report, as a wallet would read it out: the graph under
 /// the header a wallet would sign it with, as the one intent of a tree.
 fn summarise(graph: &ManifestGraph, chain: &Records) {
-    let tree = EnvelopeTree {
-        intents: vec![Intent {
-            decl: IntentDecl {
-                header: IntentHeader {
-                    network: NetworkId(1),
-                    validity_start_ms: 0,
-                    validity_end_ms: 3_600_000,
-                    discriminator: 0,
-                },
-                graph: graph.clone(),
-                sockets: Vec::new(),
-            },
-            account: ALICE,
-            bindings: Vec::new(),
-        }],
-        instances: Vec::new(),
-        resources: Vec::new(),
-    };
+    let tree = EnvelopeTree::of_one(Intent::leaf(
+        IntentHeader {
+            network: NetworkId(1),
+            validity_start_ms: 0,
+            validity_end_ms: 3_600_000,
+            discriminator: 0,
+        },
+        ALICE,
+        graph.clone(),
+    ));
     let report =
         preflight_tree(&tree, chain, &TestHasher, NETWORK).expect("the graph admits and routes");
     let names = vocabulary();

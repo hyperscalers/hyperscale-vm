@@ -313,16 +313,16 @@ pub struct IntentCost {
     pub compute: u64,
     /// What its calls' own methods may emit between them.
     pub event_bytes: u64,
-    /// The account it acts as.
+    /// The accounts it acts as, in the order it names them.
     ///
-    /// The account and not the signatures' cost. What a signature
+    /// The accounts and not the signatures' cost. What a signature
     /// weighs depends on its scheme, and an account's rule may ask for
     /// several keys, so the signatures an envelope binds are not one per
     /// intent and pairing them positionally would put one intent's
     /// scheme against another's. A caller that has chosen the schemes
     /// knows which belong to whom and can price them with
     /// [`DeclaredWork::signature`].
-    pub account: PrincipalAddr,
+    pub accounts: Vec<PrincipalAddr>,
     /// The most this intent's own nodes may move out, by resource.
     ///
     /// The reserves they declare, which is the whole of what its signer
@@ -515,15 +515,20 @@ impl Report {
         let compute = self.compute_by_intent(gas_limits)?;
         let origins = self.admitted.origins();
 
-        // Which account admits each intent.
-        let order: Vec<(IntentHash, PrincipalAddr)> = self
+        // Which accounts each intent acts as.
+        let order: Vec<(IntentHash, Vec<PrincipalAddr>)> = self
             .intents
             .iter()
-            .map(|record| (record.intent, record.account))
+            .map(|record| (record.intent, record.accounts().collect()))
             .collect();
-        let owner_of: BTreeMap<IntentHash, Address> = order
+        let owners_of: BTreeMap<IntentHash, Vec<Address>> = order
             .iter()
-            .map(|(intent, account)| (*intent, account.address()))
+            .map(|(intent, accounts)| {
+                (
+                    *intent,
+                    accounts.iter().map(|account| account.address()).collect(),
+                )
+            })
             .collect();
 
         let mut events: BTreeMap<IntentHash, u64> = BTreeMap::new();
@@ -538,7 +543,7 @@ impl Report {
         // unions across intents and a reserve is exactly what must not
         // be pooled: the figure is one signer's agreed risk.
         //
-        // And scoped to the signer's own cells, because a node's frame
+        // And scoped to the signers' own cells, because a node's frame
         // declares every cell the call touches — a swap debits the
         // venue's reserve, which is the venue's value moving and not the
         // caller's. What a signer risks is what leaves an address they
@@ -553,7 +558,10 @@ impl Report {
                 let Some(resource) = access.holds else {
                     continue;
                 };
-                if owner_of.get(&origin.intent) != Some(&access.effect.target.owner()) {
+                let held = owners_of
+                    .get(&origin.intent)
+                    .is_some_and(|owners| owners.contains(&access.effect.target.owner()));
+                if !held {
                     continue;
                 }
                 match access.effect.mode {
@@ -595,7 +603,7 @@ impl Report {
 
         let intents = order
             .into_iter()
-            .map(|(intent, account)| IntentCost {
+            .map(|(intent, accounts)| IntentCost {
                 nodes: u32::try_from(
                     origins
                         .iter()
@@ -605,7 +613,7 @@ impl Report {
                 .unwrap_or(u32::MAX),
                 compute: compute.get(&intent).copied().unwrap_or(0),
                 event_bytes: events.get(&intent).copied().unwrap_or(0),
-                account,
+                accounts,
                 exposure: exposure.get(&intent).cloned().unwrap_or_default(),
                 unbounded_outflow: unbounded.contains(&intent),
                 intent,
@@ -633,7 +641,7 @@ impl Report {
         Ok(by_intent)
     }
 
-    /// Every account the transaction needs an intent for: the account
+    /// Every account the transaction needs an intent for: the accounts
     /// each intent acts as, and nothing else. Exact, because it is the
     /// tree's own list — a principal claim reaches a gate only from the
     /// signature of an intent acting as that account or from a grant of
@@ -644,7 +652,10 @@ impl Report {
     /// own rule to state, and its shard judges that at materialization.
     #[must_use]
     pub fn signers(&self) -> BTreeSet<PrincipalAddr> {
-        self.intents.iter().map(|record| record.account).collect()
+        self.intents
+            .iter()
+            .flat_map(IntentRecord::accounts)
+            .collect()
     }
 
     /// The nodes whose access no signature can satisfy. A transaction
@@ -758,7 +769,12 @@ fn report(
         .iter()
         .map(|required| required.target)
         .chain(authority_names)
-        .chain(intents.iter().map(|record| record.account.address()));
+        .chain(
+            intents
+                .iter()
+                .flat_map(IntentRecord::accounts)
+                .map(PrincipalAddr::address),
+        );
     for address in addresses {
         if let Entry::Vacant(slot) = named.entry(address) {
             slot.insert(address.to_text(network)?);

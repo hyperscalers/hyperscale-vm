@@ -103,7 +103,7 @@ fn type_args(
                     },
                 })
             }
-            GraphArg::Socket(_) => {
+            GraphArg::Socket(_) | GraphArg::Give { .. } => {
                 if !param.is_edge() {
                     return Err(TypedError::SocketForValueParam {
                         method: method(),
@@ -111,7 +111,8 @@ fn type_args(
                     });
                 }
                 // What fills a socket takes its resource from the
-                // socket's own declaration, a tier up from here.
+                // socket's own declaration, and a give from the member
+                // that produces it — both a tier up from here.
                 None
             }
         });
@@ -469,7 +470,7 @@ fn governing(
         let arg = usize::try_from(*param).ok().and_then(|at| args.get(at))?;
         let resource = match arg {
             GraphArg::Edge { constraints, .. } => edge_resource(constraints),
-            GraphArg::Literal(_) | GraphArg::Socket(_) => None,
+            GraphArg::Literal(_) | GraphArg::Socket(_) | GraphArg::Give { .. } => None,
         }?;
         Some((resource, Some(GrantedBehaviour::Burn)))
     });

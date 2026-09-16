@@ -44,7 +44,7 @@ pub use effect::{
 pub use envelope::{
     ARTIFACT_GRACE_MS, COMMITTED_GRACE_MS, CROSSING_GRACE_MS, IntentHash, MAX_ARTIFACT_BYTES,
     MAX_CALL_BYTES, MAX_ENVELOPE_BYTES, MAX_GAS_LIMIT, MAX_INTENTS, MAX_MESSAGE_LEN,
-    MAX_PRIORITY_BP, MAX_SUBINTENTS, NetworkId, SubintentSig, TermsRefusal, TransactionBody,
+    MAX_PRIORITY_BP, MAX_SUBINTENTS, NetworkId, SubintentSig, Terms, TermsRefusal,
     TransactionEnvelope, TxHash, admit_ceilings, admit_event_bounds, event_bytes_total,
     gas_limit_total,
 };

@@ -19,8 +19,8 @@ use std::sync::LazyLock;
 use hyperscale_vm_effects::vocabulary::CONFIG;
 use hyperscale_vm_effects::{
     AdmissionError, EnvelopeTree, GrantedBehaviour, GraphArg, GraphNode, Hash32, InstanceMeta,
-    IntentDecl, IntentHeader, ManifestGraph, Records, ResourceMeta, ResourceRecord, TestHasher,
-    Value, admit_tree, child_key, resource_record_key,
+    Intent, IntentHeader, ManifestGraph, Records, ResourceMeta, ResourceRecord, TestHasher, Value,
+    admit_tree, child_key, resource_record_key,
 };
 use hyperscale_vm_fixtures::{FLASHLOAN_MODULE, flashloan};
 use hyperscale_vm_harness::driver::{Lanes, amount_of, run_lanes, seed_vault, vault};
@@ -140,14 +140,7 @@ fn graph(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) ->
 /// One intent, presenting the obligation's record — which a composer
 /// must, since a `Restricted` address says its rules bind a movement.
 fn intent(account: PrincipalAddr, graph: ManifestGraph) -> EnvelopeTree {
-    let mut tree = EnvelopeTree::of_one(
-        account,
-        IntentDecl {
-            header: TEST_HEADER,
-            graph,
-            sockets: Vec::new(),
-        },
-    );
+    let mut tree = EnvelopeTree::of_one(Intent::leaf(TEST_HEADER, account, graph));
     tree.resources = vec![debt_record()];
     tree
 }

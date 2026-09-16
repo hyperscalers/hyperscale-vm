@@ -1,28 +1,38 @@
-//! The bound envelope tree: intents composed through the sockets they
+//! The tree: intents composing intents through the interfaces they
 //! declare, and the nullifier vocabulary that makes a committed intent
 //! once-only.
 //!
-//! An intent's signer signs an [`IntentDecl`] — a graph over the
-//! sockets it declares. A socket carries either of the two things that
+//! An intent's signer signs an [`Intent`] whole: its calls, the accounts
+//! it acts as, the interface it presents — [`Socket`]s for what it needs
+//! and [`Give`]s for the value it offers — the members it composes, by
+//! hash, and the wiring that fills every member's sockets. Two things
 //! cross an intent boundary: a value edge, which exactly one node
-//! argument consumes, or a claim, which as many of the intent's nodes
-//! present as ask for it. The composition fills every socket — from
-//! another intent's node, or by granting the authority of the account
-//! its own intent acts as — and signs the whole envelope; nothing about
-//! the tree is renegotiated at admission.
+//! argument consumes, and a claim, which as many of the intent's nodes
+//! present as ask for it. Value flows both ways — a composer wires its
+//! own edges and its members' gives into a member's sockets, and takes a
+//! member's gives as arguments of its own calls — and authority flows
+//! down only: a composer grants a claim it holds into a member's socket,
+//! and nothing a member proves reaches its composer.
 //!
-//! [`admit_tree`] flattens the tree into one routing manifest: intents
-//! keep their author order and their sockets interleave them
-//! deterministically, so a node lands after whatever fills every socket
-//! it reaches — the ones its arguments consume and the ones its
-//! evidence presents alike. A composition admitting no such order is
-//! rejected.
+//! Signing an intent commits to every member's hash, and so to the whole
+//! subtree beneath it. That is what makes a grant safe: an account's
+//! claim is wired into a member only by an intent that names the account
+//! or received the claim in a socket of its own, and that intent signed
+//! the member it grants to. Nothing about the tree is renegotiated at
+//! admission.
 //!
-//! Committing an intent writes a kernel nullifier substate under the
+//! [`admit_tree`] recovers the tree from the members each intent names,
+//! resolves every socket and every give to the node that fills it, and
+//! flattens the tree into one routing manifest: intents keep tree order
+//! and their sockets interleave them deterministically, so a node lands
+//! after whatever fills every socket and every give it reaches. A tree
+//! admitting no such order is rejected.
+//!
+//! Committing an intent writes a kernel nullifier substate under each
 //! account it acts as, bucketed by the intent's expiry and keyed by its
 //! own hash — computable, hence declarable, hence a creation conflict:
-//! two compositions racing one intent contend on the nullifier key and
-//! exactly one commits.
+//! two trees racing one intent contend on the nullifier key and exactly
+//! one commits.
 
 use std::collections::BTreeSet;
 
@@ -31,17 +41,17 @@ pub use hyperscale_vm_types::MAX_INTENTS;
 use hyperscale_vm_types::{
     ARTIFACT_GRACE_MS, Address, COMMITTED_GRACE_MS, CROSSING_GRACE_MS, Effect, EffectTarget,
     IntentHash, LegShape, MAX_MANIFEST_NODES, Mode, Moves, NetworkId, PrincipalAddr, ResourceAddr,
-    SubstateKey, SweepBucket, TxHash,
+    SubstateKey, SweepBucket, Terms, TxHash,
 };
 
 use crate::PACKAGE_SLOT_BASE;
 use crate::admission::{
     AdmissionError, Admitted, IntentView, MAX_SOCKETS, admit_intents, check_instance_value_depth,
-    check_value_depth,
+    check_value_depth, resolve_tree,
 };
 use crate::claim::Claim;
 use crate::dsl::PresentedGrants;
-use crate::graph::{Constraint, EdgeRef, ManifestGraph};
+use crate::graph::{Constraint, EdgeRef, GiveRef, ManifestGraph};
 use crate::hash::Hasher;
 use crate::instance::InstanceMeta;
 use crate::manifest::ManifestHash;
@@ -49,8 +59,8 @@ use crate::records::{ChainRecords, Composed};
 use crate::resource::ResourceMeta;
 use crate::types::{SlotId, bucketed_child_key, child_key};
 
-/// The kernel-reserved role of subintent nullifier substates under a
-/// signer's prefix.
+/// The kernel-reserved role of intent nullifier substates under an
+/// account's prefix.
 ///
 /// The top of the role space is the kernel's, as the bottom is the
 /// protocol vocabulary's and the middle is where packages number from.
@@ -94,6 +104,15 @@ pub const MARKER_CELL_BYTES: u32 = 96;
 /// producing node's target, on [`MARKER_CELL_BYTES`]'s terms.
 pub const CROSSING_CELL_BYTES: u32 = 256;
 
+/// The bound on accounts one intent may act as. A wire bound.
+///
+/// Each is a nullifier write and a sign-in judged at its own shard, and
+/// every one of those shards is one the transaction's core must wait
+/// on, so an intent acting as many accounts is one that runs whole on
+/// many shards. Eight admits every shape a party composes across its
+/// own accounts and holds the wait to a handful.
+pub const MAX_ACCOUNTS: usize = 8;
+
 // Held at compile time rather than by a test: every side is a constant,
 // so a kernel cell colliding with a package's own — or with another
 // kernel family — is a thing the build can refuse outright.
@@ -109,16 +128,15 @@ const _: () = assert!(COMMITTED_TX_SLOT.0 != ESCROW_RECORD_SLOT.0);
 const _: () = assert!(COMMITTED_TX_SLOT.0 != ESCROW_CLAIM_SLOT.0);
 
 /// A shaped opening an intent declares for something it cannot supply
-/// itself, which the composition carrying it fills.
+/// itself, which the intent composing it fills.
 ///
 /// Shaped, which is what the name is for: the declaration says what may
-/// arrive, and a binding that does not fit is refused rather than
-/// accepted and dealt with. Two things cross an intent boundary and
-/// both cross this way — **the declaration says what**, and its signer
-/// signs that; **the composition says whose**, and nothing about it is
-/// signed by the party who declared the socket. That split is the whole
-/// of what makes a subintent composable without its signer having met
-/// the composer.
+/// arrive, and wiring that does not fit is refused rather than accepted
+/// and dealt with. Two things cross an intent boundary and both cross
+/// this way — **the declaration says what**, and its signer signs that;
+/// **the composer says whose**, in wiring the composer signs and the
+/// declaring party never sees. That split is the whole of what makes an
+/// intent composable without its signer having met the composer.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum Socket {
     /// A value edge carrying exactly this resource, under the declaring
@@ -131,40 +149,56 @@ pub enum Socket {
         constraints: Vec<Constraint>,
     },
     /// A proof carrying exactly this claim, which this intent's own
-    /// nodes present through [`crate::EvidenceRef::Socket`].
+    /// nodes present through [`crate::EvidenceRef::Socket`] and which
+    /// its own wiring may grant onward into a member's socket.
     ///
     /// The claim is the declaration's, so a holder signs *which
     /// authority they are asking for* and never who supplies it — and
     /// admission presents that claim alone, never whatever else its
-    /// source carries, so a composition cannot smuggle authority into an
+    /// source carries, so a composer cannot smuggle authority into an
     /// intent its signer never offered.
     Authority(Claim),
+}
+
+/// One value edge an intent offers the intent composing it.
+///
+/// Value alone: there is no give that carries a claim, so authority has
+/// no channel upward and no field in which to write the hazard. What a
+/// composer may take from a member is exactly this list, by position —
+/// never a node of the member's graph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+pub enum Give {
+    /// An output of this intent's own graph that no node of it consumes.
+    Edge(EdgeRef),
+    /// A give of one of this intent's members, offered on: how a sealed
+    /// group exposes a product assembled beneath it.
+    Member(GiveRef),
 }
 
 /// The terms an intent is admissible under: the network it was declared
 /// for and the window it stands in.
 ///
 /// Its signer signs these with the rest of the declaration, so a
-/// composition can neither retarget an intent nor outlive the window the
+/// composer can neither retarget an intent nor outlive the window the
 /// signer offered it for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub struct IntentHeader {
     /// The network this intent is declared for.
     ///
     /// Signed by the intent's own signer rather than inherited from the
-    /// composition, so a subintent binds only into an envelope for the
-    /// network its signer named.
+    /// root, so a member binds only into a tree for the network its
+    /// signer named.
     pub network: NetworkId,
     /// The window's inclusive start, in weighted-time milliseconds.
     ///
     /// Milliseconds rather than a range type: what a clock reading
     /// *means* is the workspace's, and this crate holds the number its
-    /// signer signed. The envelope states its own window the same way.
+    /// signer signed.
     pub validity_start_ms: u64,
     /// The window's exclusive end.
     ///
     /// What ends the intent's admissibility, and so what ends the life
-    /// of the nullifier that makes a subintent once-only. A signer who
+    /// of the nullifier that makes an intent once-only. A signer who
     /// names no window is offering something forever.
     pub validity_end_ms: u64,
     /// What distinguishes this intent from an identical one.
@@ -178,15 +212,17 @@ pub struct IntentHeader {
     pub discriminator: u64,
 }
 
-/// One intent's declared form: a graph over typed sockets.
+/// One signed intent: what one party wants, and what it composes.
 ///
-/// Every intent has this shape, and its signer signs exactly this, so
-/// [`IntentDecl::hash`] is the intent's identity whatever composition
-/// later carries it. Outputs the graph
-/// does not consume internally are the intent's yields — the composition
-/// must bind every one to some intent's socket.
+/// Recursive. A leaf has no members; an intent with members composes
+/// them, and every intent with members is a composer whatever its
+/// depth. The root is the one nobody composes — it carries the terms
+/// and declares no sockets, since nothing above it could fill one. Its
+/// signer signs exactly this, so [`Intent::hash`] is the intent's
+/// identity whatever tree later carries it, and since `members` are
+/// hashes the identity commits to the whole subtree.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
-pub struct IntentDecl {
+pub struct Intent {
     /// What the intent is admissible under, as against what it does.
     ///
     /// Grouped rather than flat because these are the terms that bound
@@ -194,23 +230,58 @@ pub struct IntentDecl {
     /// then covers the header whole — a term added here cannot go
     /// unsigned.
     pub header: IntentHeader,
+    /// The accounts this intent acts as: each the owner of one of its
+    /// nullifiers, each signed in on its own shard under its own stored
+    /// rule against the keys that attest this intent, and each a claim
+    /// the intent's own nodes present and its wiring may grant. Never
+    /// empty. Inside the signed declaration, so the intent's own signer
+    /// consents to which accounts it acts as.
+    #[hbor(max = MAX_ACCOUNTS)]
+    pub accounts: Vec<PrincipalAddr>,
+    /// The signing-time terms. The root's, and refused on a member: a
+    /// function of the assembled manifest, which only the intent that
+    /// composes the whole tree can state. Admission reads nothing in it
+    /// — what a fee buys is the chain's question — and a chain refuses a
+    /// root that states none.
+    pub terms: Option<Terms>,
     /// The intent's invocation graph; arguments may reference the
-    /// sockets via [`crate::GraphArg::Socket`].
+    /// sockets via [`crate::GraphArg::Socket`] and the members' gives
+    /// via [`crate::GraphArg::Give`].
     pub graph: ManifestGraph,
     /// The sockets this intent declares. A value socket is consumed by
-    /// exactly one node argument; an authority socket is presented by as
-    /// many nodes as ask for it.
+    /// exactly one node argument or wired on to exactly one member's
+    /// socket; an authority socket is presented by as many nodes, and
+    /// granted on to as many members, as ask for it.
     #[hbor(max = MAX_SOCKETS)]
     pub sockets: Vec<Socket>,
+    /// The value this intent offers its composer. Each is consumed
+    /// exactly once above: by an argument of the composer's own graph,
+    /// by the composer's wiring into a sibling's socket, or by the
+    /// composer's own gives. Empty on the root, which has nobody to give
+    /// to.
+    #[hbor(max = MAX_SOCKETS)]
+    pub gives: Vec<Give>,
+    /// The intents this one composes, by hash. Signed, so the signature
+    /// commits to every member and transitively to the whole subtree.
+    #[hbor(max = MAX_INTENTS)]
+    pub members: Vec<IntentHash>,
+    /// How this intent fills its members' sockets: one list per member
+    /// in `members` order, one binding per socket that member declares.
+    /// Every source is this intent's own — its graph, its members'
+    /// gives, its own sockets and its own accounts — which is what
+    /// confines a grant to what the granting intent holds.
+    #[hbor(max = MAX_INTENTS)]
+    pub wiring: Vec<Vec<Binding>>,
 }
 
-const DOMAIN_SUBINTENT: &[u8] = b"hyperscale-vm/subintent";
+const DOMAIN_INTENT: &[u8] = b"hyperscale-vm/intent";
 const DOMAIN_ENVELOPE_TREE: &[u8] = b"hyperscale-vm/envelope-tree";
 
-impl IntentDecl {
-    /// The declaration's identity through the hasher seam: the header,
-    /// the graph hash, and every socket it declares, each one part
-    /// carrying its canonical encoding.
+impl Intent {
+    /// The intent's identity through the hasher seam: the header, the
+    /// accounts, the terms, the graph hash, every socket, every give,
+    /// every member's hash and the wiring, each part carrying its
+    /// canonical encoding.
     ///
     /// The fields are destructured rather than read one at a time, and
     /// the header enters whole through its own encoding, because
@@ -221,66 +292,103 @@ impl IntentDecl {
     ///
     /// # Panics
     ///
-    /// Hashed declarations pass the depth gate first, as
+    /// Hashed intents pass the depth gate first, as
     /// [`Value::canonical_bytes`](crate::types::Value::canonical_bytes)
     /// requires of the literals the graph hash feeds on.
     #[must_use]
     pub fn hash(&self, hasher: &dyn Hasher) -> IntentHash {
         let Self {
             header,
+            accounts,
+            terms,
             graph,
             sockets,
+            gives,
+            members,
+            wiring,
         } = self;
         let graph = graph.hash(hasher);
-        let mut parts: Vec<Vec<u8>> = Vec::with_capacity(2 + sockets.len());
-        parts.push(to_vec(header).expect("a header is three scalars"));
+        let mut parts: Vec<Vec<u8>> =
+            Vec::with_capacity(5 + sockets.len() + gives.len() + members.len());
+        parts.push(to_vec(header).expect("a header is scalars"));
+        parts.push(to_vec(accounts).expect("accounts are bounded addresses"));
+        parts.push(to_vec(terms).expect("terms are bounded scalars"));
         parts.push(graph.0.0.to_vec());
         for socket in sockets {
             parts.push(to_vec(socket).expect("a socket is shallow"));
         }
+        for give in gives {
+            parts.push(to_vec(give).expect("a give is two indices"));
+        }
+        for member in members {
+            parts.push(member.0.0.to_vec());
+        }
+        parts.push(to_vec(wiring).expect("wiring is bounded indices"));
         let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
-        IntentHash(hasher.hash(DOMAIN_SUBINTENT, &refs))
+        IntentHash(hasher.hash(DOMAIN_INTENT, &refs))
+    }
+
+    /// A leaf acting as `account` under `header`: a graph, no interface,
+    /// no members.
+    #[must_use]
+    pub fn leaf(header: IntentHeader, account: PrincipalAddr, graph: ManifestGraph) -> Self {
+        Self {
+            header,
+            accounts: vec![account],
+            terms: None,
+            graph,
+            sockets: Vec::new(),
+            gives: Vec::new(),
+            members: Vec::new(),
+            wiring: Vec::new(),
+        }
     }
 }
 
-/// What a composition puts in one socket.
+/// What a composer puts in one of a member's sockets.
 ///
-/// The composition's choice, covered by the envelope identity and never
-/// by the declaring intent's own hash — which is what lets one signed
-/// intent be carried by any composition that can fill its sockets.
+/// The composer's choice, signed by the composer and never by the
+/// declaring member — which is what lets one signed intent be carried
+/// by any composer that can fill its sockets. Every source is the
+/// composer's own; a composer names nothing inside a member.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub enum Binding {
-    /// The `output`-th edge of node `producer` inside `intent`.
-    Value {
-        /// The producing intent, by its position in the tree.
-        intent: u32,
-        /// The produced edge within that intent's graph.
-        edge: EdgeRef,
-    },
-    /// A claim `intent` supplies: proved by one of its nodes, or
-    /// granted from the account it acts as.
-    Authority {
-        /// The supplying intent, numbered as above.
-        intent: u32,
-        /// What in it stands behind the claim.
-        from: ClaimSource,
-    },
+    /// A value edge, for a value socket.
+    Value(ValueSource),
+    /// A claim, for an authority socket.
+    Authority(ClaimSource),
 }
 
-/// What inside the supplying intent stands behind an authority binding's
-/// claim.
+/// Where a composer takes the value it wires into a member's socket.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+pub enum ValueSource {
+    /// An output of the composer's own graph that no node of it
+    /// consumes.
+    Edge(EdgeRef),
+    /// A give of one of the composer's members — a sibling's product,
+    /// or the socket-owner's own, routed back to it.
+    Give(GiveRef),
+    /// One of the composer's own value sockets, wired straight through:
+    /// how a sealed group presents a member's need as its own.
+    Socket(u32),
+}
+
+/// What stands behind a claim a composer grants into a member's socket.
 ///
-/// Two things in an intent can, and they stand behind different claims.
-/// A node proves what it read state to verify — a badge in a vault, a
-/// component's own gate — and the claim is that node's verdict. An
-/// account proves nothing and needs to: its shard attested the keys that
-/// signed the intent, so the claim is the signature's, and it stands
-/// before any node runs.
+/// Three things in an intent can, and each is judged against what the
+/// intent holds. A node proves what it read state to verify — a badge
+/// in a vault, a component's own gate — and the claim is that node's
+/// verdict. An account proves nothing and needs to: its shard attests
+/// the keys that signed the intent, so the claim is the signature's, and
+/// it stands before any node runs. A socket carries a claim the composer
+/// itself received from above, granted on — how a claim reaches a
+/// distant descendant, re-granted at every level by someone who signed
+/// that level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub enum ClaimSource {
-    /// The claim node `producer` of that intent proves.
+    /// The claim node `producer` of the composer's own graph proves.
     Node(u32),
-    /// The account that intent acts as, granted by the signer who signed
+    /// An account the composer acts as, granted by the signer who signed
     /// it.
     ///
     /// The account is stated here rather than read off the intent, so a
@@ -288,66 +396,23 @@ pub enum ClaimSource {
     /// each other. Deriving it instead would make the field that decides
     /// whose authority this is one nobody wrote.
     Account(PrincipalAddr),
+    /// One of the composer's own authority sockets, granted on.
+    Socket(u32),
 }
 
-impl Binding {
-    /// The intent this binding sources from.
-    #[must_use]
-    pub const fn intent(self) -> u32 {
-        match self {
-            Self::Value { intent, .. } | Self::Authority { intent, .. } => intent,
-        }
-    }
-
-    /// The node within it, where the binding names one.
-    ///
-    /// A grant names none: an account's authority stands before any node
-    /// runs, so the socket it fills waits on nothing and the interleave
-    /// has no edge to draw.
-    #[must_use]
-    pub const fn producer(self) -> Option<u32> {
-        match self {
-            Self::Value { edge, .. } => Some(edge.producer),
-            Self::Authority {
-                from: ClaimSource::Node(producer),
-                ..
-            } => Some(producer),
-            Self::Authority {
-                from: ClaimSource::Account(_),
-                ..
-            } => None,
-        }
-    }
-}
-
-/// One intent bound into an envelope.
+/// The tree an envelope carries and admission runs over: every intent,
+/// in tree order, and the creation-fixed records their calls resolve
+/// against.
 ///
-/// Carries the signed declaration, the account the intent acts as, and
-/// one binding per socket. The bindings are the composer's choice and
-/// are covered by the envelope identity, never by the declaration's own
-/// hash — which is what lets one declaration be offered into many
-/// compositions and is why each carries a nullifier under its account.
-///
-/// The composition's own intent is one of these and is the first;
-/// what separates it is which signature attests it, which is the
-/// envelope's business rather than the tree's.
-#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
-pub struct Intent {
-    /// What this intent's account signed.
-    pub decl: IntentDecl,
-    /// The account this intent acts as — the owner of its nullifier.
-    pub account: PrincipalAddr,
-    /// The composition's binding for each socket.
-    #[hbor(max = MAX_SOCKETS)]
-    pub bindings: Vec<Binding>,
-}
-
-/// The bound envelope tree admission runs over: every intent the
-/// composition carries, the composer's own first.
+/// Tree order is preorder: the root first, then each member's subtree in
+/// the order its composer named it. Admission recovers the tree from
+/// the members each intent names and refuses a list in any other order
+/// — one walk, and a cycle, a repeated hash, an orphan and a second
+/// root all fall out of it.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct EnvelopeTree {
-    /// The intents, in envelope order. Never empty: a call body is at
-    /// least the composition's own intent.
+    /// The intents, in tree order. Never empty: a tree is at least its
+    /// root.
     #[hbor(max = MAX_INTENTS)]
     pub intents: Vec<Intent>,
     /// The creation-fixed records of the component targets the tree
@@ -371,55 +436,61 @@ pub struct EnvelopeTree {
 }
 
 impl EnvelopeTree {
-    /// Each intent attested by the key its own account derives.
+    /// Each intent attested by the keys its own accounts derive.
     ///
     /// A premise, not a fact: what the chain judges is the set the
     /// envelope's signatures actually carry, and that is the envelope's
     /// to state. Answers the question a preview asks — what would this
-    /// composition do if every account signed its own intent — and is
-    /// what a fixture means when it says nothing else. Never a commit
-    /// path, where the signatures are in hand and saying this instead
-    /// would admit a key no rule was asked about.
+    /// tree do if every account signed its own intent — and is what a
+    /// fixture means when it says nothing else. Never a commit path,
+    /// where the signatures are in hand and saying this instead would
+    /// admit a key no rule was asked about.
     #[must_use]
     pub fn assume_self_attested(&self) -> Vec<Vec<PrincipalAddr>> {
         self.intents
             .iter()
-            .map(|intent| vec![intent.account])
+            .map(|intent| intent.accounts.clone())
             .collect()
     }
 
-    /// A composition of one intent: a graph its own account signs, with
-    /// nothing offered into it.
+    /// A tree of one intent: a graph its own account signs, composing
+    /// nobody.
     ///
     /// The shape every transaction that composes with nobody has, which
     /// is most of them.
     #[must_use]
-    pub fn of_one(account: PrincipalAddr, decl: IntentDecl) -> Self {
+    pub fn of_one(intent: Intent) -> Self {
         Self {
-            intents: vec![Intent {
-                decl,
-                account,
-                bindings: Vec::new(),
-            }],
+            intents: vec![intent],
             instances: Vec::new(),
             resources: Vec::new(),
         }
     }
 
+    /// The root: the intent nobody composes, which carries the terms.
+    ///
+    /// # Panics
+    ///
+    /// On an empty tree, which no admission path accepts.
+    #[must_use]
+    pub fn root(&self) -> &Intent {
+        self.intents.first().expect("a tree is at least its root")
+    }
+
     /// How many nodes the tree lowers to, over every intent it carries
-    /// — the count of compute ceilings an envelope around it signs.
+    /// — the count of compute ceilings the root's terms sign.
     #[must_use]
     pub fn node_count(&self) -> usize {
         self.intents
             .iter()
-            .map(|intent| intent.decl.graph.nodes.len())
+            .map(|intent| intent.graph.nodes.len())
             .sum()
     }
 
     /// The tree's own identity — the fallback for callers that sign
-    /// nothing beyond the tree. A protocol envelope signing more (fee
-    /// terms, validity windows) derives its identity from
-    /// the full signed form and passes that to [`admit_tree`] instead.
+    /// nothing beyond the tree. A protocol envelope signing more derives
+    /// its identity from the full signed form and passes that to
+    /// [`admit_tree`] instead.
     ///
     /// # Panics
     ///
@@ -428,11 +499,9 @@ impl EnvelopeTree {
     /// requires of the literals the graph hashes feed on.
     #[must_use]
     pub fn hash(&self, hasher: &dyn Hasher) -> ManifestHash {
-        let mut parts: Vec<Vec<u8>> = Vec::with_capacity(2 + 3 * self.intents.len());
+        let mut parts: Vec<Vec<u8>> = Vec::with_capacity(2 + self.intents.len());
         for intent in &self.intents {
-            parts.push(intent.decl.hash(hasher).0.0.to_vec());
-            parts.push(intent.account.to_bytes().to_vec());
-            parts.push(to_vec(&intent.bindings).expect("bindings are flat"));
+            parts.push(intent.hash(hasher).0.0.to_vec());
         }
         // What the tree's calls resolve against is part of what was
         // composed, so two trees differing only here are two identities.
@@ -443,8 +512,9 @@ impl EnvelopeTree {
     }
 }
 
-/// The canonical nullifier key for a signed subintent under its signer:
-/// `signer_prefix | expiry_bucket | H(nullifier_role, subintent_hash,
+/// The canonical nullifier key for a signed intent under one of its
+/// accounts:
+/// `account_prefix | expiry_bucket | H(nullifier_role, intent_hash,
 /// expiry)`.
 ///
 /// The expiry is part of the identity rather than only of the value, so
@@ -454,23 +524,23 @@ impl EnvelopeTree {
 ///
 /// It is in the identity twice over — hashed into the body and, coarsely,
 /// leading the local half — so a nullifier answers *when* it stops being
-/// needed from its key alone, and one signer's nullifiers for one bucket
-/// are a contiguous leaf-key range for a sweep to walk. Both halves come
+/// needed from its key alone, and one account's nullifiers for one
+/// bucket are a contiguous leaf-key range for a sweep to walk. Both halves come
 /// from the one `expiry_ms` argument, so neither can drift from the
 /// other.
 #[must_use]
 pub fn nullifier_key(
     hasher: &dyn Hasher,
-    signer: impl Into<Address>,
-    subintent: IntentHash,
+    account: impl Into<Address>,
+    intent: IntentHash,
     expiry_ms: u64,
 ) -> SubstateKey {
     bucketed_child_key(
         hasher,
-        signer,
+        account,
         NULLIFIER_SLOT,
         SweepBucket::of(expiry_ms),
-        &[subintent.0.0.to_vec(), expiry_ms.to_le_bytes().to_vec()],
+        &[intent.0.0.to_vec(), expiry_ms.to_le_bytes().to_vec()],
     )
 }
 
@@ -707,8 +777,8 @@ pub struct Marker {
 /// The fact a marker records, and so the family it belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub enum Marked {
-    /// A subintent was spent, under its signer's prefix
-    /// ([`nullifier_key`]): what makes a committed subintent once-only,
+    /// An intent was spent, under one of its accounts' prefix
+    /// ([`nullifier_key`]): what makes a committed intent once-only,
     /// and what a signer writes to cancel one.
     Spent(IntentHash),
     /// The shard committed the transaction, under the shard's own owner
@@ -767,7 +837,7 @@ impl Marker {
     #[must_use]
     pub fn key(&self, hasher: &dyn Hasher, owner: impl Into<Address>) -> SubstateKey {
         match self.marks {
-            Marked::Spent(subintent) => nullifier_key(hasher, owner, subintent, self.expiry_ms),
+            Marked::Spent(intent) => nullifier_key(hasher, owner, intent, self.expiry_ms),
             Marked::Committed => committed_tx_key(hasher, owner, self.tx, self.expiry_ms),
             Marked::Claimed {
                 intent,
@@ -1002,33 +1072,49 @@ pub const fn crossing_expiry_ms(header: &IntentHeader) -> u64 {
     header.validity_end_ms.saturating_add(CROSSING_GRACE_MS)
 }
 
-/// One admitted intent: its signed identity, its signer, and the
-/// nullifier key whose creation write makes it once-only.
+/// One nullifier an admitted intent writes: under which account, and
+/// at which cell.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct IntentRecord {
-    /// The signed declaration's hash.
-    pub intent: IntentHash,
-    /// The account the intent acts as.
+pub struct Nullifier {
+    /// The account the intent acts as, whose prefix the cell sits under.
     pub account: PrincipalAddr,
     /// The canonical nullifier key under that account.
-    pub nullifier: SubstateKey,
-    /// When the nullifier stops being owed — the intent's own window
-    /// end plus the grace. Carried beside the key because the cell's
+    pub key: SubstateKey,
+}
+
+/// One admitted intent: its signed identity and the nullifier keys
+/// whose creation writes make it once-only.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IntentRecord {
+    /// The signed intent's hash.
+    pub intent: IntentHash,
+    /// One nullifier per account the intent acts as, in the order the
+    /// intent names them.
+    pub nullifiers: Vec<Nullifier>,
+    /// When the nullifiers stop being owed — the intent's own window
+    /// end plus the grace. Carried beside the keys because the cell's
     /// value states it and the key derives from it.
     pub expiry_ms: u64,
 }
 
-/// An admitted envelope tree: the flattened routing manifest with its
-/// identity, plus the nullifier record of every intent it carries.
+impl IntentRecord {
+    /// The accounts the intent acts as, in the order it names them.
+    pub fn accounts(&self) -> impl Iterator<Item = PrincipalAddr> + '_ {
+        self.nullifiers.iter().map(|nullifier| nullifier.account)
+    }
+}
+
+/// An admitted tree: the flattened routing manifest with its identity,
+/// plus the nullifier record of every intent it carries.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AdmittedTree {
     /// The lowered manifest and the identity rooting fresh derivations.
     pub admitted: Admitted,
-    /// One record per intent, in envelope order.
+    /// One record per intent, in tree order.
     pub intents: Vec<IntentRecord>,
 }
 
-/// The tree's canonical bytes — what an envelope's body carries.
+/// The tree's canonical bytes — what an envelope carries.
 ///
 /// The vocabulary owns its own codec: a tree is an ordinary HBOR value,
 /// and the encoding a composer writes is the one admission decodes.
@@ -1042,15 +1128,18 @@ pub fn encode_tree(tree: &EnvelopeTree) -> Vec<u8> {
     to_vec(tree).expect("a tree within its caps encodes")
 }
 
-/// Admit a bound envelope tree: validate every intent, interleave the
-/// tree into one flattened manifest over the sockets its intents
-/// declare, and derive the subintent nullifier records.
+/// Admit a tree.
+///
+/// Validates every intent, recovers the tree from the members each
+/// names, resolves every interface to the nodes that fill it,
+/// interleaves the tree into one flattened manifest, and derives the
+/// nullifier records.
 ///
 /// `identity` is the signed envelope's hash — the root of every fresh
 /// derivation. Distinct signed envelopes never mint the same fresh key,
 /// even when they carry the same tree. `attested_by` carries the
-/// principals whose keys signed each intent, in envelope order; the
-/// account each intent acts as is the tree's own.
+/// principals whose keys signed each intent, in tree order; the
+/// accounts each intent acts as are the intent's own.
 ///
 /// # Errors
 ///
@@ -1083,48 +1172,63 @@ pub fn admit_tree(
     if tree.intents.len() > MAX_INTENTS {
         return Err(AdmissionError::TooManyIntents);
     }
-    // Ahead of every declaration hash, for the reason `admit` checks
-    // ahead of the graph hash.
+    // Ahead of every intent hash, for the reason `admit` checks ahead
+    // of the graph hash.
     for intent in &tree.intents {
-        check_value_depth(&intent.decl.graph)?;
+        check_value_depth(&intent.graph)?;
     }
     check_instance_value_depth(&tree.instances)?;
-    // The declaration hash alone. It is what names every escrow record
-    // and claim the tree derives, and it carries no account — so two
-    // intents that hash alike derive one key for two edges, the receipt
-    // attests both crossings against it, and the second disposal reads a
-    // cell the first deleted.
+    // The intent hash alone. It is what names every escrow record and
+    // claim the tree derives, and it is what a composer names a member
+    // by — so two intents that hash alike derive one key for two edges
+    // and one member for two intents.
     let mut seen = BTreeSet::new();
-    let mut records = Vec::with_capacity(tree.intents.len());
+    let mut identities = Vec::with_capacity(tree.intents.len());
     for (index, intent) in tree.intents.iter().enumerate() {
-        let hash = intent.decl.hash(hasher);
+        let hash = intent.hash(hasher);
         if !seen.insert(hash) {
             return Err(AdmissionError::DuplicateIntent {
                 index: u32::try_from(index).expect("bounded by MAX_INTENTS"),
             });
         }
-        let expiry_ms = nullifier_expiry_ms(&intent.decl.header);
-        records.push(IntentRecord {
-            intent: hash,
-            account: intent.account,
-            nullifier: nullifier_key(hasher, intent.account, hash, expiry_ms),
-            expiry_ms,
-        });
+        identities.push(hash);
     }
+    let resolved = resolve_tree(&tree.intents, &identities)?;
+    let records: Vec<IntentRecord> = tree
+        .intents
+        .iter()
+        .zip(&identities)
+        .map(|(intent, hash)| {
+            let expiry_ms = nullifier_expiry_ms(&intent.header);
+            IntentRecord {
+                intent: *hash,
+                nullifiers: intent
+                    .accounts
+                    .iter()
+                    .map(|account| Nullifier {
+                        account: *account,
+                        key: nullifier_key(hasher, *account, *hash, expiry_ms),
+                    })
+                    .collect(),
+                expiry_ms,
+            }
+        })
+        .collect();
 
     let views: Vec<IntentView<'_>> = tree
         .intents
         .iter()
         .zip(&records)
         .zip(attested_by)
-        .map(|((intent, record), attested_by)| IntentView {
-            graph: &intent.decl.graph,
-            sockets: &intent.decl.sockets,
-            bindings: &intent.bindings,
-            account: intent.account,
+        .zip(resolved.views())
+        .map(|(((intent, record), attested_by), interface)| IntentView {
+            graph: &intent.graph,
+            sockets: &intent.sockets,
+            interface,
+            accounts: &intent.accounts,
             attested_by,
             identity: record.intent,
-            expiry_ms: crossing_expiry_ms(&intent.decl.header),
+            expiry_ms: crossing_expiry_ms(&intent.header),
         })
         .collect();
     // The envelope's own records, layered behind what the chain already
@@ -1144,13 +1248,13 @@ pub fn admit_tree(
         .collect();
     let grants = PresentedGrants::from_presented(hasher, &tree.resources);
     let mut admitted = admit_intents(&views, identity, &resolvable, &presented, &grants, hasher)?;
-    // One exclusive nullifier creation per intent. No signature declared
-    // these, so they belong to no frame — but they are the once-only
-    // execution guarantee, so they are folded into the declaration here
-    // rather than by a later pass.
-    for record in &records {
+    // One exclusive nullifier creation per account per intent. No
+    // signature declared these, so they belong to no frame — but they
+    // are the once-only execution guarantee, so they are folded into the
+    // declaration here rather than by a later pass.
+    for nullifier in records.iter().flat_map(|record| &record.nullifiers) {
         admitted.push_kernel_effect(Effect {
-            target: EffectTarget::Point(record.nullifier),
+            target: EffectTarget::Point(nullifier.key),
             mode: Mode::Write { moves: Moves::Both },
         });
     }

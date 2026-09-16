@@ -10,8 +10,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    Claim, EnvelopeTree, IntentDecl, IntentHeader, ManifestGraph, StoredRule, TestHasher,
-    admit_tree, explain_refusal,
+    Claim, EnvelopeTree, Intent, IntentHeader, ManifestGraph, StoredRule, TestHasher, admit_tree,
+    explain_refusal,
 };
 use hyperscale_vm_harness::driver::{test_hash, vault};
 use hyperscale_vm_kernel::{MemoryStore, OwnerSet, Substates};
@@ -35,14 +35,7 @@ const HEADER: IntentHeader = IntentHeader {
 };
 
 fn single_intent(account: PrincipalAddr, graph: ManifestGraph) -> EnvelopeTree {
-    EnvelopeTree::of_one(
-        account,
-        IntentDecl {
-            header: HEADER,
-            graph,
-            sockets: Vec::new(),
-        },
-    )
+    EnvelopeTree::of_one(Intent::leaf(HEADER, account, graph))
 }
 
 /// Alice funded, every genesis component sealed.

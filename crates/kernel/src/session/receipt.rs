@@ -702,8 +702,9 @@ impl KernelSession {
             Phase::Produced(movements) => movements,
             Phase::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel_by_node)),
         };
-        // Committing spends every subintent: the nullifier cell records
-        // the consuming transaction. The write goes into the same layer
+        // Committing spends every intent under every account it acts
+        // as: the nullifier cell records the consuming transaction. The
+        // write goes into the same layer
         // the rest of the transaction wrote into, so an abort below
         // discards it exactly as it discards everything else, and a
         // commit merges it once — a spend cannot outlive the transaction
@@ -714,9 +715,11 @@ impl KernelSession {
         // transaction ran, as the outbound effect record every other
         // operation reaches other shards through.
         for record in self.nullifiers.clone() {
-            if self.applies.covers(record.nullifier.owner) {
-                self.store
-                    .write(record.nullifier, self.spend_record(&record))?;
+            for nullifier in &record.nullifiers {
+                if self.applies.covers(nullifier.key.owner) {
+                    self.store
+                        .write(nullifier.key, self.spend_record(&record))?;
+                }
             }
         }
         // The escrow cells this execution owes, into the same layer and
@@ -751,7 +754,12 @@ impl KernelSession {
         let kernel_cells: Vec<(SubstateKey, Vec<u8>)> = self
             .nullifiers
             .iter()
-            .map(|record| (record.nullifier, self.spend_record(record)))
+            .flat_map(|record| {
+                record
+                    .nullifiers
+                    .iter()
+                    .map(|nullifier| (nullifier.key, self.spend_record(record)))
+            })
             .chain(self.crossings.clone())
             .collect();
         for (key, value) in kernel_cells {

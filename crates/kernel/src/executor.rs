@@ -874,7 +874,8 @@ fn created_cells(entry: &BatchTx) -> Vec<(SubstateKey, Outcome)> {
     entry
         .nullifiers
         .iter()
-        .map(|record| record.nullifier)
+        .flat_map(|record| &record.nullifiers)
+        .map(|nullifier| nullifier.key)
         .map(|key| (key, Outcome::NullifierSpent { key }))
         .chain(
             entry

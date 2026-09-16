@@ -1,18 +1,19 @@
 //! Composition: what a signed form is, before anything is judged.
 //!
 //! Shape-agnostic by design. A bare graph is one intent with no sockets
-//! and nothing offered into it, a tree is several joined through the sockets they
-//! declare, and nothing here reads a signature — bindings, socket
-//! consumption, the deterministic interleave over the sockets each node
-//! names, and the bounds an envelope's own inputs have to clear before
-//! any of it runs.
+//! and nothing offered into it, a tree is several joined through the
+//! interfaces they declare and resolved to the nodes that fill them,
+//! and nothing here reads a signature — fills, socket consumption, the
+//! deterministic interleave over the sockets and gives each node names,
+//! and the bounds an envelope's own inputs have to clear before any of
+//! it runs.
 
 use hyperscale_vm_types::{IntentHash, PrincipalAddr, ResourceAddr};
 
+use super::tree::Interface;
 use super::{AdmissionError, MAX_SOCKETS};
-use crate::claim::Claim;
-use crate::envelope::{Binding, ClaimSource, Socket};
-use crate::graph::{Constraint, GraphArg, ManifestGraph};
+use crate::envelope::Socket;
+use crate::graph::{Constraint, EdgeRef, GraphArg, ManifestGraph};
 use crate::hash::Hash32;
 use crate::instance::InstanceMeta;
 use crate::manifest::{Bounds, NodeInput};
@@ -163,24 +164,96 @@ fn check_constraints(
     Ok(Bounds { min, max })
 }
 
+/// What fills one socket, followed to the node or the account that
+/// ultimately stands behind it.
+///
+/// The tree resolves every composer's wiring to this before anything
+/// is ordered or lowered, so the checker below sees a flat list of
+/// intents whose sockets are filled from named nodes — the same view a
+/// bare graph presents with no sockets at all.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Fill {
+    /// The `output`-th edge of node `producer` inside `intent`.
+    Value {
+        /// The producing intent, by its position in the tree.
+        intent: u32,
+        /// The produced edge within that intent's graph.
+        edge: EdgeRef,
+        /// The constraints of every socket the edge passed through on
+        /// its way here, each signed by the intent that declared it.
+        /// Bound beside the consuming socket's own.
+        through: Vec<Constraint>,
+    },
+    /// A claim `intent` stands behind: proved by one of its nodes, or
+    /// granted from an account it acts as.
+    Authority {
+        /// The supplying intent, numbered as above.
+        intent: u32,
+        /// What in it stands behind the claim.
+        from: Proven,
+    },
+}
+
+/// What inside the supplying intent stands behind a filled authority
+/// socket.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Proven {
+    /// The claim node `producer` of that intent proves.
+    Node(u32),
+    /// An account that intent acts as, granted by the signer who signed
+    /// it: the account's shard attested the keys, so the claim stands
+    /// before any node runs.
+    Account(PrincipalAddr),
+}
+
+impl Fill {
+    /// The intent this fill sources from.
+    pub(crate) const fn intent(&self) -> u32 {
+        match self {
+            Self::Value { intent, .. } | Self::Authority { intent, .. } => *intent,
+        }
+    }
+
+    /// The node within it, where the fill names one.
+    ///
+    /// A grant names none: an account's authority stands before any node
+    /// runs, so the socket it fills waits on nothing and the interleave
+    /// has no edge to draw.
+    pub(crate) const fn producer(&self) -> Option<u32> {
+        match self {
+            Self::Value { edge, .. } => Some(edge.producer),
+            Self::Authority {
+                from: Proven::Node(producer),
+                ..
+            } => Some(*producer),
+            Self::Authority {
+                from: Proven::Account(_),
+                ..
+            } => None,
+        }
+    }
+}
+
 /// One intent as the shared admission checker consumes it.
 pub struct IntentView<'a> {
     pub(crate) graph: &'a ManifestGraph,
     pub(crate) sockets: &'a [Socket],
-    pub(crate) bindings: &'a [Binding],
-    /// The account this intent acts as: the owner of its nullifier, the
-    /// owner of the `auth` cell its sign-in is judged against, and the
-    /// subject its signature resolves to.
-    pub(crate) account: PrincipalAddr,
+    /// What fills this intent's sockets, and where its members' gives
+    /// come from, resolved by the tree.
+    pub(crate) interface: &'a Interface,
+    /// The accounts this intent acts as: the owners of its nullifiers,
+    /// the owners of the `auth` cells its sign-ins are judged against,
+    /// and the subjects its signature resolves to.
+    pub(crate) accounts: &'a [PrincipalAddr],
     /// The principals whose keys attested this intent.
     ///
-    /// Separate from the account, and that separation is the whole of
+    /// Separate from the accounts, and that separation is the whole of
     /// what a sign-in decides: a key reaching for an account it does not
     /// derive is admissible here and refused by that account's own shard,
     /// which is what lets an account's rule name somebody else's key.
     pub(crate) attested_by: &'a [PrincipalAddr],
-    /// What this intent's own signer signed: the declaration's hash for
-    /// an intent of a tree, and the graph's own for a bare one.
+    /// What this intent's own signer signed: the intent's hash for an
+    /// intent of a tree, and the graph's own for a bare one.
     ///
     /// Carried so a cell keyed by a node can be keyed by content that
     /// node's signer chose. A transaction hash covers a whole
@@ -196,37 +269,39 @@ pub struct IntentView<'a> {
 }
 
 impl<'a> IntentView<'a> {
-    /// A view for ordering alone: the interleave and the binding checks
-    /// read the graph, the sockets and the bindings, and nothing else.
+    /// A view for ordering alone: the interleave and the fill checks
+    /// read the graph, the sockets and the interface, and nothing else.
     ///
-    /// The signer and the identity are what admission adds, and a view
-    /// built here reaches neither — which is why they are stated once,
-    /// here, rather than as a placeholder at each call site that would
-    /// read as a fact about the intent.
+    /// The accounts and the identity are what admission adds, and a
+    /// view built here reaches neither — which is why they are stated
+    /// once, here, rather than as a placeholder at each call site that
+    /// would read as a fact about the intent.
     pub(crate) const fn for_ordering(
         graph: &'a ManifestGraph,
         sockets: &'a [Socket],
-        bindings: &'a [Binding],
+        interface: &'a Interface,
     ) -> Self {
         Self {
             graph,
             sockets,
-            bindings,
-            account: PrincipalAddr::new([0; 31]),
+            interface,
+            accounts: &[],
             attested_by: &[],
             identity: IntentHash(Hash32([0; 32])),
             expiry_ms: 0,
         }
     }
+
+    /// The fill of `socket`, where the intent declares one.
+    pub(crate) fn fill(&self, socket: u32) -> Option<&'a Fill> {
+        self.interface.fills.get(usize::try_from(socket).ok()?)
+    }
 }
 
-/// The composition's own intent, which every envelope's first intent is
-/// and which is the only one whose signer has seen the whole envelope.
-const COMPOSITION: u32 = 0;
-
-/// Bindings and parameter consumption, intent by intent: one binding
-/// per socket, every binding naming a real source, every
-/// parameter consumed by exactly one node argument.
+/// Fills and parameter consumption, intent by intent: one fill per
+/// socket, every fill naming a real source, every socket consumed by
+/// exactly one node argument or pass-through where it carries value and
+/// by at least one where it carries authority.
 pub(super) fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), AdmissionError> {
     for (index, intent) in intents.iter().enumerate() {
         if intent.sockets.len() > MAX_SOCKETS {
@@ -235,43 +310,44 @@ pub(super) fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), Admission
             });
         }
         let intent_index = u32::try_from(index).expect("intents are bounded by MAX_INTENTS");
-        if intent.bindings.len() != intent.sockets.len() {
+        let fills = &intent.interface.fills;
+        if fills.len() != intent.sockets.len() {
             return Err(AdmissionError::BindingArity {
                 intent: intent_index,
                 expected: intent.sockets.len(),
-                found: intent.bindings.len(),
+                found: fills.len(),
             });
         }
-        for (position, binding) in intent.bindings.iter().enumerate() {
+        for (position, fill) in fills.iter().enumerate() {
             let socket = u32::try_from(position).expect("bounded by MAX_SOCKETS");
             let unknown = || AdmissionError::UnknownBinding {
                 intent: intent_index,
                 socket,
             };
-            let Some(source) = usize::try_from(binding.intent())
+            let Some(source) = usize::try_from(fill.intent())
                 .ok()
                 .and_then(|source| intents.get(source))
             else {
                 return Err(unknown());
             };
-            // A binding naming a node is bounded by that intent's graph;
-            // a grant names none, and what bounds it is `check_grant`.
-            if let Some(producer) = binding.producer() {
+            // A fill naming a node is bounded by that intent's graph; a
+            // grant names none, and what bounded it was the tree.
+            if let Some(producer) = fill.producer() {
                 let producer = usize::try_from(producer).unwrap_or(usize::MAX);
                 if producer >= source.graph.nodes.len() {
                     return Err(unknown());
                 }
             }
-            // The binding's channel against the socket's declared one,
-            // judged here so every later destructure over the pair holds
-            // by construction — and so the refusal names the actual
-            // mismatch instead of whichever downstream check the wrong
-            // half falls out of.
+            // The fill's channel against the socket's declared one. The
+            // tree refuses the mismatch where the wiring is read, so
+            // every later destructure over the pair holds by
+            // construction; held here too, since a bare graph's view is
+            // built by hand.
             let declared = &intent.sockets[position];
             let agreed = matches!(
-                (declared, binding),
-                (Socket::Value { .. }, Binding::Value { .. })
-                    | (Socket::Authority(_), Binding::Authority { .. })
+                (declared, fill),
+                (Socket::Value { .. }, Fill::Value { .. })
+                    | (Socket::Authority(_), Fill::Authority { .. })
             );
             if !agreed {
                 return Err(AdmissionError::SocketKindMismatch {
@@ -281,26 +357,11 @@ pub(super) fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), Admission
                         Socket::Value { .. } => "value",
                         Socket::Authority(_) => "authority",
                     },
-                    offered: match binding {
-                        Binding::Value { .. } => "an edge",
-                        Binding::Authority { .. } => "a proof",
+                    offered: match fill {
+                        Fill::Value { .. } => "an edge",
+                        Fill::Authority { .. } => "a proof",
                     },
                 });
-            }
-            if let (
-                Socket::Authority(wanted),
-                Binding::Authority {
-                    intent: granter,
-                    from: ClaimSource::Account(account),
-                },
-            ) = (declared, *binding)
-            {
-                check_grant(
-                    (granter, source.account),
-                    account,
-                    *wanted,
-                    (intent_index, socket),
-                )?;
             }
         }
         let mut uses = vec![0u32; intent.sockets.len()];
@@ -313,6 +374,9 @@ pub(super) fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), Admission
                     *count += 1;
                 }
             }
+        }
+        for (count, wired) in uses.iter_mut().zip(&intent.interface.wired_uses) {
+            *count += wired;
         }
         for (position, count) in uses.iter().enumerate() {
             let socket = u32::try_from(position).expect("bounded by MAX_SOCKETS");
@@ -335,44 +399,6 @@ pub(super) fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), Admission
         }
     }
 
-    Ok(())
-}
-
-/// Judge one grant: the composition lending the account it acts as into
-/// another intent's declared authority socket.
-///
-/// Three things, and the first two are the whole of the guarantee. Only
-/// the composition's signer has seen every intent hash the envelope
-/// carries, so only they can know what their own authority is being
-/// spent on; and an account's claim is held by the intent that acts as
-/// it, so the granted account is judged against the granting intent's
-/// own rather than taken on the composer's word. Without the second, a
-/// composer naming a stranger would mint that stranger's authority out
-/// of nothing. The socket's own declaration then fixes which claim may
-/// arrive, as it does for a proof.
-fn check_grant(
-    (granter, holds): (u32, PrincipalAddr),
-    account: PrincipalAddr,
-    wanted: Claim,
-    (intent, socket): (u32, u32),
-) -> Result<(), AdmissionError> {
-    if granter != COMPOSITION {
-        return Err(AdmissionError::UnscopedGrant {
-            intent,
-            socket,
-            granter,
-        });
-    }
-    if holds != account {
-        return Err(AdmissionError::GrantNotHeld {
-            intent,
-            socket,
-            account,
-        });
-    }
-    if wanted != Claim::of_subject(account.address()) {
-        return Err(AdmissionError::GrantClaimMismatch { intent, socket });
-    }
     Ok(())
 }
 
@@ -401,27 +427,29 @@ pub fn interleave(
             let Some(node) = intent.graph.nodes.get(next) else {
                 continue;
             };
-            // Every socket this node reaches, whichever way it reaches
-            // one: an argument consuming the edge that fills it, and
-            // evidence presenting the proof that does. A socket filled
-            // from another intent's node is a dependency on it, and a
-            // proof left out of this scan would let a node present a
-            // claim proven after it ran.
-            for socket in node.sockets() {
-                // An out-of-range socket carries no dependency; the
-                // node check below rejects it.
-                let Some(binding) = usize::try_from(socket)
-                    .ok()
-                    .and_then(|position| intent.bindings.get(position))
-                else {
-                    continue;
-                };
-                // A grant stands before any node runs, so the socket
-                // it fills waits on nothing.
-                let Some(producer) = binding.producer() else {
-                    continue;
-                };
-                let source = usize::try_from(binding.intent()).unwrap_or(usize::MAX);
+            // Every socket and every give this node reaches, whichever
+            // way it reaches one: an argument consuming the edge that
+            // fills a socket or that a member gives, and evidence
+            // presenting the proof that fills a socket. Each is a
+            // dependency on the node behind it, and a proof left out of
+            // this scan would let a node present a claim proven after
+            // it ran.
+            //
+            // An out-of-range reference carries no dependency; the node
+            // check below rejects it. A grant stands before any node
+            // runs, so the socket it fills waits on nothing.
+            let waits_on = node
+                .sockets()
+                .filter_map(|socket| {
+                    let fill = intent.fill(socket)?;
+                    Some((fill.intent(), fill.producer()?))
+                })
+                .chain(node.gives().filter_map(|give| {
+                    let yielded = intent.interface.give(give)?;
+                    Some((yielded.intent, yielded.edge.producer))
+                }));
+            for (source, producer) in waits_on {
+                let source = usize::try_from(source).unwrap_or(usize::MAX);
                 let producer = usize::try_from(producer).unwrap_or(usize::MAX);
                 if cursor
                     .get(source)

@@ -63,10 +63,10 @@ pub use dsl::{
 };
 pub use envelope::{
     AdmittedTree, Binding, COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, ClaimSource, CrossingCell,
-    CrossingSite, ESCROW_CLAIM_SLOT, ESCROW_RECORD_SLOT, EnvelopeTree, Intent, IntentDecl,
-    IntentHeader, IntentRecord, MARKER_CELL_BYTES, MAX_INTENTS, Marked, Marker, NULLIFIER_SLOT,
-    Socket, admit_tree, committed_tx_key, crossing_expiry_ms, encode_tree, escrow_claim_key,
-    escrow_record_key, nullifier_expiry_ms, nullifier_key,
+    CrossingSite, ESCROW_CLAIM_SLOT, ESCROW_RECORD_SLOT, EnvelopeTree, Give, Intent, IntentHeader,
+    IntentRecord, MARKER_CELL_BYTES, MAX_ACCOUNTS, MAX_INTENTS, Marked, Marker, NULLIFIER_SLOT,
+    Nullifier, Socket, ValueSource, admit_tree, committed_tx_key, crossing_expiry_ms, encode_tree,
+    escrow_claim_key, escrow_record_key, nullifier_expiry_ms, nullifier_key,
 };
 pub use explain::{
     address_text, claim_text, explain, explain_admission, explain_admission_tree, explain_method,
@@ -77,7 +77,8 @@ pub use footprint::{
     footprint,
 };
 pub use graph::{
-    Constraint, EdgeRef, EvidenceRef, GraphArg, GraphNode, MAX_EVIDENCE_PER_NODE, ManifestGraph,
+    Constraint, EdgeRef, EvidenceRef, GiveRef, GraphArg, GraphNode, MAX_EVIDENCE_PER_NODE,
+    ManifestGraph,
 };
 pub use hash::{Hash32, Hasher, TestHasher};
 pub use hyperscale_vm_types::{

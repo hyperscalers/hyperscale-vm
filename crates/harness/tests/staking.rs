@@ -19,7 +19,7 @@ use std::sync::LazyLock;
 
 use hyperscale_vm_effects::vocabulary::CONFIG;
 use hyperscale_vm_effects::{
-    AdmissionError, EnvelopeTree, Hash32, Hasher, InstanceMeta, IntentDecl, IntentHeader,
+    AdmissionError, EnvelopeTree, Hash32, Hasher, InstanceMeta, Intent, IntentHeader,
     ManifestGraph, PackageHash, PrefixShardResolver, Records, ResourceRecord, TestHasher, Value,
     admit_tree, child_key, holdings_collection, instance_data_key, per_shard, resource_record_key,
 };
@@ -317,14 +317,7 @@ fn register_graph(validator: u64) -> ManifestGraph {
 }
 
 fn single_intent(account: PrincipalAddr, graph: ManifestGraph) -> EnvelopeTree {
-    EnvelopeTree::of_one(
-        account,
-        IntentDecl {
-            header: TEST_HEADER,
-            graph,
-            sockets: Vec::new(),
-        },
-    )
+    EnvelopeTree::of_one(Intent::leaf(TEST_HEADER, account, graph))
 }
 
 /// Admit and route one envelope into its batch entry.

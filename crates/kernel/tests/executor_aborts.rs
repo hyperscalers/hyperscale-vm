@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use hyperscale_vm_effects::{
     Declaration, DeclaredAccess, Hash32, Hasher, IntentHash, IntentRecord, IssuanceGrant, Issued,
-    Marked, Marker, PackageHash, ResourceKind, SlotId, TestHasher, child_key, nullifier_key,
+    Marked, Marker, Nullifier, PackageHash, ResourceKind, SlotId, TestHasher, child_key,
+    nullifier_key,
 };
 use hyperscale_vm_kernel::{
     BatchError, BatchTx, Capability, EnvInputs, ExecutionMode, GuestRunner, Job, KernelSession,
@@ -1124,13 +1125,15 @@ fn a_transaction_that_lost_value_aborts_beside_one_that_did_not() {
     }
 }
 
-/// The record a spend carries: the subintent, its signer's cell, and
+/// The record a spend carries: the intent, its account's cell, and
 /// when the record stops being owed.
-const fn nullifier_record(intent: IntentHash, nullifier: SubstateKey) -> IntentRecord {
+fn nullifier_record(intent: IntentHash, nullifier: SubstateKey) -> IntentRecord {
     IntentRecord {
         intent,
-        account: PrincipalAddr::new([0x99; 31]),
-        nullifier,
+        nullifiers: vec![Nullifier {
+            account: PrincipalAddr::new([0x99; 31]),
+            key: nullifier,
+        }],
         expiry_ms: TEST_EXPIRY_MS,
     }
 }

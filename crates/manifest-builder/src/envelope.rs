@@ -1,21 +1,25 @@
-//! The envelope tier: intents composed along the sockets they declare.
+//! The envelope tier: a root intent composing the members it wires.
 //!
 //! A composition is addition *between* graphs. Each intent is written on
 //! its own — an [`IntentBuilder`] is a [`TypedBuilder`] that can also
-//! declare sockets and offer what fills them — and the
+//! declare sockets and export what fills them — and the
 //! [`EnvelopeBuilder`] joins them by wiring one intent's offering to
-//! another's socket. Nothing an intent contains is rewritten to make a
-//! composition fit, which is what lets a subintent's signer sign a
-//! declaration and have it mean the same thing in whatever envelope
-//! later carries it.
+//! another's socket. Nothing a member contains is rewritten to make a
+//! composition fit, which is what lets a member's signer sign a
+//! declaration and have it mean the same thing in whatever tree later
+//! carries it. What the root's graph takes from a member arrives as a
+//! give argument, written into the root when the tree is built, since
+//! the root is signed last and after everything it composes.
 //!
 //! The wiring is done from handles rather than from indices. One
 //! declared socket has two handles, one per side: inside the intent it
 //! is the [`SocketRef`] its own graph names it by, and outside it is an
 //! [`OpenSocket`], which arrives when the intent enters an envelope.
-//! What fills one is an [`Offered`], answered by exporting an edge or
-//! offering a proof. All three name the intent they came from, so a
-//! binding cannot reach an intent or a node that does not exist.
+//! What fills one is an [`Offered`], answered by exporting an edge,
+//! offering a proof, or granting an account. All three name the intent
+//! they came from, so a binding cannot reach an intent or a node that
+//! does not exist — and authority is offered by the root alone, since a
+//! member's proof never reaches its composer.
 //!
 //! An intent enters an envelope one of two ways, and both hand back open
 //! sockets the same way. [`EnvelopeBuilder::seal`] takes one the composer wrote.
@@ -35,8 +39,8 @@ use std::ops::{Deref, DerefMut};
 
 use hyperscale_vm_effects::{
     Binding, ChainRecords, Claim, ClaimSource, Constraint, EdgeRef, EnvelopeTree, EvidenceRef,
-    GraphArg, Hasher, InstanceMeta, Intent, IntentDecl, IntentHeader, MAX_SOCKETS, MAX_VALUE_DEPTH,
-    ManifestGraph, ResourceMeta, Socket,
+    Give, GiveRef, GraphArg, Hasher, InstanceMeta, Intent, IntentHeader, MAX_SOCKETS,
+    MAX_VALUE_DEPTH, ManifestGraph, ResourceMeta, Socket, ValueSource,
 };
 use hyperscale_vm_types::{MAX_INTENTS, PrincipalAddr, ResourceAddr};
 
@@ -80,6 +84,11 @@ pub enum EnvelopeError {
     /// this one is the one that would have to offer it.
     #[error("a proof from a socket is not this intent's to offer")]
     SocketProofOffered,
+    /// A proof offered by a member. Authority flows down the tree and
+    /// never up or sideways: what a member proves is its own, and the
+    /// root that composes it cannot present it or pass it to a sibling.
+    #[error("a member's proof is not its composer's to offer")]
+    ProofOfferedUpward,
     /// A handle from a different envelope at a wiring — a socket or an
     /// offering is filled within the envelope that opened it.
     #[error("a socket is filled within the envelope that opened it")]
@@ -234,8 +243,9 @@ impl Arity for DeclaredBy {
     }
 }
 
-/// What one intent hands the composition to fill a socket with: an edge
-/// it exported, or a proof one of its nodes mints.
+/// What one intent hands the composer to fill a socket with: an edge
+/// it exported, a proof one of its nodes mints, or the account it acts
+/// as.
 ///
 /// Affine like the [`OpenSocket`] it answers: one offering fills one
 /// socket, so wiring the same handle into two has no spelling — which is
@@ -255,8 +265,13 @@ pub struct Offered {
 /// What an offering names.
 #[derive(Clone, Copy, Debug)]
 enum Offering {
+    /// An edge of the root's graph.
     Edge(EdgeRef),
+    /// A give of a member, by its position in that member's gives.
+    Give(u32),
+    /// A proof a node of the root's graph mints.
     Proof(u32),
+    /// The account the root acts as.
     Grant,
 }
 
@@ -298,6 +313,12 @@ pub struct IntentBuilder<'a> {
     intent: u32,
     header: IntentHeader,
     sockets: Vec<Socket>,
+    /// The edges this intent gives its composer, in the order they were
+    /// exported. A member's alone: the root has nobody to give to, and
+    /// what it exports is wired into its members directly.
+    gives: Vec<Give>,
+    /// Whether this is the root of its envelope.
+    root: bool,
 }
 
 impl<'a> IntentBuilder<'a> {
@@ -321,14 +342,16 @@ impl<'a> IntentBuilder<'a> {
             intent: 0,
             header,
             sockets: Vec::new(),
+            gives: Vec::new(),
+            root: false,
         }
     }
 
-    /// Declare a socket: an edge the composition must bind, carrying
+    /// Declare a socket: an edge the composer must wire, carrying
     /// `resource` and satisfying `constraints`.
     ///
     /// The [`Socket`] is this intent's own obligation — its graph must
-    /// consume it exactly once. The composition's obligation to fill the
+    /// consume it exactly once. The composer's obligation to fill the
     /// socket is discharged against an [`OpenSocket`], which arrives when
     /// the intent enters an envelope rather than here, so that an intent
     /// written and one adopted hand back open sockets the same way.
@@ -381,49 +404,69 @@ impl<'a> IntentBuilder<'a> {
     /// # Errors
     ///
     /// As [`EnvelopeBuilder::seal`], over this intent alone.
-    pub fn into_decl(self) -> Result<IntentDecl, EnvelopeError> {
+    pub fn into_decl(self) -> Result<Intent, EnvelopeError> {
         self.finish(0)
     }
 
     /// Build the graph and check that every socket this intent declared
     /// is consumed by exactly one of its own node arguments.
-    fn finish(self, intent: u32) -> Result<IntentDecl, EnvelopeError> {
+    fn finish(self, intent: u32) -> Result<Intent, EnvelopeError> {
         if self.sockets.len() > MAX_SOCKETS {
             return Err(EnvelopeError::TooManySockets { intent });
         }
         let sockets = self.sockets;
+        let gives = self.gives;
         let header = self.header;
+        let account = self.graph.signer();
         let graph = self.graph.build()?;
         check_sockets(&graph, &sockets, intent)?;
-        Ok(IntentDecl {
+        Ok(Intent {
             header,
+            accounts: vec![account],
+            terms: None,
             graph,
             sockets,
+            gives,
+            members: Vec::new(),
+            wiring: Vec::new(),
         })
     }
 
-    /// Consume an output as this intent's yield edge, for the composition
+    /// Consume an output as this intent's yield edge, for the composer
     /// to fill some intent's socket with.
+    ///
+    /// A member's yield is one of its gives, declared in its signed
+    /// interface; the root's is wired into a member directly, since the
+    /// root has nobody to give to.
     ///
     /// A bucket carrying constraints or one minted elsewhere poisons
     /// the graph, on [`GraphBuilder::export`]'s terms, and the seal
     /// hands the mistake back.
     ///
+    /// # Panics
+    ///
+    /// Past a `u32` of gives, far beyond the [`MAX_SOCKETS`] the
+    /// declaration is held to when it is sealed.
+    ///
     /// [`GraphBuilder::export`]: crate::GraphBuilder::export
     pub fn export(&mut self, bucket: Bucket) -> Offered {
         let edge = self.graph.export(bucket);
+        let offering = if self.root {
+            Offering::Edge(edge)
+        } else {
+            let give = u32::try_from(self.gives.len()).expect("gives are bounded by MAX_SOCKETS");
+            self.gives.push(Give::Edge(edge));
+            Offering::Give(give)
+        };
         Offered {
             envelope: self.envelope,
             intent: self.intent,
-            offering: Offering::Edge(edge),
+            offering,
         }
     }
 
-    /// Grant the authority of the account this intent acts as, for some
-    /// other intent's declared socket.
-    ///
-    /// Offer a proof this intent's own node minted, for some other
-    /// intent's declared socket.
+    /// Offer a proof this intent's own node minted, for some member's
+    /// declared socket.
     ///
     /// Nothing is consumed and nothing is exported from the graph: the
     /// node stands where it stood, and what crosses is the claim it
@@ -431,12 +474,17 @@ impl<'a> IntentBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// [`EnvelopeError::ForeignProof`] on a proof another intent proved,
+    /// [`EnvelopeError::ProofOfferedUpward`] on a member's proof, which
+    /// reaches neither its composer nor a sibling;
+    /// [`EnvelopeError::ForeignProof`] on a proof another intent proved;
     /// and [`EnvelopeError::SocketProofOffered`] on one that itself came
     /// through a socket — a socket cannot fill a socket, and the
     /// composition that filled this one is the one that would have to
     /// offer it.
     pub fn offer(&self, proof: Proof) -> Result<Offered, EnvelopeError> {
+        if !self.root {
+            return Err(EnvelopeError::ProofOfferedUpward);
+        }
         if !proof.proved_by(self.graph_id()) {
             return Err(EnvelopeError::ForeignProof);
         }
@@ -465,20 +513,20 @@ impl DerefMut for IntentBuilder<'_> {
     }
 }
 
-/// A composition of intents, joined through the sockets they declare.
+/// A root intent and the members it composes, joined through the
+/// sockets they declare.
 pub struct EnvelopeBuilder<'a> {
     chain: &'a dyn ChainRecords,
     hasher: &'a dyn Hasher,
     id: u64,
-    /// The account each intent acts as, by slot; the composition's own
-    /// leads.
-    accounts: Vec<PrincipalAddr>,
-    /// Sealed declarations by slot — `0` is the composer's — `None`
-    /// until the intent is sealed.
-    intents: Vec<Option<IntentDecl>>,
-    /// The bound source of each socket, by intent and
-    /// position.
-    bindings: BTreeMap<(u32, u32), Binding>,
+    /// The account the root acts as, which a grant lends.
+    composer: PrincipalAddr,
+    /// Sealed intents by slot — `0` is the root's — `None` until the
+    /// intent is sealed.
+    intents: Vec<Option<Intent>>,
+    /// The bound source of each socket, by intent and position: which
+    /// intent offered, and what.
+    bindings: BTreeMap<(u32, u32), (u32, Offering)>,
     /// The creation-fixed records the tree carries for targets beyond
     /// the genesis registry.
     instances: Vec<InstanceMeta>,
@@ -503,7 +551,7 @@ impl<'a> EnvelopeBuilder<'a> {
             chain,
             hasher,
             id,
-            accounts: vec![signer],
+            composer: signer,
             intents: vec![None],
             bindings: BTreeMap::new(),
             instances: Vec::new(),
@@ -515,6 +563,8 @@ impl<'a> EnvelopeBuilder<'a> {
             intent: 0,
             header,
             sockets: Vec::new(),
+            gives: Vec::new(),
+            root: true,
         };
         (envelope, root)
     }
@@ -538,8 +588,8 @@ impl<'a> EnvelopeBuilder<'a> {
         self.grants.push(meta);
     }
 
-    /// A separately signed subintent, whose signer owns the nullifier
-    /// that makes it once-only.
+    /// A separately signed member, whose signer owns the nullifier that
+    /// makes it once-only.
     ///
     /// # Panics
     ///
@@ -547,7 +597,6 @@ impl<'a> EnvelopeBuilder<'a> {
     /// [`build`](Self::build) enforces as an error.
     pub fn subintent(&mut self, signer: PrincipalAddr, header: IntentHeader) -> IntentBuilder<'a> {
         let intent = u32::try_from(self.intents.len()).expect("intents fit an index");
-        self.accounts.push(signer);
         self.intents.push(None);
         IntentBuilder {
             graph: TypedBuilder::new(self.chain, self.hasher, signer),
@@ -555,24 +604,26 @@ impl<'a> EnvelopeBuilder<'a> {
             intent,
             header,
             sockets: Vec::new(),
+            gives: Vec::new(),
+            root: false,
         }
     }
 
-    /// Bind a declaration its signer already signed, answering its
+    /// Compose a declaration its signer already signed, answering its
     /// [`Sockets`].
     ///
-    /// This is what a subintent is for. The signer put their name to a
-    /// graph over sockets before any composer existed; the composition
+    /// This is what a member is for. The signer put their name to a
+    /// graph over sockets before any composer existed; the composer
     /// supplies the sources and alters nothing, so the signature that
     /// already covers the declaration still covers it — which is why the
     /// declaration is stored exactly as handed over rather than rebuilt.
-    /// [`subintent`](Self::subintent) is the other case: a leg the
+    /// [`subintent`](Self::subintent) is the other case: a member the
     /// composer writes and signs itself.
     ///
     /// # Errors
     ///
     /// The same refusals [`seal`](Self::seal) reaches over a declaration
-    /// the composer wrote, because a composer signing an envelope around a
+    /// the composer wrote, because a composer signing a tree around a
     /// malformed declaration is a transaction the chain refuses either
     /// way, and refusing it here is the only place it can still be
     /// declined.
@@ -581,11 +632,7 @@ impl<'a> EnvelopeBuilder<'a> {
     ///
     /// Past a `u32` of intents, far beyond [`MAX_INTENTS`], which
     /// [`build`](Self::build) enforces as an error.
-    pub fn adopt(
-        &mut self,
-        signer: PrincipalAddr,
-        decl: IntentDecl,
-    ) -> Result<Sockets, EnvelopeError> {
+    pub fn adopt(&mut self, decl: Intent) -> Result<Sockets, EnvelopeError> {
         let intent = u32::try_from(self.intents.len()).expect("intents fit an index");
         if decl.sockets.len() > MAX_SOCKETS {
             return Err(EnvelopeError::TooManySockets { intent });
@@ -593,7 +640,6 @@ impl<'a> EnvelopeBuilder<'a> {
         check_sockets(&decl.graph, &decl.sockets, intent)?;
         let sockets = self.open_sockets(intent, decl.sockets.len());
         self.carry(&decl.graph);
-        self.accounts.push(signer);
         self.intents.push(Some(decl));
         Ok(sockets)
     }
@@ -631,10 +677,10 @@ impl<'a> EnvelopeBuilder<'a> {
     /// against.
     ///
     /// Run over every intent the envelope carries, written here or
-    /// signed elsewhere. A subintent arrives whole, so what its calls
-    /// need is readable off it — and the records ride the envelope
-    /// rather than any intent, so the composer attaching them touches
-    /// nothing a signature covers.
+    /// signed elsewhere. A member arrives whole, so what its calls need
+    /// is readable off it — and the records ride the tree rather than
+    /// any intent, so the composer attaching them touches nothing a
+    /// signature covers.
     fn carry(&mut self, graph: &ManifestGraph) {
         for record in graph_records(graph, self.chain, self.hasher) {
             if !self.grants.contains(&record) {
@@ -643,17 +689,14 @@ impl<'a> EnvelopeBuilder<'a> {
         }
     }
 
-    /// The composition lending the account its own intent acts as
-    /// downward. Nothing proves it and no node carries it: the account's
-    /// shard attests the keys that sign the composition, so the claim
-    /// stands from the start and the socket it fills waits on nothing.
+    /// The root lending the account it acts as downward. Nothing proves
+    /// it and no node carries it: the account's shard attests the keys
+    /// that sign the root, so the claim stands from the start and the
+    /// socket it fills waits on nothing.
     ///
-    /// The composition's alone, which is why it is minted here and not
-    /// on an [`IntentBuilder`]: an intent offered into the envelope was
-    /// signed before the envelope existed and has seen nothing it would
-    /// be consenting to, so admission refuses a grant sourced from one —
-    /// and a shape the builder cannot spell is one it never has to
-    /// refuse in admission's coordinates.
+    /// The root's alone, which is why it is minted here and not on an
+    /// [`IntentBuilder`]: a grant is wiring, and the root is the one
+    /// intent whose wiring this envelope writes.
     #[must_use]
     pub const fn grant(&self) -> Offered {
         Offered {
@@ -679,7 +722,8 @@ impl<'a> EnvelopeBuilder<'a> {
     }
 
     /// Fill a socket with what another intent offers — the edge it
-    /// exported, or the proof one of its nodes mints.
+    /// exported, the proof one of the root's nodes mints, or the
+    /// account the root acts as.
     ///
     /// The whole of composition: a link is added between two graphs and
     /// neither is touched. The socket's own declaration types the link,
@@ -727,50 +771,45 @@ impl<'a> EnvelopeBuilder<'a> {
             .as_ref()
             .expect("an open socket names an intent the envelope holds")
             .sockets[position];
-        let binding = match (declared, offered.offering) {
-            (Socket::Value { .. }, Offering::Edge(edge)) => Binding::Value {
-                intent: offered.intent,
-                edge,
-            },
-            (Socket::Authority(_), Offering::Proof(producer)) => Binding::Authority {
-                intent: offered.intent,
-                from: ClaimSource::Node(producer),
-            },
-            (Socket::Authority(_), Offering::Grant) => Binding::Authority {
-                intent: offered.intent,
-                from: ClaimSource::Account(
-                    self.accounts[usize::try_from(offered.intent).expect("minted indices fit")],
-                ),
-            },
+        let refused = match (declared, offered.offering) {
+            (Socket::Value { .. }, Offering::Edge(_) | Offering::Give(_))
+            | (Socket::Authority(_), Offering::Proof(_) | Offering::Grant) => None,
             (Socket::Value { .. }, Offering::Proof(_) | Offering::Grant) => {
-                let cause = EnvelopeError::ProofForValueSocket {
+                Some(EnvelopeError::ProofForValueSocket {
                     intent: socket.intent,
                     socket: socket.position,
-                };
-                return Err(BindRefusal {
-                    socket,
-                    offered,
-                    cause,
-                });
+                })
             }
-            (Socket::Authority(_), Offering::Edge(_)) => {
-                let cause = EnvelopeError::EdgeForAuthoritySocket {
+            (Socket::Authority(_), Offering::Edge(_) | Offering::Give(_)) => {
+                Some(EnvelopeError::EdgeForAuthoritySocket {
                     intent: socket.intent,
                     socket: socket.position,
-                };
-                return Err(BindRefusal {
-                    socket,
-                    offered,
-                    cause,
-                });
+                })
             }
         };
-        self.bindings
-            .insert((socket.intent, socket.position), binding);
+        if let Some(cause) = refused {
+            return Err(BindRefusal {
+                socket,
+                offered,
+                cause,
+            });
+        }
+        self.bindings.insert(
+            (socket.intent, socket.position),
+            (offered.intent, offered.offering),
+        );
         Ok(())
     }
 
-    /// Emit the tree: every intent sealed, every socket bound.
+    /// Emit the tree: every intent sealed, every socket bound, the root
+    /// composing every member.
+    ///
+    /// The root's own sockets are the one thing rewritten here. A socket
+    /// of the root is filled by a member's give, and the root takes a
+    /// give as an argument rather than through a socket — so each such
+    /// socket becomes the give argument the wiring named, and the root
+    /// declares none. The root is signed after this, so nothing a
+    /// signature covers is touched.
     ///
     /// # Errors
     ///
@@ -782,7 +821,7 @@ impl<'a> EnvelopeBuilder<'a> {
     ///
     /// Past a `u32` of intents, which [`MAX_INTENTS`] excludes above.
     pub fn build(self) -> Result<EnvelopeTree, EnvelopeError> {
-        if self.accounts.len() > MAX_INTENTS {
+        if self.intents.len() > MAX_INTENTS {
             return Err(EnvelopeError::TooManyIntents);
         }
         // Graph literals meet this bound at the call that binds them;
@@ -799,38 +838,94 @@ impl<'a> EnvelopeBuilder<'a> {
                 });
             }
         }
-        let mut decls = Vec::with_capacity(self.intents.len());
-        let mut wired = Vec::with_capacity(self.intents.len());
+        let mut intents = Vec::with_capacity(self.intents.len());
         for (slot, sealed) in self.intents.into_iter().enumerate() {
             let intent = u32::try_from(slot).expect("minted indices fit");
-            let decl = sealed.ok_or(EnvelopeError::UnsealedIntent { intent })?;
-            let mut bindings = Vec::with_capacity(decl.sockets.len());
-            for position in 0..decl.sockets.len() {
-                let socket = u32::try_from(position).expect("bounded by MAX_SOCKETS");
-                bindings.push(
-                    *self
-                        .bindings
-                        .get(&(intent, socket))
-                        .ok_or(EnvelopeError::UnfilledSocket { intent, socket })?,
-                );
-            }
-            decls.push(decl);
-            wired.push(bindings);
+            intents.push(sealed.ok_or(EnvelopeError::UnsealedIntent { intent })?);
         }
-        // One account per slot, so the accounts line up with the
-        // declarations one for one and the tree carries no slot whose
-        // account is implied from outside it.
-        let intents = self
-            .accounts
-            .into_iter()
-            .zip(decls)
-            .zip(wired)
-            .map(|((account, decl), bindings)| Intent {
-                decl,
-                account,
-                bindings,
-            })
+        let mut members = intents.drain(1..).collect::<Vec<Intent>>();
+        let mut root = intents.pop().expect("the root is slot 0");
+
+        // A member's index among the root's members is one under its
+        // slot, since the root is slot 0.
+        let member_of = |intent: u32| GiveRef {
+            member: intent - 1,
+            give: 0,
+        };
+
+        // The root's sockets, rewritten as the give arguments they
+        // stand for.
+        let mut taken = Vec::with_capacity(root.sockets.len());
+        for (position, socket) in root.sockets.iter().enumerate() {
+            let at = u32::try_from(position).expect("bounded by MAX_SOCKETS");
+            let (from, offering) =
+                self.bindings
+                    .get(&(0, at))
+                    .copied()
+                    .ok_or(EnvelopeError::UnfilledSocket {
+                        intent: 0,
+                        socket: at,
+                    })?;
+            let (Socket::Value { constraints, .. }, Offering::Give(give)) = (socket, offering)
+            else {
+                // Nothing offers authority upward, and a member's edge
+                // is offered as a give, so no other pair is mintable.
+                return Err(EnvelopeError::UnfilledSocket {
+                    intent: 0,
+                    socket: at,
+                });
+            };
+            taken.push(GraphArg::Give {
+                give: GiveRef {
+                    give,
+                    ..member_of(from)
+                },
+                constraints: constraints.clone(),
+            });
+        }
+        for node in &mut root.graph.nodes {
+            for arg in &mut node.args {
+                if let GraphArg::Socket(position) = arg {
+                    *arg =
+                        taken[usize::try_from(*position).expect("bounded by MAX_SOCKETS")].clone();
+                }
+            }
+        }
+        root.sockets.clear();
+
+        // The members' sockets, wired from what the root holds.
+        let mut wiring = Vec::with_capacity(members.len());
+        for (index, member) in members.iter().enumerate() {
+            let intent = u32::try_from(index + 1).expect("minted indices fit");
+            let mut bindings = Vec::with_capacity(member.sockets.len());
+            for position in 0..member.sockets.len() {
+                let socket = u32::try_from(position).expect("bounded by MAX_SOCKETS");
+                let (from, offering) = self
+                    .bindings
+                    .get(&(intent, socket))
+                    .copied()
+                    .ok_or(EnvelopeError::UnfilledSocket { intent, socket })?;
+                bindings.push(match offering {
+                    Offering::Edge(edge) => Binding::Value(ValueSource::Edge(edge)),
+                    Offering::Give(give) => Binding::Value(ValueSource::Give(GiveRef {
+                        give,
+                        ..member_of(from)
+                    })),
+                    Offering::Proof(producer) => Binding::Authority(ClaimSource::Node(producer)),
+                    Offering::Grant => Binding::Authority(ClaimSource::Account(self.composer)),
+                });
+            }
+            wiring.push(bindings);
+        }
+        root.members = members
+            .iter()
+            .map(|member| member.hash(self.hasher))
             .collect();
+        root.wiring = wiring;
+
+        let mut intents = Vec::with_capacity(1 + members.len());
+        intents.push(root);
+        intents.append(&mut members);
         Ok(EnvelopeTree {
             intents,
             instances: self.instances,
@@ -853,7 +948,7 @@ fn check_sockets(
     for node in &graph.nodes {
         let args = node.args.iter().filter_map(|arg| match arg {
             GraphArg::Socket(socket) => Some((*socket, true)),
-            GraphArg::Literal(_) | GraphArg::Edge { .. } => None,
+            GraphArg::Literal(_) | GraphArg::Edge { .. } | GraphArg::Give { .. } => None,
         });
         let presented = node
             .evidence

@@ -135,23 +135,101 @@ pub enum AdmissionError {
         /// The offending subintent's index.
         index: u32,
     },
-    /// An intent whose bindings do not match its sockets.
-    #[error("intent {intent} declares {expected} sockets, binds {found}")]
+    /// A member naming a hash the tree does not carry.
+    #[error("intent {intent} composes member {member}, which the tree does not carry")]
+    UnknownMember {
+        /// The composing intent, in tree order.
+        intent: u32,
+        /// The member's position among that intent's members.
+        member: u32,
+    },
+    /// A member out of tree order: the tree lists intents in preorder,
+    /// the root first and each member's subtree where its composer
+    /// names it, and this member sits elsewhere. What a cycle, a
+    /// member named twice and a member naming the root all look like
+    /// from the walk that recovers the tree.
+    #[error("intent {intent} composes member {member} out of tree order")]
+    MemberOutOfOrder {
+        /// The composing intent, in tree order.
+        intent: u32,
+        /// The member's position among that intent's members.
+        member: u32,
+    },
+    /// An intent no composer names: an orphan, or a second root.
+    #[error("intent {intent} is composed by nobody and is not the root")]
+    UnreachableIntent {
+        /// The intent, in tree order.
+        intent: u32,
+    },
+    /// An intent acting as no account, which would have no nullifier and
+    /// no sign-in.
+    #[error("intent {intent} acts as no account")]
+    NoAccount {
+        /// The intent, in tree order.
+        intent: u32,
+    },
+    /// A member stating terms, which only the root can state.
+    #[error("intent {intent} states terms, and only the root may")]
+    TermsOnMember {
+        /// The intent, in tree order.
+        intent: u32,
+    },
+    /// An intent whose wiring does not match its members: one list of
+    /// bindings per member, in member order.
+    #[error("intent {intent} composes {expected} members, wires {found}")]
+    WiringArity {
+        /// The composing intent, in tree order.
+        intent: u32,
+        /// How many members it composes.
+        expected: usize,
+        /// How many members its wiring fills.
+        found: usize,
+    },
+    /// An intent whose composer's bindings for it do not match its
+    /// sockets.
+    #[error("intent {intent} declares {expected} sockets, is wired {found}")]
     BindingArity {
-        /// The intent: `0` is the root, `i + 1` is subintent `i`.
+        /// The intent, in tree order.
         intent: u32,
         /// How many sockets it declared.
         expected: usize,
-        /// How many bindings the composition supplied.
+        /// How many bindings its composer supplied.
         found: usize,
     },
-    /// A binding naming an intent or node that does not exist.
+    /// A binding naming a node, a give or a socket the composer does not
+    /// hold.
     #[error("intent {intent} socket {socket} is filled from nowhere")]
     UnknownBinding {
         /// The consuming intent.
         intent: u32,
         /// Its position in the declaration.
         socket: u32,
+    },
+    /// A give naming an edge or a member's give that does not exist.
+    #[error("intent {intent} give {give} names nothing")]
+    UnknownGive {
+        /// The giving intent, in tree order.
+        intent: u32,
+        /// The give's position in its declaration.
+        give: u32,
+    },
+    /// A give nothing above the intent consumes. The root's gives are
+    /// this by construction: nothing is above it.
+    #[error("intent {intent} give {give} is consumed by nothing")]
+    UnconsumedGive {
+        /// The giving intent, in tree order.
+        intent: u32,
+        /// The give's position in its declaration.
+        give: u32,
+    },
+    /// A give the composer consumes more than once. Value is conserved:
+    /// a give fills one argument, one socket or one give above.
+    #[error("intent {intent} give {give} is consumed twice")]
+    GiveReused {
+        /// The giving intent, in tree order.
+        intent: u32,
+        /// The give's position in its declaration.
+        give: u32,
     },
     /// A socket filled from the other channel: a value socket with a
     /// proof, or an authority socket with an edge.
@@ -171,33 +249,14 @@ pub enum AdmissionError {
         /// What the composition filled it with.
         offered: &'static str,
     },
-    /// An authority socket granted a claim by an intent that did not
-    /// compose the envelope.
-    ///
-    /// Only the composition's signer has seen every intent hash the
-    /// envelope carries, so only they can know what their own account's
-    /// authority is being spent on. An offered intent was signed before
-    /// the envelope existed and consents to nothing in it, which is why
-    /// a grant sourced from one is refused rather than judged.
-    #[error(
-        "intent {intent} socket {socket} is granted by intent {granter}, which did not compose \
-         this envelope"
-    )]
-    UnscopedGrant {
-        /// The intent whose socket it is.
-        intent: u32,
-        /// Its position in that declaration.
-        socket: u32,
-        /// The intent the grant was sourced from.
-        granter: u32,
-    },
     /// A grant of an account the granting intent does not act as.
     ///
     /// What stands behind a granted claim is the sign-in the account's
-    /// own shard judged, and an intent has exactly one of those. Without
-    /// this the granted account would be a field the composer fills
-    /// freely, and naming a stranger there would mint their authority
-    /// out of nothing.
+    /// own shard judged, over the keys that signed the granting intent
+    /// — and the granting intent's signer consented, by signing it, to
+    /// which accounts it acts as. Without this the granted account
+    /// would be a field the composer fills freely, and naming a
+    /// stranger there would mint their authority out of nothing.
     #[error("intent {intent} socket {socket}: the granting intent does not act as {account:?}")]
     GrantNotHeld {
         /// The intent whose socket it is.
@@ -211,9 +270,9 @@ pub enum AdmissionError {
     /// declaration named.
     ///
     /// The declaring signer says which authority they are asking for, so
-    /// a grant of another account's — or of a socket asking for a badge,
-    /// which no account's signature carries — is refused rather than
-    /// presented.
+    /// a grant of another account's, of a socket carrying another claim,
+    /// or into a socket asking for a badge — which no account's
+    /// signature carries — is refused rather than presented.
     #[error("intent {intent} socket {socket} asks for another claim than the one granted")]
     GrantClaimMismatch {
         /// The intent whose socket it is.
@@ -819,11 +878,19 @@ impl AdmissionError {
                 abi: None,
             },
             // About the intent rather than any one of its nodes.
-            Self::BindingArity { intent, .. }
+            Self::UnknownMember { intent, .. }
+            | Self::MemberOutOfOrder { intent, .. }
+            | Self::UnreachableIntent { intent }
+            | Self::NoAccount { intent }
+            | Self::TermsOnMember { intent }
+            | Self::WiringArity { intent, .. }
+            | Self::UnknownGive { intent, .. }
+            | Self::UnconsumedGive { intent, .. }
+            | Self::GiveReused { intent, .. }
+            | Self::BindingArity { intent, .. }
             | Self::TooManySockets { intent, .. }
             | Self::UnknownBinding { intent, .. }
             | Self::SocketKindMismatch { intent, .. }
-            | Self::UnscopedGrant { intent, .. }
             | Self::GrantNotHeld { intent, .. }
             | Self::GrantClaimMismatch { intent, .. }
             | Self::SocketResourceMismatch { intent, .. }
