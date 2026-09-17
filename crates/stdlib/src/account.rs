@@ -28,6 +28,9 @@ pub use package::account::client::*;
 /// The replacement an account keeps while one is waiting, so a consumer
 /// can read the state a flow passes through rather than only its ends.
 pub use package::account::{Amendment, Error, Pending};
+/// What the account says about a replacement, so a consumer decodes the
+/// type the package declared rather than a layout it was told about.
+pub use package::account::{Cancelled, Enacted, Proposed};
 
 /// One replacement as the cell holds it.
 ///

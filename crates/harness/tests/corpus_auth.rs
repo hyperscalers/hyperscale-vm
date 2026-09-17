@@ -9,11 +9,12 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_fixtures::nf;
 use hyperscale_vm_harness::driver::{amount_of, cells, vault};
-use hyperscale_vm_kernel::{MemoryStore, Substates};
+use hyperscale_vm_kernel::{MemoryStore, Receipt, Substates};
+use hyperscale_vm_sdk::hbor::to_vec;
 use hyperscale_vm_sdk::{Declines, nobody};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
-    EffectTarget, Outcome, Presence, PrincipalAddr, TxHash, UnmetCondition, encode_amount,
+    EffectTarget, Event, Outcome, Presence, PrincipalAddr, TxHash, UnmetCondition, encode_amount,
 };
 use wasmtime::Result;
 
@@ -985,6 +986,116 @@ fn cancel_graph() -> ManifestGraph {
 
 fn promote_by(signer: PrincipalAddr) -> ManifestGraph {
     graph_signed(signer, |b| account::promote(b, ALICE, FIRST))
+}
+
+/// What Alice's account said about a replacement, at the index the
+/// package's event table fixes: `proposed` is 2, `enacted` 3 and
+/// `cancelled` 4.
+const fn said(event_type: u32, payload: Vec<u8>) -> Event {
+    Event {
+        emitter: ALICE.address(),
+        event_type,
+        payload,
+    }
+}
+
+fn proposed(serial: u64, effective_at_ms: u64) -> Vec<u8> {
+    to_vec(&account::Proposed {
+        serial,
+        effective_at_ms,
+    })
+    .expect("an event encodes")
+}
+
+fn enacted(serial: u64) -> Vec<u8> {
+    to_vec(&account::Enacted { serial }).expect("an event encodes")
+}
+
+fn cancelled(serial: u64) -> Vec<u8> {
+    to_vec(&account::Cancelled { serial }).expect("an event encodes")
+}
+
+/// The one receipt a completed transaction leaves.
+fn completed(results: &[TxResult]) -> &Receipt {
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("the transaction must complete; got {:?}", results[0]);
+    };
+    receipt
+}
+
+/// Every transition says which proposal it answers, under the account's
+/// own address: a filing carries its serial and the instant it may be
+/// enacted from, and each verdict the serial it answered — so a wallet
+/// watching the prefix can put the verdict on the notification.
+#[test]
+fn a_recovery_proposal_names_its_serial_at_every_transition() {
+    let world = world();
+    let t0 = env().clock_ms;
+    let (results, filed) = run_both_signed(
+        &world,
+        &recovered_store(),
+        &[(&propose_by(BOB), TxHash(Hash32([0xC0; 32])))],
+        Some(BOB),
+    );
+    assert_eq!(
+        completed(&results).events,
+        vec![said(2, proposed(FIRST, t0 + DAY_MS))]
+    );
+
+    let (results, _) = run_both_at(
+        &world,
+        &filed,
+        &[(&promote_by(TAKER), TxHash(Hash32([0xC1; 32])))],
+        Some(TAKER),
+        t0 + DAY_MS,
+    );
+    assert_eq!(completed(&results).events, vec![said(3, enacted(FIRST))]);
+
+    let (results, _) = run_both_signed(
+        &world,
+        &filed,
+        &[(&cancel_by(BOB), TxHash(Hash32([0xC2; 32])))],
+        Some(BOB),
+    );
+    assert_eq!(completed(&results).events, vec![said(4, cancelled(FIRST))]);
+}
+
+/// A freeze and an amendment are filings too, and a veto is a verdict:
+/// the same three words cover every transition, whichever record and
+/// whichever role.
+#[test]
+fn a_freeze_an_amendment_and_a_veto_speak_the_same_words() {
+    let world = world();
+    let t0 = env().clock_ms;
+    let (results, frozen) = run_both_signed(
+        &world,
+        &recovered_store(),
+        &[(&freeze_by(BOB), TxHash(Hash32([0xC3; 32])))],
+        Some(BOB),
+    );
+    assert_eq!(
+        completed(&results).events,
+        vec![said(2, proposed(FIRST, t0 + DAY_MS))]
+    );
+
+    let (results, _) = run_both_signed(
+        &world,
+        &frozen,
+        &[(&veto_by(MAKER), TxHash(Hash32([0xC4; 32])))],
+        Some(MAKER),
+    );
+    assert_eq!(completed(&results).events, vec![said(4, cancelled(FIRST))]);
+
+    let (results, _) = run_both_signed(
+        &world,
+        &recovered_store(),
+        &[(&amend_graph(), TxHash(Hash32([0xC5; 32])))],
+        Some(ALICE),
+    );
+    assert_eq!(
+        completed(&results).events,
+        vec![said(2, proposed(FIRST, t0 + DAY_MS))]
+    );
 }
 
 /// Whether `signer`'s key opens Alice's sign-in at `clock_ms`: her whole

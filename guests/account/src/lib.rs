@@ -42,6 +42,31 @@ pub mod account {
         amount: Quantity,
     }
 
+    /// A replacement was filed — of the factors, or of who may recover
+    /// them — and the instant it may be enacted from.
+    ///
+    /// What makes the delay usable rather than merely anxious: a wallet
+    /// watching the account's prefix sees every filing and can put the
+    /// verdict on the notification.
+    #[event]
+    struct Proposed {
+        serial: u64,
+        effective_at_ms: u64,
+    }
+
+    /// The replacement `serial` names was enacted.
+    #[event]
+    struct Enacted {
+        serial: u64,
+    }
+
+    /// The replacement `serial` names was dropped, cancelled or vetoed,
+    /// and whatever it would have replaced stands.
+    #[event]
+    struct Cancelled {
+        serial: u64,
+    }
+
     /// A verdict on a proposal that is not there to answer, or an
     /// enactment the clock has not licensed.
     #[error]
@@ -365,6 +390,7 @@ pub mod account {
         /// primary can never stall the guardians. Withdrawing one is
         /// amending to the current values.
         #[requires(self)]
+        #[emits(Proposed)]
         pub fn amend(
             &mut self,
             recovery: RuleBytes,
@@ -384,6 +410,11 @@ pub mod account {
                 veto,
                 delay_ms,
             }));
+            Proposed {
+                serial,
+                effective_at_ms,
+            }
+            .emit();
             Ok(())
         }
 
@@ -393,6 +424,7 @@ pub mod account {
         /// shorten its own takeover, because the delay is not a
         /// proposal's to name.
         #[requires(governs(recovery))]
+        #[emits(Proposed)]
         pub fn propose(&mut self, primary: PrincipalRule, confirmation: PrincipalRule) {
             let frozen = self.pending.get().and_then(|waiting| waiting.frozen);
             self.file(primary, confirmation, frozen);
@@ -415,6 +447,7 @@ pub mod account {
         /// is what the address's own key still governs, so removing the
         /// rule would hand the account back to the key being frozen out.
         #[requires(governs(recovery))]
+        #[emits(Proposed)]
         pub fn freeze(&mut self, primary: PrincipalRule, confirmation: PrincipalRule) {
             let mut authority = self.auth().existing();
             let displaced = self
@@ -448,6 +481,11 @@ pub mod account {
                 frozen,
             }));
             self.amendment.set(None);
+            Proposed {
+                serial,
+                effective_at_ms,
+            }
+            .emit();
         }
 
         /// Enact the replacement `serial` names, whose delay has run out.
@@ -458,6 +496,7 @@ pub mod account {
         /// began, and nobody signs twice. Before the instant the
         /// proposal named this is a refusal rather than nothing, so a
         /// caller is told rather than charged for a no-op.
+        #[emits(Enacted)]
         pub fn promote(&mut self, serial: u64) -> Result<(), Error> {
             let now = clock_ms();
             if let Some(pending) = self.pending.get()
@@ -477,6 +516,7 @@ pub mod account {
             } else {
                 return Err(Error::NoSuchProposal);
             }
+            Enacted { serial }.emit();
             Ok(())
         }
 
@@ -490,6 +530,7 @@ pub mod account {
         /// whoever wanted it enacted could have enacted it, in the same
         /// transaction they proposed it or any since.
         #[requires(governs(recovery))]
+        #[emits(Cancelled)]
         pub fn cancel(&mut self, serial: u64) -> Result<(), Error> {
             self.withdraw_proposal(serial)
         }
@@ -503,6 +544,7 @@ pub mod account {
         /// role in the wrong hands — the freeze it lands is undone by
         /// this, and the account is where it was.
         #[requires(governs(veto))]
+        #[emits(Cancelled)]
         pub fn veto(&mut self, serial: u64) -> Result<(), Error> {
             self.withdraw_proposal(serial)
         }
@@ -527,6 +569,7 @@ pub mod account {
             } else {
                 return Err(Error::NoSuchProposal);
             }
+            Cancelled { serial }.emit();
             Ok(())
         }
 

@@ -325,7 +325,10 @@ fn transfer_executes_end_to_end_on_both_runtimes() {
     // constants and the package's table are two halves of one contract
     // that only a test holds together.
     let table = account::metadata().events;
-    assert_eq!(table, vec!["withdrawn", "deposited"]);
+    assert_eq!(
+        table,
+        vec!["withdrawn", "deposited", "proposed", "enacted", "cancelled"]
+    );
     for event in &receipt.events {
         assert!(
             table.get(event.event_type as usize).is_some(),
