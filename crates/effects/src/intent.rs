@@ -130,8 +130,8 @@ pub enum Socket {
     Authority(Claim),
 }
 
-/// The terms an intent is admissible under: the network it was declared
-/// for and the window it stands in.
+/// What an intent is admissible under: the network it was declared for
+/// and the window it stands in.
 ///
 /// Its signer signs these with the rest of the declaration, so a
 /// composer can neither retarget an intent nor outlive the window the
@@ -171,8 +171,8 @@ pub struct IntentHeader {
 ///
 /// Recursive. A leaf has no members; an intent with members composes
 /// them, and every intent with members is a composer whatever its
-/// depth. The root is the one nobody composes — it carries the terms
-/// and declares no sockets, since nothing above it could fill one. Its
+/// depth. The root is the one nobody composes — it declares no
+/// sockets, since nothing above it could fill one. Its
 /// signer signs exactly this, so [`Intent::hash`] is the intent's
 /// identity whatever tree later carries it, and since the hash covers
 /// every member's the identity commits to the whole subtree.
@@ -463,9 +463,9 @@ pub enum Binding {
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct IntentTree {
     /// The intent nobody composes, and beneath it every other intent the
-    /// tree holds. Its attestations are the envelope's, since what they
-    /// cover is the envelope: the root's hash, the terms and the
-    /// artifact.
+    /// tree holds. Its attestations are the envelope's: they cover the
+    /// envelope's signed bytes — the encoded tree, the terms and the
+    /// artifact — rather than the root's hash alone.
     pub root: Intent,
     /// The creation-fixed records of the component targets the tree
     /// names beyond what the genesis registry serves — each registered,

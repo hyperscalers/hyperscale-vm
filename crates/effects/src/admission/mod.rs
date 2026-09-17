@@ -2,9 +2,9 @@
 //! manifest.
 //!
 //! One checker serves every tree. A leaf is the degenerate tree — one
-//! intent with no sockets and nothing offered into it — and a composition
-//! is several intents joined through the sockets they declare, each
-//! carrying a value edge or a proof. So [`admit_intents`]
+//! intent with no members — and a composition is an intent nesting
+//! members whose sockets its wiring fills, each carrying a value edge
+//! or a proof. So [`admit_intents`]
 //! takes a slice of [`IntentView`] and everything below it is
 //! shape-agnostic: bindings and socket consumption per intent, a
 //! deterministic interleave over the sockets each node names, then one

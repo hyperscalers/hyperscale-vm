@@ -1,14 +1,14 @@
 //! The signed transaction envelope.
 //!
-//! The envelope carries the tree — every signed intent, the wiring
-//! between them, and the records their calls resolve against — as
-//! canonical bytes. The root intent states the terms no node can
-//! derive: the fee payer, the fee ceiling, one compute ceiling per
-//! manifest node, the priority multiplier and a capped optional
-//! message, beside the window and the network its own header names. A
-//! publish carries an artifact beside a tree of one root that calls
-//! nothing. The composer signs the whole envelope, so distinct
-//! submissions differ in signed content.
+//! The envelope carries the tree — every signed intent, the members
+//! each nests with the wiring that fills their sockets, and the records
+//! their calls resolve against — as canonical bytes, and beside it the
+//! terms no node can derive: the fee payer, the fee ceiling, one
+//! compute ceiling per manifest node, the priority multiplier and a
+//! capped optional message. The window and the network are the root
+//! intent's own header. A publish carries an artifact beside a tree of
+//! one root that calls nothing. The root's attesters sign the whole
+//! envelope, so distinct submissions differ in signed content.
 //!
 //! The tree stays opaque here: its vocabulary and codec live with the
 //! effect machinery, and treating it as signed bytes is what keeps this
@@ -186,11 +186,12 @@ pub struct IntentHash(pub Hash32);
 /// canonical ordering key for every commutative-mode decision, the name
 /// every consensus artifact — receipt, certificate, provision — attaches
 /// to, and the root every fresh derivation and nullifier grows from. It
-/// covers exactly what the composer signed, their own key included — the
-/// signature alone sits outside it — so a re-rolled signature over the
-/// same content is the same transaction, the same content under another
-/// key is a different one, and two distinct transactions minting the
-/// same fresh key is unrepresentable rather than assumed away.
+/// covers exactly what the root's attesters signed — the attestations
+/// alone sit outside it, and the principals they stand for are inside
+/// the tree — so a re-rolled attestation over the same content is the
+/// same transaction, the same content attested by other principals is a
+/// different one, and two distinct transactions minting the same fresh
+/// key is unrepresentable rather than assumed away.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 #[hbor(transparent)]
 pub struct TxHash(pub Hash32);
@@ -265,14 +266,14 @@ pub struct Attestation {
 }
 
 /// The signing-time choices no node can derive, stated once on the
-/// root intent of every tree.
+/// envelope beside the tree.
 ///
 /// A function of the assembled manifest — one ceiling per lowered node
-/// — so only the intent that composes the whole tree can state them,
-/// and only its signature covers them. The window and the network are
-/// the root's own header. A member stating terms is refused: nothing
-/// reads them there, and a signed field nothing reads is a field a
-/// composer could be made to sign for nothing.
+/// — so only whoever composes the whole tree can state them, and only
+/// the root's attestations cover them. The window and the network are
+/// the root's own header. Beside the tree rather than inside any
+/// intent: nothing reads terms on a member, and a signed field nothing
+/// reads is a field a composer could be made to sign for nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Hbor)]
 pub struct Terms {
     /// The fee-paying account.

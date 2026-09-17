@@ -97,8 +97,7 @@ pub struct IntentView<'a> {
     /// derive is admissible here and refused by that account's own shard,
     /// which is what lets an account's rule name somebody else's key.
     pub(crate) attested_by: &'a [PrincipalAddr],
-    /// What this intent's own signer signed: the intent's hash for an
-    /// intent of a tree, and the graph's own for a bare one.
+    /// What this intent's own signer signed: the intent's hash.
     ///
     /// Carried so a cell keyed by a node can be keyed by content that
     /// node's signer chose. A transaction hash covers a whole
@@ -107,7 +106,7 @@ pub struct IntentView<'a> {
     pub(crate) identity: IntentHash,
     /// When what this intent's signature brought into being stops being
     /// owed: the window its own signer signed plus the artifact grace,
-    /// on [`intent_expiry_ms`](crate::intent_expiry_ms)'s terms. The
+    /// on [`nullifier_expiry_ms`](crate::nullifier_expiry_ms)'s terms. The
     /// other half of the material a node's cells are keyed by, and
     /// carried here for the reason the identity is.
     pub(crate) expiry_ms: u64,
