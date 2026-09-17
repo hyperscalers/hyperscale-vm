@@ -155,7 +155,7 @@ const PIN_SWAP: &str = "988829945b9d4730affe6b1fba34e9d38c5097236b4e2498e17505ce
 
 const PIN_FILL: &str = "b233cc8c616fce466e8292538e19750e44b3630c3611b1acc858daffa609058b";
 
-const PIN_PROPOSE: &str = "9e39ef67d3c620f4e3ff89957d8bd99b58a15b09f964b87fa3c7190c79f84efa";
+const PIN_PROPOSE: &str = "93033ced29e32199d07c0812e1f46290574c8cf65357cb802f0c37cbdc75365b";
 
 /// One catalogue pattern and the star its shape implies.
 struct Shape {

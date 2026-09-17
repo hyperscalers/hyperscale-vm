@@ -123,7 +123,7 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
             this(),
             vec![Expr::Tuple(vec![Expr::Arg(0), Expr::Arg(1)])],
         ),
-        ("account", "promote", governs(own_cell(2)), vec![]),
+        ("account", "promote", open(), vec![]),
         ("account", "propose", governs(own_cell(2)), vec![]),
         ("account", "refuse", this(), vec![]),
         ("account", "securify", this(), vec![]),

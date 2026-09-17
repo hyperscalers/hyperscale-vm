@@ -10,6 +10,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_fixtures::nf;
 use hyperscale_vm_harness::driver::{amount_of, cells, vault};
 use hyperscale_vm_kernel::{MemoryStore, Substates};
+use hyperscale_vm_sdk::Declines;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     EffectTarget, Outcome, Presence, PrincipalAddr, TxHash, UnmetCondition, encode_amount,
@@ -510,15 +511,18 @@ fn seed_authority(
     store.write(own_cell(owner, 5), delay_ms.to_le_bytes().to_vec());
 }
 
-/// The replacement `owner` has waiting, as the account writes it.
+/// The replacement `owner` has waiting, as the account writes it, and
+/// the count of proposals that makes `serial` the one it took.
 fn seed_pending(
     store: &mut MemoryStore,
     owner: PrincipalAddr,
+    serial: u64,
     at_ms: u64,
     rule: &RuleBytes,
     delay_ms: u64,
 ) {
     let pending = account::Pending {
+        serial,
         effective_at_ms: at_ms,
         primary: PrincipalRule(rule.0.clone()),
         recovery: rule.clone(),
@@ -526,6 +530,7 @@ fn seed_pending(
         delay_ms,
     };
     store.write(own_cell(owner, 4), account::encode_pending(&pending));
+    store.write(own_cell(owner, 6), serial.to_le_bytes().to_vec());
 }
 
 /// The governing record a freeze writes: the rule nobody satisfies as
@@ -552,15 +557,19 @@ fn recovered_store() -> MemoryStore {
     store
 }
 
-/// Each of Alice's role-gated moves, composed by `signer`: for anyone
-/// but Alice the builder signs them in at their own account first, and
-/// the move is the second node.
+/// The serial every proposal in these tests is: each makes one, on an
+/// account that has made none.
+const FIRST: u64 = 1;
+
+/// Each of Alice's verdicts on her first proposal, composed by `signer`:
+/// for anyone but Alice the builder signs them in at their own account
+/// first, and the verdict is the second node.
 fn cancel_by(signer: PrincipalAddr) -> ManifestGraph {
-    graph_signed(signer, |b| account::cancel(b, ALICE))
+    graph_signed(signer, |b| account::cancel(b, ALICE, FIRST))
 }
 
 fn confirm_by(signer: PrincipalAddr) -> ManifestGraph {
-    graph_signed(signer, |b| account::confirm(b, ALICE))
+    graph_signed(signer, |b| account::confirm(b, ALICE, FIRST))
 }
 
 fn freeze_by(signer: PrincipalAddr) -> ManifestGraph {
@@ -572,7 +581,7 @@ fn cancel_graph() -> ManifestGraph {
 }
 
 fn promote_by(signer: PrincipalAddr) -> ManifestGraph {
-    graph_signed(signer, |b| account::promote(b, ALICE))
+    graph_signed(signer, |b| account::promote(b, ALICE, FIRST))
 }
 
 /// Whether `signer`'s key opens Alice's sign-in at `clock_ms`: her whole
@@ -653,7 +662,14 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
         panic!("propose must complete; got {:?}", results[0]);
     };
     let mut waiting = MemoryStore::new();
-    seed_pending(&mut waiting, ALICE, t0 + DAY_MS, &stored_rule(BOB), DAY_MS);
+    seed_pending(
+        &mut waiting,
+        ALICE,
+        FIRST,
+        t0 + DAY_MS,
+        &stored_rule(BOB),
+        DAY_MS,
+    );
     assert_eq!(
         receipt.delta.cells.get(&own_cell(ALICE, 4)),
         Some(&waiting.cell(own_cell(ALICE, 4))),
@@ -667,52 +683,47 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
     );
 
     // Before the instant, nothing enacts it however hard anyone tries:
-    // Alice still acts and Bob still does not.
+    // a promotion is refused as unmatured, and Alice still acts while
+    // Bob still does not.
     let before = t0 + DAY_MS - 1;
     let at = t0 + DAY_MS;
-    let promoted = |clock_ms: u64, tag: u8| {
-        let (results, after) = run_both_at(
-            &world,
-            &store,
-            &[(&promote_by(BOB), TxHash(Hash32([tag; 32])))],
-            Some(BOB),
-            clock_ms,
-        );
-        assert!(matches!(&results[0], TxResult::Completed(_)));
-        after
-    };
-    let early = promoted(before, 0x62);
-    assert_acts(&world, &early, ALICE, before, true, 0x63);
-    assert_acts(&world, &early, BOB, before, false, 0x64);
-
-    // At the instant, the recovery role may enact it — the clock has
-    // licensed it, and enacting is the only thing that moves the rule.
-    // The verdicts swap on the write rather than on the read.
-    let enacted = promoted(at, 0x65);
-    assert_acts(&world, &enacted, BOB, at, true, 0x66);
-    assert_acts(&world, &enacted, ALICE, at, false, 0x67);
-
-    // A stranger may not, matured or not: enacting is gated where
-    // proposing is, so a matured replacement is nobody's lever but the
-    // recovery role's.
-    let (results, _) = run_both_at(
+    let (results, early) = run_both_at(
         &world,
         &store,
-        &[(&promote_by(TAKER), TxHash(Hash32([0xC0; 32])))],
-        Some(TAKER),
-        at,
+        &[(&promote_by(BOB), TxHash(Hash32([0x62; 32])))],
+        Some(BOB),
+        before,
     );
     assert_eq!(
         results,
-        vec![TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 0 },
-        })],
-        "a stranger's sign-in opens no gate of Alice's"
+        vec![TxResult::Declined(account::Error::Unmatured.code())],
+        "the clock has not licensed it"
     );
+    assert_acts(&world, &early, ALICE, before, true, 0x63);
+    assert_acts(&world, &early, BOB, before, false, 0x64);
 
-    // A later cancel by the new holder drops nothing that was enacted:
-    // what enacting moved is the governing rule, and a cancel touches
-    // only what is still waiting.
+    // At the instant anyone may enact it, a stranger included: the
+    // record was authorized by the gate that wrote it, and the clock is
+    // the only condition left. The verdicts swap on the write rather
+    // than on the read.
+    let (results, enacted) = run_both_at(
+        &world,
+        &store,
+        &[(&promote_by(TAKER), TxHash(Hash32([0x65; 32])))],
+        Some(TAKER),
+        at,
+    );
+    assert!(
+        matches!(&results[0], TxResult::Completed(_)),
+        "a matured proposal is anyone's to finish; got {:?}",
+        results[0]
+    );
+    assert_acts(&world, &enacted, BOB, at, true, 0x66);
+    assert_acts(&world, &enacted, ALICE, at, false, 0x67);
+
+    // A later cancel by the new holder names a proposal that no longer
+    // waits: what enacting moved is the governing rule, and a verdict
+    // reaches only what is still pending.
     let (results, after) = run_both_at(
         &world,
         &enacted,
@@ -720,12 +731,9 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
         Some(BOB),
         at,
     );
-    let TxResult::Completed(receipt) = &results[0] else {
-        panic!("cancel must complete; got {:?}", results[0]);
-    };
     assert_eq!(
-        receipt.delta.cells.get(&auth(ALICE)),
-        None,
+        results,
+        vec![TxResult::Declined(account::Error::NoSuchProposal.code())],
         "a cancel never reaches what already governs"
     );
     assert_acts(&world, &after, BOB, at, true, 0x69);
@@ -792,22 +800,19 @@ fn recovery_withdraws_its_own_unmatured_proposal() {
     assert_acts(&world, &store, ALICE, long_after, true, 0x6A);
     assert_acts(&world, &store, BOB, long_after, false, 0x6B);
 
-    // With nothing pending, a confirmation reaches a clean verdict:
-    // one base and no proposal is what it would have written anyway,
-    // so it completes and leaves the cell where it stands.
+    // With nothing pending, a confirmation names a proposal that is not
+    // there: refused rather than a clean no-op, so the confirmer is told
+    // that what they saw was withdrawn before their verdict landed.
     let (results, after) = run_both_signed(
         &world,
         &store,
         &[(&confirm_by(MAKER), TxHash(Hash32([0x6C; 32])))],
         Some(MAKER),
     );
-    let TxResult::Completed(receipt) = &results[0] else {
-        panic!("confirm must complete; got {:?}", results[0]);
-    };
     assert_eq!(
-        receipt.delta.cells.get(&auth(ALICE)),
-        None,
-        "nothing pending is nothing to promote"
+        results,
+        vec![TxResult::Declined(account::Error::NoSuchProposal.code())],
+        "nothing pending is nothing to confirm"
     );
     assert_acts(&world, &after, ALICE, long_after, true, 0x6D);
 }
@@ -1081,9 +1086,9 @@ fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
     assert_acts(&world, &store, BOB, far, false, 0xB2);
     assert_acts(&world, &store, MAKER, far, false, 0xB3);
 
-    // No method restores a primary. `confirm` has nothing to promote,
-    // `securify` refuses a cell that is present, and the recovery-gated
-    // moves are the attacker's.
+    // No method restores a primary. `confirm` names a proposal that is
+    // not there, `securify` refuses a cell that is present, and the
+    // recovery-gated moves are the attacker's.
     let (results, store) = run_both_at(
         &world,
         &store,
@@ -1091,7 +1096,11 @@ fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
         Some(MAKER),
         far,
     );
-    assert!(matches!(&results[0], TxResult::Completed(_)));
+    assert_eq!(
+        results,
+        vec![TxResult::Declined(account::Error::NoSuchProposal.code())],
+        "nothing pending is nothing to confirm"
+    );
     assert_acts(&world, &store, ALICE, far, false, 0xB5);
 
     let securify = securify_graph(&StoredRule::claim(Claim::of_subject(ALICE)));
@@ -1171,6 +1180,77 @@ fn confirmation_enacts_a_proposal_early() {
     assert_acts(&world, &store, ALICE, t0, false, 0x71);
 }
 
+/// A verdict names the proposal its signer saw. A confirmation signed
+/// against the first proposal and included after a second replaced it
+/// is refused rather than enacting the second in its place — and the
+/// second is enacted by the verdict that names it.
+#[test]
+fn a_verdict_names_the_proposal_its_signer_saw() {
+    let world = world();
+    let store = recovered_store();
+    let t0 = env().clock_ms;
+
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&propose_by(BOB), TxHash(Hash32([0xD0; 32])))],
+        Some(BOB),
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+
+    // Bob replaces his proposal with the maker's rules before the
+    // maker's confirmation of the first is included.
+    let replace = graph_signed(BOB, |b| {
+        account::propose(
+            b,
+            ALICE,
+            governing_rule(MAKER),
+            stored_rule(MAKER),
+            stored_rule(MAKER),
+            DAY_MS,
+        )
+    });
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&replace, TxHash(Hash32([0xD1; 32])))],
+        Some(BOB),
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+
+    // The confirmation the maker signed names the first, and enacts
+    // nothing: Alice still governs and the maker does not.
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&confirm_by(MAKER), TxHash(Hash32([0xD2; 32])))],
+        Some(MAKER),
+    );
+    assert_eq!(
+        results,
+        vec![TxResult::Declined(account::Error::NoSuchProposal.code())],
+        "a verdict on a superseded proposal enacts nothing"
+    );
+    assert_acts(&world, &store, ALICE, t0, true, 0xD3);
+    assert_acts(&world, &store, MAKER, t0, false, 0xD4);
+
+    // Naming the second enacts the second.
+    let second = graph_signed(MAKER, |b| account::confirm(b, ALICE, FIRST + 1));
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&second, TxHash(Hash32([0xD5; 32])))],
+        Some(MAKER),
+    );
+    assert!(
+        matches!(&results[0], TxResult::Completed(_)),
+        "the verdict naming the proposal waiting enacts it; got {:?}",
+        results[0]
+    );
+    assert_acts(&world, &store, MAKER, t0, true, 0xD6);
+    assert_acts(&world, &store, ALICE, t0, false, 0xD7);
+}
+
 /// One hour, against the corpus day: a delay a proposal may name and
 /// this account does not yet hold.
 const HOUR_MS: u64 = 3_600_000;
@@ -1218,7 +1298,14 @@ fn a_replacement_replaces_the_delay_too_and_not_before_it_is_enacted() {
         panic!("propose must complete; got {:?}", results[0]);
     };
     let mut waiting = MemoryStore::new();
-    seed_pending(&mut waiting, ALICE, t0 + DAY_MS, &stored_rule(BOB), HOUR_MS);
+    seed_pending(
+        &mut waiting,
+        ALICE,
+        FIRST,
+        t0 + DAY_MS,
+        &stored_rule(BOB),
+        HOUR_MS,
+    );
     assert_eq!(
         receipt.delta.cells.get(&own_cell(ALICE, 4)),
         Some(&waiting.cell(own_cell(ALICE, 4))),
@@ -1261,7 +1348,14 @@ fn a_replacement_replaces_the_delay_too_and_not_before_it_is_enacted() {
         panic!("the second propose must complete; got {:?}", results[0]);
     };
     let mut sooner = MemoryStore::new();
-    seed_pending(&mut sooner, ALICE, at + HOUR_MS, &stored_rule(BOB), HOUR_MS);
+    seed_pending(
+        &mut sooner,
+        ALICE,
+        FIRST + 1,
+        at + HOUR_MS,
+        &stored_rule(BOB),
+        HOUR_MS,
+    );
     assert_eq!(
         receipt.delta.cells.get(&own_cell(ALICE, 4)),
         Some(&sooner.cell(own_cell(ALICE, 4))),
@@ -1312,6 +1406,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
     seed_pending(
         &mut replaced,
         ALICE,
+        FIRST + 1,
         later + DAY_MS,
         &stored_rule(MAKER),
         DAY_MS,

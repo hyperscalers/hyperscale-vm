@@ -42,10 +42,24 @@ pub mod account {
         amount: Quantity,
     }
 
+    /// A verdict on a proposal that is not there to answer, or an
+    /// enactment the clock has not licensed.
+    #[error]
+    enum Error {
+        /// No proposal waits under the serial named.
+        NoSuchProposal,
+        /// The proposal named has not reached its instant.
+        Unmatured,
+    }
+
     /// A replacement for the whole recovery surface, waiting on the
     /// delay that governed when it was made.
     #[record]
     struct Pending {
+        /// Which proposal this is, so a verdict names the one its signer
+        /// saw: a proposal landed between the signing and the inclusion
+        /// of a confirmation is refused rather than enacted in its place.
+        serial: u64,
         /// When it may be enacted without a confirmation.
         effective_at_ms: u64,
         /// What each cell becomes. The primary at the narrowed kind the
@@ -115,6 +129,9 @@ pub mod account {
         /// replacement replaces this too — `securify` sets the first one
         /// and every enacted proposal sets the next.
         delay_ms: Cell<u64>,
+        /// How many proposals this account has had, which is the serial
+        /// the next one takes.
+        serials: Cell<u64>,
     }
 
     impl Account {
@@ -300,7 +317,10 @@ pub mod account {
             delay_ms: u64,
         ) {
             let effective_at_ms = clock_ms().saturating_add(self.delay_ms.get());
+            let serial = self.serials.get().saturating_add(1);
+            self.serials.set(serial);
             self.pending.set(Some(Pending {
+                serial,
                 effective_at_ms,
                 primary,
                 recovery,
@@ -309,22 +329,24 @@ pub mod account {
             }));
         }
 
-        /// Enact a replacement whose delay has run out.
+        /// Enact the replacement `serial` names, whose delay has run out.
         ///
-        /// The recovery role's, like proposing and cancelling: the
-        /// party who wants it is whoever proposed it, and the gate is
-        /// the one they already opened to propose. Nothing happens
-        /// before the instant the proposal named.
-        #[requires(governs(recovery))]
-        pub fn promote(&mut self) {
-            if let Some(pending) = self.pending.get()
-                && pending.effective_at_ms <= clock_ms()
-            {
-                self.enact(pending);
+        /// Open to anyone: the record was authorized by the gate that
+        /// wrote it, and the clock is the only condition left — so the
+        /// recovered holder's own new key can finish what a guardian
+        /// began, and nobody signs twice. Before the instant the
+        /// proposal named this is a refusal rather than nothing, so a
+        /// caller is told rather than charged for a no-op.
+        pub fn promote(&mut self, serial: u64) -> Result<(), Error> {
+            let pending = self.proposal(serial)?;
+            if clock_ms() < pending.effective_at_ms {
+                return Err(Error::Unmatured);
             }
+            self.enact(pending);
+            Ok(())
         }
 
-        /// Drop the replacement waiting, whatever its instant.
+        /// Drop the replacement `serial` names, whatever its instant.
         ///
         /// Withdrawn by whoever may propose one: a replacement is the
         /// recovery rule's, so a compromised governing key cannot veto
@@ -333,16 +355,31 @@ pub mod account {
         /// whoever wanted it enacted could have enacted it, in the same
         /// transaction they proposed it or any since.
         #[requires(governs(recovery))]
-        pub fn cancel(&mut self) {
+        pub fn cancel(&mut self, serial: u64) -> Result<(), Error> {
+            self.proposal(serial)?;
             self.pending.set(None);
+            Ok(())
         }
 
-        /// Enact a replacement now, matured or not.
+        /// Enact the replacement `serial` names now, matured or not.
         #[requires(governs(confirmation))]
-        pub fn confirm(&mut self) {
-            if let Some(pending) = self.pending.get() {
-                self.enact(pending);
+        pub fn confirm(&mut self, serial: u64) -> Result<(), Error> {
+            let pending = self.proposal(serial)?;
+            self.enact(pending);
+            Ok(())
+        }
+
+        /// The replacement waiting under `serial`, or the refusal that
+        /// none is: a verdict answers the proposal its signer saw and no
+        /// other.
+        fn proposal(&self, serial: u64) -> Result<Pending, Error> {
+            let Some(pending) = self.pending.get() else {
+                return Err(Error::NoSuchProposal);
+            };
+            if pending.serial != serial {
+                return Err(Error::NoSuchProposal);
             }
+            Ok(pending)
         }
 
         /// File `pending` as the governing rules and clear the wait.

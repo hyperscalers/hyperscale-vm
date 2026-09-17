@@ -159,8 +159,8 @@ fn the_account_wrappers_match_their_signatures() {
         let governing =
             PrincipalRule::try_from(&stored).expect("a rule over principal claims encodes");
         account::propose(b, ALICE, governing, rule.clone(), rule, 86_400_000)?;
-        account::cancel(b, ALICE)?;
-        account::confirm(b, ALICE)
+        account::cancel(b, ALICE, 1)?;
+        account::confirm(b, ALICE, 1)
     });
     assert_eq!(graph.nodes.len(), 6);
 }

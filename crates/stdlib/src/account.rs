@@ -24,10 +24,10 @@ use hyperscale_vm_types::PrincipalAddr;
 #[path = "../../../guests/account/src/lib.rs"]
 mod package;
 
+pub use package::account::client::*;
 /// The replacement an account keeps while one is waiting, so a consumer
 /// can read the state a flow passes through rather than only its ends.
-pub use package::account::Pending;
-pub use package::account::client::*;
+pub use package::account::{Error, Pending};
 
 /// One replacement as the cell holds it.
 ///

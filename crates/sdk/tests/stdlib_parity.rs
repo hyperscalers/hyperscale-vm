@@ -157,25 +157,30 @@ fn account() -> Blueprint {
                 t.point(&holder.child(own(2), &[])).read();
                 t.governed_by();
                 t.point(&holder.child(own(5), &[])).read();
+                t.point(&holder.child(own(6), &[])).write();
                 t.point(&holder.child(own(4), &[])).write();
             },
         )
-        .method("promote", &[], |t: &mut Trace| {
+        // Promotion is nobody's gate: the record was authorized by the
+        // gate that wrote it, and the clock is the only condition left.
+        .method("promote", &[ParamType::U64], |t: &mut Trace| {
+            t.fallible();
             let holder = t.self_addr();
             t.point(&holder.child(own(4), &[])).write();
             t.point(&holder.child(AUTH, &[])).present().write();
             t.point(&holder.child(own(2), &[])).write();
             t.point(&holder.child(own(3), &[])).write();
             t.point(&holder.child(own(5), &[])).write();
-            t.governed_by_what_it_writes(own(2));
         })
-        .method("cancel", &[], |t: &mut Trace| {
+        .method("cancel", &[ParamType::U64], |t: &mut Trace| {
+            t.fallible();
             let holder = t.self_addr();
             t.point(&holder.child(own(2), &[])).read();
             t.governed_by();
             t.point(&holder.child(own(4), &[])).write();
         })
-        .method("confirm", &[], |t: &mut Trace| {
+        .method("confirm", &[ParamType::U64], |t: &mut Trace| {
+            t.fallible();
             let holder = t.self_addr();
             t.point(&holder.child(own(4), &[])).write();
             t.point(&holder.child(AUTH, &[])).present().write();
