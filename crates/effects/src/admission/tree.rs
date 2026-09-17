@@ -19,7 +19,7 @@ use hyperscale_vm_types::{
     IntentHash, MAX_ATTESTATIONS, MAX_INTENTS, MAX_MANIFEST_NODES, ResourceAddr,
 };
 
-use super::compose::{Fill, Produced};
+use super::fill::{Fill, Produced};
 use super::{AdmissionError, MAX_SOCKETS};
 use crate::claim::Claim;
 use crate::graph::{ClaimRef, GiveRef, GraphNode, ValueRef};

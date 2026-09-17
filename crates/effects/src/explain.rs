@@ -551,7 +551,9 @@ pub fn explain_admission_tree(
                 .collect();
             let total: usize = wired.iter().map(|view| view.graph.nodes.len()).sum();
             let wired: Vec<&Wired<'_>> = wired.iter().collect();
-            interleave(&wired, total).ok().map(|(_, order)| order)
+            interleave(&wired, total)
+                .ok()
+                .map(|interleaved| interleaved.order)
         });
     explain_placed(&graphs, order.as_deref(), records, refusal)
 }
