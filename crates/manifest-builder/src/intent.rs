@@ -486,7 +486,7 @@ impl<'a> IntentBuilder<'a> {
     ///
     /// # Panics
     ///
-    /// Past a `u32` of declarations, far beyond [`MAX_SOCKETS`], which
+    /// Past a `u32` of declarations, far beyond [`MAX_SOCKETS`](hyperscale_vm_effects::admission::MAX_SOCKETS), which
     /// the finish enforces as an error.
     pub fn declare(
         &mut self,
@@ -520,7 +520,7 @@ impl<'a> IntentBuilder<'a> {
     ///
     /// # Panics
     ///
-    /// Past a `u32` of sockets, far beyond the [`MAX_SOCKETS`] the
+    /// Past a `u32` of sockets, far beyond the [`MAX_SOCKETS`](hyperscale_vm_effects::admission::MAX_SOCKETS) the
     /// declaration is held to when it is finished.
     pub fn declare_proof(&mut self, claim: Claim) -> Proof {
         let position =
@@ -592,7 +592,7 @@ impl<'a> IntentBuilder<'a> {
     ///
     /// # Panics
     ///
-    /// Past a `u32` of members, far beyond [`MAX_INTENTS`], which
+    /// Past a `u32` of members, far beyond [`MAX_INTENTS`](hyperscale_vm_types::MAX_INTENTS), which
     /// [`build`](Self::build) enforces as an error.
     pub fn adopt(&mut self, signed: impl Into<SignedIntent>) -> Result<Interface, IntentError> {
         let signed = signed.into();

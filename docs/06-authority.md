@@ -6,6 +6,8 @@ What a method requires is package metadata, content-addressed with the code it d
 
 ## 1. What a proof carries
 
+Three words carry this document, and each names one thing. A **claim** is what a rule names and what evidence carries: a subject and, where the subject is a non-fungible resource, one instance of it. A **badge** is what a claim is about — a resource somebody holds, or the address of an account or component that nobody holds. A **proof** is how a claim reaches the call that presents it: a manifest edge from the node whose gate attested the claim, or from a socket the composer filled. A badge is held, a claim is named, a proof is presented. A badge transfers and a proof does not, and a body reads none of the three.
+
 A claim is a `Claim` (`crates/effects`), and it is one shape rather than a taxonomy:
 
 | Field | What it says |
@@ -13,7 +15,7 @@ A claim is a `Claim` (`crates/effects`), and it is one shape rather than a taxon
 | `subject` | The address the claim is about. |
 | `instance` | Which instance of it, where the subject is a non-fungible badge and the claim is about one instance rather than any. |
 
-What a subject *is* — an account acting as itself, a badge somebody holds — is its address class's answer, read where a site needs it rather than decided at construction. A claim that fixed the kind when it was built made one address mean different things depending on which site built it.
+What a subject *is* — an account acting as itself, a resource somebody holds — is its address class's answer, read where a site needs it rather than decided at construction. A claim that fixed the kind when it was built made one address mean different things depending on which site built it.
 
 **Everything an author names is a badge.** Two kinds — one somebody holds, one nobody does:
 
@@ -77,7 +79,7 @@ The five shapes an author writes are the SDK's spelling of that, not a fifth thi
 | `#[requires(<rule>)]` | claims satisfying the declared rule | whatever the rule's leaves name | nothing |
 | `#[proves(self)]` | nothing; the body decides | nothing | the component's own claim |
 | `#[requires(governs(<field>))]` | claims satisfying the rule stored at that field | that field's cell | nothing |
-| `#[proves(badge[id])]` | the holder's own claim | the badge-keyed vault, or the holdings entry at the id | the badge, and the instance |
+| `#[proves(badge[id])]` | the holder's own claim | the badge-keyed vault, or the holdings entry at the id | a claim on the badge, and one on the instance |
 
 **A declared rule names an identity the target itself names** — its own address, or a slot of its creation-fixed configuration. `Claim(SelfAddr)` is a method only the target may be made to perform; a configuration slot is how an object nobody owns admits somebody, since a pool's address derives from no key while a configured field can name a claim that does. Every leaf is checked against reading what the caller supplies: a caller who names the claim they must present can always present it, so such a rule admits everyone and is refused at publish.
 
@@ -87,7 +89,7 @@ An account has no such method, and a `#[proves(self)]` on a blueprint serving pr
 
 **`governs(<field>)` is the recovery surface.** It is judged like a declared gate but against the rule stored at the named cell, and it mints nothing, so recovery authority opens recovery methods and nothing else. While nothing is stored there, the target's own claim governs — for an account, its virtual badge — which is what lets an account's recovery cells go unwritten until it has something to recover.
 
-**A custody gate is holding as a way to mint a proof.** The holder names itself — the holder acts, nobody else presents its badges — with a possession read beside it, and the read is keyed by *exactly* the expression the gate mints, which is what makes the thing held and the identity minted one resource. The holder's own claim is the whole of the authority half: it is answered by the signature of the intent acting as them, whose keys their shard already judged, so reading their stored rule again here would reach the same verdict at the cost of a cell every participant provisions. A fungible badge reads the badge-keyed vault; a non-fungible one reads the holdings entry at the named id and mints both the instance and the badge, because a holder of an instance holds the badge: a rule naming the resource admits any holder, and one naming the instance admits its holder alone.
+**A custody gate is holding as a way to mint a claim.** The holder names itself — the holder acts, nobody else presents its badges — with a possession read beside it, and the read is keyed by *exactly* the expression the gate mints, which is what makes the thing held and the identity minted one resource. The holder's own claim is the whole of the authority half: it is answered by the signature of the intent acting as them, whose keys their shard already judged, so reading their stored rule again here would reach the same verdict at the cost of a cell every participant provisions. A fungible badge reads the badge-keyed vault; a non-fungible one reads the holdings entry at the named id and mints a claim on the instance and one on the badge, because a holder of an instance holds the badge: a rule naming the resource admits any holder, and one naming the instance admits its holder alone.
 
 The id is a manifest argument, and caller-named is not the hazard it sounds like: the refusal on caller-named authority is on the *requiring* side, where a caller naming whose authority is needed would name their own. Naming which instance you are presenting is the presenting side, and the gate reads state to confirm it.
 
