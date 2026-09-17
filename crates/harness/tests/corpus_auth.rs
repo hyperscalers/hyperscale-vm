@@ -380,6 +380,155 @@ fn a_recovery_that_keeps_the_card_leaves_the_card_in_the_way() {
     assert_eq!(amount_of(&end, vault(BOB, RES_X)), 100);
 }
 
+/// Lost card: a guardian passes the phone's rule back with a new card,
+/// and after the delay the phone opens the account beside the new card
+/// and not the old — the primary's bytes never moved.
+#[test]
+fn a_lost_card_is_replaced_by_a_guardian_around_the_phone() {
+    let world = world();
+    let store = carded_store();
+    let t0 = env().clock_ms;
+
+    let new_card = graph_signed(BOB, |b| {
+        account::propose(b, ALICE, governing_rule(ALICE), governing_rule(TAKER))
+    });
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&new_card, TxHash(Hash32([0xF5; 32])))],
+        Some(BOB),
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+    // The phone alone cannot sign in to finish it — that is the card's
+    // whole point — so a stranger does, promotion being nobody's gate.
+    let (results, store) = run_both_at(
+        &world,
+        &store,
+        &[(&promote_by(TAKER), TxHash(Hash32([0xF6; 32])))],
+        Some(TAKER),
+        t0 + DAY_MS,
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("promote must complete; got {:?}", results[0]);
+    };
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        Some(&Some(
+            Authority {
+                primary: stored_rule(ALICE),
+                confirmation: stored_rule(TAKER),
+            }
+            .in_cell()
+        )),
+        "the card moved and the phone did not"
+    );
+
+    assert_acts_together(&world, &store, &[ALICE, TAKER], true);
+    assert_acts_together(&world, &store, &[ALICE, MAKER], false);
+    assert_acts_together(&world, &store, &[ALICE], false);
+}
+
+/// Both stolen: the freeze closes the primary and leaves the card
+/// standing, so nobody acts — the thief with phone and card included;
+/// the veto gives the primary back with the card still in place; and
+/// enacting the proposal writes both factors it names.
+#[test]
+fn a_freeze_leaves_the_card_standing() {
+    let world = world();
+    let store = carded_store();
+    let t0 = env().clock_ms;
+    let both_new = graph_signed(BOB, |b| {
+        account::freeze(b, ALICE, governing_rule(BOB), governing_rule(TAKER))
+    });
+
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&both_new, TxHash(Hash32([0xF7; 32])))],
+        Some(BOB),
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("freeze must complete; got {:?}", results[0]);
+    };
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        Some(&Some(frozen(stored_rule(MAKER)))),
+        "the primary closes and the card stands"
+    );
+    assert_acts_together(&world, &store, &[ALICE, MAKER], false);
+    assert_acts_together(&world, &store, &[BOB, TAKER], false);
+
+    // The veto ends it: the phone is back beside the card it never lost.
+    let veto = graph_signed(TAKER, |b| account::veto(b, ALICE, FIRST));
+    let (results, restored) = run_both_signed(
+        &world,
+        &store,
+        &[(&veto, TxHash(Hash32([0xF8; 32])))],
+        Some(TAKER),
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("veto must complete; got {:?}", results[0]);
+    };
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        Some(&Some(
+            Authority {
+                primary: stored_rule(ALICE),
+                confirmation: stored_rule(MAKER),
+            }
+            .in_cell()
+        ))
+    );
+    assert_acts_together(&world, &restored, &[ALICE, MAKER], true);
+
+    // Or the clock does, and both factors are the proposal's.
+    let (results, enacted) = run_both_at(
+        &world,
+        &store,
+        &[(&promote_by(BOB), TxHash(Hash32([0xF9; 32])))],
+        Some(BOB),
+        t0 + DAY_MS,
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("promote must complete; got {:?}", results[0]);
+    };
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        Some(&Some(
+            Authority {
+                primary: stored_rule(BOB),
+                confirmation: stored_rule(TAKER),
+            }
+            .in_cell()
+        ))
+    );
+    assert_acts_together(&world, &enacted, &[BOB, TAKER], true);
+    assert_acts_together(&world, &enacted, &[BOB, MAKER], false);
+    assert_acts_together(&world, &enacted, &[ALICE, MAKER], false);
+}
+
+/// Rotating an account that has not securified is refused at the
+/// governing cell's door: a rotation is a rewrite through the presence
+/// requirement, never a securify without its roles.
+#[test]
+fn rotate_needs_a_governing_cell() {
+    let world = world();
+    let mut store = sealed_store();
+    store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
+    let rotate = graph(|b| account::rotate(b, ALICE, governing_rule(BOB), no_factor()));
+    let (results, _) = run_both(&world, &store, &[(&rotate, TxHash(Hash32([0xFA; 32])))]);
+    assert_eq!(
+        results,
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Holds {
+                target: EffectTarget::Point(auth(ALICE)),
+                required: Presence::Present,
+                node: Some(0),
+            },
+        })]
+    );
+}
+
 /// One hour, against the corpus day: a delay an amendment may name and
 /// this account does not yet hold.
 const HOUR_MS: u64 = 3_600_000;
@@ -947,10 +1096,65 @@ fn factors(rule: &RuleBytes, frozen: Option<&RuleBytes>) -> account::Replacement
 }
 
 /// The governing record a freeze writes: the rule nobody satisfies as
-/// the primary, the confirmation left as it stood.
-fn frozen() -> Vec<u8> {
-    Authority::primary_only(RuleBytes::try_from(&never()).expect("the empty threshold encodes"))
-        .in_cell()
+/// the primary, and `confirmation` left as it stood.
+fn frozen(confirmation: RuleBytes) -> Vec<u8> {
+    Authority {
+        primary: RuleBytes::try_from(&never()).expect("the empty threshold encodes"),
+        confirmation,
+    }
+    .in_cell()
+}
+
+/// No second factor, as the governing record holds it.
+fn no_card() -> RuleBytes {
+    RuleBytes(no_factor().0)
+}
+
+/// Whether `keys` together open Alice's sign-in: her whole transfer
+/// completes, or refuses at her cell.
+fn assert_acts_together(
+    world: &Records,
+    store: &MemoryStore,
+    keys: &[PrincipalAddr],
+    admits: bool,
+) {
+    let mut tree = acting_as(&[ALICE], transfer_graph());
+    tree.root.attested_by = keys.to_vec();
+    let (outcome, _) = run_both_tree(world, store, &tree).expect("admissible");
+    let tx = TxHash(tree.hash(&TestHasher).0);
+    let got = &outcome.receipts[&tx].outcome;
+    if admits {
+        assert!(
+            matches!(got, Outcome::Completed { .. }),
+            "{keys:?} together must open the account; got {got:?}"
+        );
+    } else {
+        assert_eq!(
+            *got,
+            Outcome::ConditionUnmet {
+                condition: UnmetCondition::SignedIn {
+                    account: ALICE.address(),
+                },
+            },
+            "{keys:?} together must not open the account"
+        );
+    }
+}
+
+/// Alice with a card: her own key is the phone, the maker's the card,
+/// Bob may recover her and the taker may veto.
+fn carded_store() -> MemoryStore {
+    let mut store = recovered_store();
+    store.write(
+        auth(ALICE),
+        Authority {
+            primary: stored_rule(ALICE),
+            confirmation: stored_rule(MAKER),
+        }
+        .in_cell(),
+    );
+    store.write(own_cell(ALICE, 3), stored_rule(TAKER).in_cell());
+    store
 }
 
 /// The split setup every recovery test starts from: Alice governs, Bob
@@ -1366,7 +1570,7 @@ fn recovery_rotates_a_hostile_primary_out() {
     };
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(frozen())),
+        Some(&Some(frozen(no_card()))),
         "a freeze writes the rule nobody satisfies, rather than removing \
          one — an unwritten cell is what the address's own key still \
          governs, so a removal would hand the account back to the key \
@@ -1614,7 +1818,7 @@ fn a_vetoed_freeze_gives_the_primary_back() {
     };
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(frozen())),
+        Some(&Some(frozen(no_card()))),
         "an unmet delay gates a takeover, never the freeze"
     );
 
@@ -1749,13 +1953,17 @@ fn an_account_without_a_veto_admits_no_veto() {
     let world = world();
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
+    let t0 = env().clock_ms;
     let securify = securify_graph(&StoredRule::claim(Claim::of_subject(BOB)));
     let (results, store) = run_both(&world, &store, &[(&securify, TxHash(Hash32([0xE0; 32])))]);
     assert!(matches!(&results[0], TxResult::Completed(_)));
+    let hostile = graph_signed(BOB, |b| {
+        account::propose(b, ALICE, governing_rule(MAKER), no_factor())
+    });
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&propose_by(BOB), TxHash(Hash32([0xE1; 32])))],
+        &[(&hostile, TxHash(Hash32([0xE1; 32])))],
         Some(BOB),
     );
     assert!(matches!(&results[0], TxResult::Completed(_)));
@@ -1775,6 +1983,20 @@ fn an_account_without_a_veto_admits_no_veto() {
             "the rule nobody satisfies admits nobody"
         );
     }
+
+    // With no arbiter, the delay is the whole of the defence: past it
+    // the proposal governs, and the key it named is the account.
+    let at = t0 + DAY_MS;
+    let (results, store) = run_both_at(
+        &world,
+        &store,
+        &[(&promote_by(TAKER), TxHash(Hash32([0xE4; 32])))],
+        Some(TAKER),
+        at,
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+    assert_acts(&world, &store, MAKER, at, true, 0xE5);
+    assert_acts(&world, &store, BOB, at, false, 0xE6);
 }
 
 /// A verdict names the proposal its signer saw. A veto signed against
