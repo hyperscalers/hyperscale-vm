@@ -1471,9 +1471,9 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
 
 /// Recovery withdraws its own unmatured proposal — a proposal is its
 /// proposer's to cancel, and nobody else's: the compromised primary
-/// cannot veto its own replacement, so there is no cancel war for it to
-/// win. Every later verdict — however far past the would-be maturity —
-/// is under the old roles, as if nothing had been proposed.
+/// cannot cancel its own replacement, so there is no cancel war for it
+/// to win. Every later verdict — however far past the would-be maturity
+/// — is under the old roles, as if nothing had been proposed.
 #[test]
 fn recovery_withdraws_its_own_unmatured_proposal() {
     let world = world();
@@ -1500,7 +1500,7 @@ fn recovery_withdraws_its_own_unmatured_proposal() {
         vec![TxResult::Refused(Outcome::ConditionUnmet {
             condition: UnmetCondition::Satisfies { node: 0 },
         })],
-        "a proposal is not the primary's to veto"
+        "a proposal is not the primary's to cancel"
     );
 
     let (results, store) = run_both_signed(
