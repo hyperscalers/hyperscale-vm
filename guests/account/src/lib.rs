@@ -487,7 +487,7 @@ pub mod account {
         /// so an address still governed by its own key cannot file a
         /// record no verdict could reach.
         fn file(&mut self, replaces: Replacement) {
-            let _ = self.auth().existing();
+            self.auth().present();
             let effective_at_ms = clock_ms().saturating_add(self.delay_ms.get());
             let serial = self.serials.get().saturating_add(1);
             self.serials.set(serial);

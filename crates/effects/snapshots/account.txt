@@ -38,7 +38,7 @@ amend(rule, rule, u64) — fallible
       0  requires claim self
       1  write self.proposal
       2  requires self.auth is present
-      3  write self.auth
+      3  read self.auth
       4  read self.delay_ms
       5  write self.serials
   exports  handle for clause 1, handles for clauses 3–5, arg0, arg1, arg2
@@ -120,7 +120,7 @@ propose(principal-rule, principal-rule) — infallible
       1  requires 1 of (the rule stored at self.recovery, 2 of (self.recovery is absent, claim self))
       2  write self.proposal
       3  requires self.auth is present
-      4  write self.auth
+      4  read self.auth
       5  read self.delay_ms
       6  write self.serials
   exports  handle for clause 2, handles for clauses 4–6, arg0, arg1

@@ -146,9 +146,9 @@ fn account() -> Blueprint {
             },
         )
         // The roles are the primary's to amend, under the delay, and a
-        // recovery proposal outranks the amendment. Every filing states
-        // the governing cell present: the recovery surface exists only
-        // once the account has securified.
+        // recovery proposal outranks the amendment. Every filing stands
+        // behind the governing cell's door without holding it: the
+        // recovery surface exists only once the account has securified.
         .method(
             "amend",
             &[ParamType::Rule, ParamType::Rule, ParamType::U64],
@@ -158,7 +158,7 @@ fn account() -> Blueprint {
                 let rule = t.claim(&holder);
                 t.guarded_by(rule);
                 t.point(&holder.child(own(4), &[])).write();
-                t.point(&holder.child(AUTH, &[])).present().write();
+                t.point(&holder.child(AUTH, &[])).present().read();
                 t.point(&holder.child(own(5), &[])).read();
                 t.point(&holder.child(own(6), &[])).write();
             },
@@ -181,7 +181,7 @@ fn account() -> Blueprint {
                 t.point(&holder.child(own(2), &[])).read();
                 t.governed_by();
                 t.point(&holder.child(own(4), &[])).write();
-                t.point(&holder.child(AUTH, &[])).present().write();
+                t.point(&holder.child(AUTH, &[])).present().read();
                 t.point(&holder.child(own(5), &[])).read();
                 t.point(&holder.child(own(6), &[])).write();
             },

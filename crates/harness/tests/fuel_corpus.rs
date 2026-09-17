@@ -93,7 +93,7 @@ fn the_corpus_costs_what_it_costs() {
         (
             "recovery proposal",
             spent(&securified(), propose_graph(), ALICE),
-            82_328,
+            75_603,
         ),
         ("swap", spent(&stocked(), swap_graph(1), ALICE), 135_694),
     ];
