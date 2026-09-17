@@ -1222,6 +1222,19 @@ impl<T: Record> Cell<Option<T>> {
         unimplemented!("{OFF_HOST}")
     }
 
+    /// Declare this leaf read and required present, and read nothing
+    /// from it.
+    ///
+    /// [`Cell::vacant`]'s other half: the door [`Cell::existing`] states,
+    /// without the hold. What a body stands behind when the leaf being
+    /// there is its precondition and nothing about the leaf is its
+    /// business — a fresh read excludes nobody and is still refused
+    /// where the leaf is absent.
+    #[inline(always)]
+    pub fn present(&self) {
+        unimplemented!("{OFF_HOST}")
+    }
+
     /// Declare this leaf held exclusively and present, and read nothing
     /// from it.
     ///
@@ -1489,6 +1502,12 @@ impl<T: Record> Slot<Option<T>> {
     #[inline(always)]
     #[allow(clippy::unused_self)] // the clause is the whole of it
     pub const fn vacant(&self) {}
+
+    /// Declare this leaf read and required present, on the terms
+    /// [`Cell::present`] states — and run nowhere.
+    #[inline(always)]
+    #[allow(clippy::unused_self)] // the clause is the whole of it
+    pub const fn present(&self) {}
 }
 
 /// The whole of what a body does with a sealed cell.

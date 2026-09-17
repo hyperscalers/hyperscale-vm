@@ -510,6 +510,11 @@ pub enum Op {
     /// make every caller queue behind every other, which is a different
     /// operation from the one being gated.
     Vacant,
+    /// `present()` — the same fresh read, requiring the leaf there.
+    ///
+    /// What `existing` states without the hold: a door a body stands
+    /// behind without touching what is behind it.
+    Present,
 }
 
 impl Op {
@@ -546,6 +551,7 @@ impl Op {
         "retire",
         "rewrite",
         "vacant",
+        "present",
     ];
 
     /// The operation a method name implies, if it is one of the vocabulary.
@@ -571,6 +577,7 @@ impl Op {
                 Some(Self::Existing)
             }
             "vacant" => Some(Self::Vacant),
+            "present" => Some(Self::Present),
             _ => None,
         }
     }

@@ -1,4 +1,4 @@
-error: `siphon` names no operation a declaration can carry, so what it reaches the kernel for is not what this method declares. One of: get, count, covered, entry, order, balance, pick, picked, put, declared_credit, file, take, declared_debit, declared, reserve, set, insert, remove, create, seal, existing, exclusive, open, reseal, retire, rewrite, vacant
+error: `siphon` names no operation a declaration can carry, so what it reaches the kernel for is not what this method declares. One of: get, count, covered, entry, order, balance, pick, picked, put, declared_credit, file, take, declared_debit, declared, reserve, set, insert, remove, create, seal, existing, exclusive, open, reseal, retire, rewrite, vacant, present
   --> tests/refusals/unmodelled_handle_op.rs:22:29
    |
 22 |             self.till.at(a).siphon(amount);

@@ -88,7 +88,11 @@ pub fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
             one_way.map_or_else(|| quote!(.create()), |word| quote!(.absent() #word)),
         ));
     }
-    if has(Op::Existing).is_some() {
+    // A presence-only read beside a write is the same requirement over
+    // the exclusive mode the write makes, which is what `existing` says.
+    let moves = has(Op::Move).is_some() || credits || debits;
+    let held = has(Op::Present).is_some() && (has(Op::Set).is_some() || moves);
+    if has(Op::Existing).is_some() || held {
         return Some((
             nothing,
             one_way.map_or_else(|| quote!(.existing()), |word| quote!(.present() #word)),
@@ -97,12 +101,14 @@ pub fn mode(site: &Site) -> Option<(TokenStream, TokenStream)> {
     if has(Op::Vacant).is_some() {
         return Some((nothing, quote!(.vacant())));
     }
+    if has(Op::Present).is_some() {
+        return Some((nothing, quote!(.present().read())));
+    }
 
     // The same order the resource derivation reads: an assignment or a
     // read makes the mode exclusive, and a movement without either
     // commutes — each carrying the directions its value operations
     // kept, so the site is judged on the movement the body makes.
-    let moves = has(Op::Move).is_some() || credits || debits;
     if has(Op::Set).is_some() || (moves && has(Op::Get).is_some()) {
         Some((nothing, one_way.unwrap_or_else(|| quote!(.write()))))
     } else if has(Op::Get).is_some() {

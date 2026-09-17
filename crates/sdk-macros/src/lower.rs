@@ -1434,6 +1434,7 @@ impl<'a> Lowerer<'a> {
                     | Op::Create
                     | Op::Existing
                     | Op::Vacant
+                    | Op::Present
             )
         };
         let compatible = match op {
@@ -1449,7 +1450,8 @@ impl<'a> Lowerer<'a> {
             | Op::Debit
             | Op::Create
             | Op::Existing
-            | Op::Vacant => entry.ops.iter().all(|(prior, _)| exclusive(prior)),
+            | Op::Vacant
+            | Op::Present => entry.ops.iter().all(|(prior, _)| exclusive(prior)),
             // A reservation folds with nothing, itself included, so it
             // is the only op a handle may carry and it may carry it once.
             Op::Reserve => entry.ops.is_empty(),
@@ -1470,7 +1472,10 @@ impl<'a> Lowerer<'a> {
                  state satisfies both. Mint in one call, and burn what an edge \
                  carries in another",
             ),
-            (Op::Create, Op::Existing) | (Op::Existing, Op::Create) => Some(
+            (Op::Create, Op::Existing | Op::Present)
+            | (Op::Existing | Op::Present, Op::Create)
+            | (Op::Present, Op::Vacant)
+            | (Op::Vacant, Op::Present) => Some(
                 "one access requires the leaf to be absent and to be there — no \
                  committed state satisfies both, so the call could never be \
                  feasible. Declare the one the body actually needs",
@@ -1485,6 +1490,9 @@ impl<'a> Lowerer<'a> {
                  same leaf, so the site has two modes and no way to declare both. \
                  Use `create` for a write that requires absence",
             ),
+            // A fresh read requiring presence beside a write is what
+            // `existing` states, and folds to it: the requirement rides
+            // the exclusive mode the write already makes.
             _ => None,
         };
         if let Some(message) = entry.ops.iter().find_map(|(prior, _)| refusal(*prior, op)) {

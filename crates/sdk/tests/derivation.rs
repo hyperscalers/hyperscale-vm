@@ -18,10 +18,10 @@
 
 use hyperscale_vm_effects::{
     Clause, GrantRuleExpr, GrantSubject, GrantedBehaviour, GrantsExpr, ModeExpr, ResourceKind,
-    RuleExpr, SlotRef,
+    RuleExpr, RuleLeaf, SlotRef,
 };
 use hyperscale_vm_sdk::blueprint;
-use hyperscale_vm_types::Moves;
+use hyperscale_vm_types::{Moves, Presence};
 
 /// Control-flow spellings of one access set, each beside its straight-line
 /// equivalent. A conditional access is declared on every arm, so whichever
@@ -119,6 +119,12 @@ mod shapes {
             let _ = self.notes.at(id).existing();
         }
 
+        /// The door without the hold: required there, read, and not
+        /// written.
+        pub fn behind(&mut self, id: u64) {
+            self.notes.at(id).present();
+        }
+
         /// An enum record is written through the same door a struct is,
         /// and read back by the arm it holds.
         pub fn kinded(&mut self, id: u64, weight: u64) -> u64 {
@@ -173,6 +179,37 @@ fn every_spelling_of_a_conditional_declares_the_same_accesses() {
         effects("refiled"),
         effects("touched"),
         "a rewrite is a write through the door `existing` states"
+    );
+    // The read-side door: the same requirement, over a read rather
+    // than the exclusive hold `existing` carries.
+    assert_ne!(
+        effects("behind"),
+        effects("touched"),
+        "present is not existing"
+    );
+    let behind = effects("behind");
+    assert!(
+        behind.iter().any(|clause| matches!(
+            clause,
+            Clause::Requires {
+                rule: RuleExpr::Require(RuleLeaf::Presence {
+                    expect: Presence::Present,
+                    ..
+                }),
+                ..
+            }
+        )),
+        "present requires the leaf there"
+    );
+    assert!(
+        behind.iter().any(|clause| matches!(
+            clause,
+            Clause::Effect {
+                mode: ModeExpr::Read,
+                ..
+            }
+        )),
+        "and reads it"
     );
     assert!(
         !metadata.methods["refiled"].effects.is_empty(),
