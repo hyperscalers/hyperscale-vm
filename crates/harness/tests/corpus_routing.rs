@@ -149,13 +149,13 @@ fn the_catalogue_routes_to_pinned_vectors() {
     );
 }
 
-const PIN_TRANSFER: &str = "8108c78655dbbabeb8615764f359fb68e2b207d7fa3ad62224e1aea54dfb6325";
+const PIN_TRANSFER: &str = "39a77bd9ee132f3ca1fad2229a288b43be53f5aeec09cfd4d4ce1108ac382124";
 
-const PIN_SWAP: &str = "dadd1ec6b22a01c3faf517252e12677484de01638c681d0ea4f9169b0abe5fbe";
+const PIN_SWAP: &str = "988829945b9d4730affe6b1fba34e9d38c5097236b4e2498e17505ce68b647c6";
 
-const PIN_FILL: &str = "9f77f65c1d3acf9686a8efcc3e8de0b63dbf8a1450ee922b2f9f6a924085b7ff";
+const PIN_FILL: &str = "b233cc8c616fce466e8292538e19750e44b3630c3611b1acc858daffa609058b";
 
-const PIN_PROPOSE: &str = "95b5be08f11af5376a2d0158e49fe2e1c28cc51569476c80db2d1848c5991068";
+const PIN_PROPOSE: &str = "9e39ef67d3c620f4e3ff89957d8bd99b58a15b09f964b87fa3c7190c79f84efa";
 
 /// One catalogue pattern and the star its shape implies.
 struct Shape {

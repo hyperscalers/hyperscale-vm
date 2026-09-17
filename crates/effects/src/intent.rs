@@ -290,15 +290,21 @@ pub struct Member {
 }
 
 const DOMAIN_INTENT: &[u8] = b"hyperscale-vm/intent";
-const DOMAIN_INTENT_TREE: &[u8] = b"hyperscale-vm/envelope-tree";
+const DOMAIN_INTENT_TREE: &[u8] = b"hyperscale-vm/intent-tree";
 
 impl Intent {
     /// The intent's identity through the hasher seam: the header, the
-    /// accounts, the attesting principals, the graph hash, every socket,
-    /// every give, and every member's hash with its wiring, each part
-    /// carrying its canonical encoding. A member's attestations stay
-    /// out: they are transport, and the principals they pair with are
-    /// in the member's own hash.
+    /// accounts, the attesting principals, the graph hash, then the
+    /// sockets, the gives, and every member's hash with its wiring, each
+    /// section led by its count and each part carrying its canonical
+    /// encoding. A member's attestations stay out: they are transport,
+    /// and the principals they pair with are in the member's own hash.
+    ///
+    /// The counts are what make the section boundaries part of the
+    /// preimage. The hasher frames each part, so the part sequence is
+    /// injective; where one section ends and the next begins would
+    /// otherwise be recoverable only from the parts' widths, which a
+    /// narrower socket or address encoding could make ambiguous.
     ///
     /// The fields are destructured rather than read one at a time, and
     /// the header enters whole through its own encoding, because
@@ -346,18 +352,27 @@ impl Intent {
             "one hash per member, in the composer's order"
         );
         let graph = graph.hash(hasher);
+        let count = |len: usize| {
+            u32::try_from(len)
+                .expect("every section is wire-bounded")
+                .to_le_bytes()
+                .to_vec()
+        };
         let mut parts: Vec<Vec<u8>> =
-            Vec::with_capacity(4 + sockets.len() + gives.len() + 2 * composed.len());
+            Vec::with_capacity(7 + sockets.len() + gives.len() + 2 * composed.len());
         parts.push(to_vec(header).expect("a header is scalars"));
         parts.push(to_vec(accounts).expect("accounts are bounded addresses"));
         parts.push(to_vec(attested_by).expect("attesting principals are bounded addresses"));
         parts.push(graph.0.0.to_vec());
+        parts.push(count(sockets.len()));
         for socket in sockets {
             parts.push(to_vec(socket).expect("a socket is shallow"));
         }
+        parts.push(count(gives.len()));
         for give in gives {
             parts.push(to_vec(give).expect("a give is two indices"));
         }
+        parts.push(count(composed.len()));
         for (member, hash) in composed.iter().zip(members) {
             parts.push(hash.0.0.to_vec());
             parts.push(to_vec(&member.wiring).expect("wiring is bounded indices"));
