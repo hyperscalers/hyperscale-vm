@@ -338,7 +338,11 @@ fn a_give_the_composition_never_took_is_refused() {
     root.bind(sockets.one().unwrap(), funds).unwrap();
     assert_eq!(
         root.build(),
-        Err(IntentError::UnconsumedGive { intent: 1, give: 0 })
+        Err(IntentError::Structure(AdmissionError::UnconsumedGive {
+            intent: 0,
+            member: 0,
+            give: 0
+        }))
     );
 }
 
@@ -371,10 +375,12 @@ fn an_adopted_socket_consumed_from_the_other_channel_is_refused() {
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert_eq!(
         root.adopt(SignedIntent::unsigned(request)).map(|_| ()),
-        Err(IntentError::SocketChannelMismatch {
+        Err(IntentError::Structure(AdmissionError::SocketKindMismatch {
             intent: 1,
-            socket: 0
-        })
+            socket: 0,
+            declared: "value",
+            offered: "a proof",
+        }))
     );
 
     // An authority socket, filled into an argument position.
@@ -383,10 +389,12 @@ fn an_adopted_socket_consumed_from_the_other_channel_is_refused() {
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert_eq!(
         root.adopt(SignedIntent::unsigned(request)).map(|_| ()),
-        Err(IntentError::SocketChannelMismatch {
+        Err(IntentError::Structure(AdmissionError::SocketKindMismatch {
             intent: 1,
-            socket: 0
-        })
+            socket: 0,
+            declared: "authority",
+            offered: "an edge",
+        }))
     );
 }
 
@@ -412,7 +420,10 @@ fn a_presented_record_too_deep_to_encode_refuses_at_build() {
     let refused = root
         .build()
         .expect_err("a record the wire could not carry never becomes a tree");
-    assert_eq!(refused, IntentError::InstanceValueTooDeep { instance: 0 });
+    assert_eq!(
+        refused,
+        IntentError::Structure(AdmissionError::InstanceValueTooDeep { instance: 0 })
+    );
 }
 
 /// Records ride the tree beside the root, so an intent finished as a
@@ -472,10 +483,10 @@ fn a_presented_declaration_that_discharges_nothing_is_refused() {
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert!(matches!(
         root.adopt(SignedIntent::unsigned(malformed)),
-        Err(IntentError::UnconsumedSocket {
+        Err(IntentError::Structure(AdmissionError::UnconsumedSocket {
             intent: 1,
             socket: 1
-        })
+        }))
     ));
 }
 
@@ -492,7 +503,10 @@ fn a_presented_declaration_giving_what_it_does_not_hold_is_refused() {
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert!(matches!(
         root.adopt(SignedIntent::unsigned(malformed)),
-        Err(IntentError::UnknownGive { intent: 1, give: 0 })
+        Err(IntentError::Structure(AdmissionError::UnknownGive {
+            intent: 1,
+            give: 0
+        }))
     ));
 }
 
@@ -507,10 +521,10 @@ fn a_hole_the_graph_never_consumes_is_refused() {
     account::deposit(&mut root, ALICE, funds).unwrap();
     assert!(matches!(
         root.into_decl(),
-        Err(IntentError::UnconsumedSocket {
+        Err(IntentError::Structure(AdmissionError::UnconsumedSocket {
             intent: 0,
             socket: 0
-        })
+        }))
     ));
 }
 
@@ -526,10 +540,10 @@ fn a_hole_two_arguments_consume_is_refused() {
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert!(matches!(
         root.adopt(SignedIntent::unsigned(malformed)),
-        Err(IntentError::SocketReused {
+        Err(IntentError::Structure(AdmissionError::SocketReused {
             intent: 1,
             socket: 0
-        })
+        }))
     ));
 }
 
@@ -549,10 +563,11 @@ fn a_parameter_the_intent_never_declared_is_refused() {
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert!(matches!(
         root.adopt(SignedIntent::unsigned(malformed)),
-        Err(IntentError::UnknownSocket {
+        Err(IntentError::Structure(AdmissionError::UnknownSocket {
             intent: 1,
+            node: 0,
             socket: 3
-        })
+        }))
     ));
 }
 
@@ -566,10 +581,9 @@ fn a_root_declaring_an_interface_is_refused() {
     account::deposit(&mut root, ALICE, taken).unwrap();
     assert_eq!(
         root.build(),
-        Err(IntentError::UnfilledSocket {
-            intent: 0,
+        Err(IntentError::Structure(AdmissionError::RootSockets {
             socket: 0
-        })
+        }))
     );
 
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
@@ -577,7 +591,9 @@ fn a_root_declaring_an_interface_is_refused() {
     root.give(funds);
     assert_eq!(
         root.build(),
-        Err(IntentError::UnconsumedGive { intent: 0, give: 0 })
+        Err(IntentError::Structure(AdmissionError::RootGives {
+            give: 0
+        }))
     );
 }
 

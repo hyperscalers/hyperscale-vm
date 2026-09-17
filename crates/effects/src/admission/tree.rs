@@ -19,8 +19,8 @@ use hyperscale_vm_types::{
     IntentHash, MAX_ATTESTATIONS, MAX_INTENTS, MAX_MANIFEST_NODES, ResourceAddr,
 };
 
-use super::AdmissionError;
 use super::compose::{Fill, Produced};
+use super::{AdmissionError, MAX_SOCKETS};
 use crate::claim::Claim;
 use crate::graph::{ClaimRef, GiveRef, GraphNode, ValueRef};
 use crate::hash::{Hash32, Hasher};
@@ -36,10 +36,6 @@ use crate::intent::{Binding, Intent, MAX_ACCOUNTS, MAX_TREE_DEPTH, Socket};
 pub struct Resolution {
     /// One fill per declared socket.
     pub(crate) fills: Vec<Fill>,
-    /// Per declared socket, how many of this intent's own wiring
-    /// entries pass it on to a member. A use like any node's, counted
-    /// beside them.
-    pub(crate) wired_uses: Vec<u32>,
     /// Per member, per give, the edge that produces it.
     pub(crate) member_gives: Vec<Vec<Produced>>,
 }
@@ -154,8 +150,10 @@ pub fn walk(root: &Intent) -> Flattened<'_> {
 /// no more nodes between them than [`MAX_MANIFEST_NODES`]; every intent
 /// acting as at least one account and at most [`MAX_ACCOUNTS`], none
 /// twice; attested by at least one principal and at most
-/// [`MAX_ATTESTATIONS`], none twice; and every member wired once per
-/// socket it declares.
+/// [`MAX_ATTESTATIONS`], none twice; every member wired once per socket
+/// it declares; every intent structurally sound on
+/// [`check_structure`]'s terms; and the root declaring no interface,
+/// since nothing is above it.
 ///
 /// The whole of what admission holds a tree to before it reads any
 /// binding, and what [`decode_tree`](crate::decode_tree) holds a
@@ -225,8 +223,203 @@ pub fn flatten(root: &Intent) -> Result<Flattened<'_>, AdmissionError> {
                 });
             }
         }
+        check_structure(intent, intent_index)?;
+    }
+    if !root.sockets.is_empty() {
+        return Err(AdmissionError::RootSockets { socket: 0 });
+    }
+    if !root.gives.is_empty() {
+        return Err(AdmissionError::RootGives { give: 0 });
     }
     Ok(flat)
+}
+
+/// Hold one intent to what its own declaration says, resolving nothing
+/// against the tree.
+///
+/// Every socket its graph and its wiring reach is declared and reached
+/// from the channel its kind speaks — a value socket by exactly one
+/// argument or pass-through, an authority socket by at least one
+/// presentation or grant; every give names an output of its own graph
+/// or a give of a member it has; and every member's give is taken
+/// exactly once, as an argument, in the wiring, or given on.
+///
+/// The one statement of these rules. Admission holds every intent of a
+/// tree to it through [`flatten`], and the builder holds an intent to it
+/// as it is finished and every member to it as it is adopted, so what
+/// the builder refuses is exactly what admission would. `at` is the
+/// intent's number in whatever the caller is numbering — its position
+/// in tree order here, the builder's own coordinates there.
+///
+/// A reference past what a member or a socket declares is left to
+/// whoever reads it against the tree: the wiring's sources are the
+/// resolver's, and an argument's are the lowering's.
+///
+/// # Errors
+///
+/// Any [`AdmissionError`] the declaration earns.
+pub fn check_structure(intent: &Intent, at: u32) -> Result<(), AdmissionError> {
+    if intent.sockets.len() > MAX_SOCKETS {
+        return Err(AdmissionError::TooManySockets { intent: at });
+    }
+    if intent.gives.len() > MAX_SOCKETS {
+        return Err(AdmissionError::TooManyGives { intent: at });
+    }
+    check_socket_uses(intent, at)?;
+    check_gives_held(intent, at)?;
+    check_member_gives_taken(intent, at)
+}
+
+/// Every socket declared, reached from the right channel, and reached
+/// once where value and at least once where authority.
+fn check_socket_uses(intent: &Intent, at: u32) -> Result<(), AdmissionError> {
+    let mut uses = vec![0u32; intent.sockets.len()];
+    let mut reach = |socket: u32, as_value: bool, node: Option<u32>| {
+        let Some((position, declared)) = usize::try_from(socket)
+            .ok()
+            .and_then(|position| Some((position, intent.sockets.get(position)?)))
+        else {
+            // A node naming a socket the intent does not declare is the
+            // declaration's own defect; wiring naming one is the
+            // resolver's to refuse against the member it fills.
+            return node.map_or(Ok(()), |node| {
+                Err(AdmissionError::UnknownSocket {
+                    intent: at,
+                    node,
+                    socket,
+                })
+            });
+        };
+        let value = matches!(declared, Socket::Value { .. });
+        if value != as_value {
+            return Err(AdmissionError::SocketKindMismatch {
+                intent: at,
+                socket,
+                declared: if value { "value" } else { "authority" },
+                offered: if as_value { "an edge" } else { "a proof" },
+            });
+        }
+        uses[position] += 1;
+        Ok(())
+    };
+    for (index, node) in intent.graph.nodes.iter().enumerate() {
+        let node_index = as_u32(index);
+        for socket in node.args.iter().filter_map(|arg| arg.source()?.socket()) {
+            reach(socket, true, Some(node_index))?;
+        }
+        for reference in &node.evidence {
+            if let ClaimRef::Socket(socket) = reference {
+                reach(*socket, false, Some(node_index))?;
+            }
+        }
+    }
+    for binding in intent.members.iter().flat_map(|member| &member.wiring) {
+        match binding {
+            Binding::Value(ValueRef::Socket(socket)) => reach(*socket, true, None)?,
+            Binding::Authority(ClaimRef::Socket(socket)) => reach(*socket, false, None)?,
+            Binding::Value(ValueRef::Edge(_) | ValueRef::Give(_))
+            | Binding::Authority(ClaimRef::Node(_) | ClaimRef::Account(_)) => {}
+        }
+    }
+    for (position, count) in uses.iter().enumerate() {
+        let socket = as_u32(position);
+        if *count == 0 {
+            return Err(AdmissionError::UnconsumedSocket { intent: at, socket });
+        }
+        // Value is conserved and authority is not: an edge fills one
+        // argument, and presenting a claim twice says nothing
+        // presenting it once does not.
+        if matches!(intent.sockets[position], Socket::Value { .. }) && *count > 1 {
+            return Err(AdmissionError::SocketReused { intent: at, socket });
+        }
+    }
+    Ok(())
+}
+
+/// Every give an output of the intent's own graph, or a give of a
+/// member it has. Never a socket of its own, which would route the
+/// composer's value back to it.
+fn check_gives_held(intent: &Intent, at: u32) -> Result<(), AdmissionError> {
+    for (position, give) in intent.gives.iter().enumerate() {
+        let held = match give {
+            ValueRef::Edge(edge) => usize::try_from(edge.producer)
+                .is_ok_and(|producer| producer < intent.graph.nodes.len()),
+            ValueRef::Give(give) => usize::try_from(give.member)
+                .ok()
+                .and_then(|member| intent.members.get(member))
+                .zip(usize::try_from(give.give).ok())
+                .is_some_and(|(member, give)| give < member.signed.intent.gives.len()),
+            ValueRef::Socket(_) => false,
+        };
+        if !held {
+            return Err(AdmissionError::UnknownGive {
+                intent: at,
+                give: as_u32(position),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Every member's give taken exactly once: as an argument, in the
+/// wiring, or given on.
+fn check_member_gives_taken(intent: &Intent, at: u32) -> Result<(), AdmissionError> {
+    let mut counts: Vec<Vec<u32>> = intent
+        .members
+        .iter()
+        .map(|member| vec![0u32; member.signed.intent.gives.len()])
+        .collect();
+    let consumptions = intent
+        .graph
+        .nodes
+        .iter()
+        .flat_map(GraphNode::gives)
+        .chain(
+            intent
+                .members
+                .iter()
+                .flat_map(|member| &member.wiring)
+                .filter_map(|binding| match binding {
+                    Binding::Value(source) => source.give(),
+                    Binding::Authority(_) => None,
+                }),
+        )
+        .chain(intent.gives.iter().filter_map(|give| give.give()));
+    for give in consumptions {
+        if let Some(count) = usize::try_from(give.member)
+            .ok()
+            .and_then(|member| counts.get_mut(member))
+            .and_then(|gives| {
+                usize::try_from(give.give)
+                    .ok()
+                    .and_then(|g| gives.get_mut(g))
+            })
+        {
+            *count += 1;
+        }
+    }
+    for (member, per_give) in counts.iter().enumerate() {
+        for (give, count) in per_give.iter().enumerate() {
+            match *count {
+                1 => {}
+                0 => {
+                    return Err(AdmissionError::UnconsumedGive {
+                        intent: at,
+                        member: as_u32(member),
+                        give: as_u32(give),
+                    });
+                }
+                _ => {
+                    return Err(AdmissionError::GiveReused {
+                        intent: at,
+                        member: as_u32(member),
+                        give: as_u32(give),
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Resolve every interface of a flattened tree.
@@ -265,7 +458,6 @@ impl Resolver<'_> {
             }
             member_gives.push(per_member);
         }
-        self.check_give_uses()?;
 
         let mut resolutions = Vec::with_capacity(self.intents.len());
         for (at, intent) in self.intents.iter().enumerate() {
@@ -273,24 +465,8 @@ impl Resolver<'_> {
             for socket in 0..intent.sockets.len() {
                 fills.push(self.fill(at, socket)?);
             }
-            let mut wired_uses = vec![0u32; intent.sockets.len()];
-            for binding in intent.members.iter().flat_map(|member| &member.wiring) {
-                let passed = match binding {
-                    Binding::Value(ValueRef::Socket(socket))
-                    | Binding::Authority(ClaimRef::Socket(socket)) => Some(*socket),
-                    Binding::Value(ValueRef::Edge(_) | ValueRef::Give(_))
-                    | Binding::Authority(ClaimRef::Node(_) | ClaimRef::Account(_)) => None,
-                };
-                if let Some(count) = passed
-                    .and_then(|socket| usize::try_from(socket).ok())
-                    .and_then(|socket| wired_uses.get_mut(socket))
-                {
-                    *count += 1;
-                }
-            }
             resolutions.push(Resolution {
                 fills,
-                wired_uses,
                 member_gives: member_gives[at].clone(),
             });
         }
@@ -334,84 +510,6 @@ impl Resolver<'_> {
             // itself, so a give names an edge or a member's give alone.
             ValueRef::Socket(_) => Err(unknown()),
         }
-    }
-
-    /// Every give is consumed exactly once by the intent above it: as
-    /// an argument of the composer's graph, in the composer's wiring, or
-    /// in the composer's own gives. A give the root declares has nobody
-    /// above it and is refused as unconsumed.
-    fn check_give_uses(&self) -> Result<(), AdmissionError> {
-        for (at, intent) in self.intents.iter().enumerate() {
-            let mut uses: Vec<Vec<u32>> = (0..intent.members.len())
-                .map(|position| {
-                    vec![
-                        0u32;
-                        self.intents[self.structure.member(at, position)]
-                            .gives
-                            .len()
-                    ]
-                })
-                .collect();
-            let taken = intent
-                .graph
-                .nodes
-                .iter()
-                .flat_map(GraphNode::gives)
-                .chain(
-                    intent
-                        .members
-                        .iter()
-                        .flat_map(|member| &member.wiring)
-                        .filter_map(|binding| match binding {
-                            Binding::Value(ValueRef::Give(give)) => Some(*give),
-                            Binding::Value(ValueRef::Edge(_) | ValueRef::Socket(_))
-                            | Binding::Authority(_) => None,
-                        }),
-                )
-                .chain(intent.gives.iter().filter_map(|give| give.give()));
-            for give in taken {
-                if let Some(count) = usize::try_from(give.member)
-                    .ok()
-                    .and_then(|member| uses.get_mut(member))
-                    .and_then(|gives| {
-                        usize::try_from(give.give)
-                            .ok()
-                            .and_then(|g| gives.get_mut(g))
-                    })
-                {
-                    *count += 1;
-                }
-                // An out-of-range reference is refused where it is read:
-                // by the lowering for an argument, by `fill` for wiring,
-                // by `yielded` for a give.
-            }
-            for (position, counts) in uses.iter().enumerate() {
-                let member = as_u32(self.structure.member(at, position));
-                for (give, count) in counts.iter().enumerate() {
-                    match *count {
-                        0 => {
-                            return Err(AdmissionError::UnconsumedGive {
-                                intent: member,
-                                give: as_u32(give),
-                            });
-                        }
-                        1 => {}
-                        _ => {
-                            return Err(AdmissionError::GiveReused {
-                                intent: member,
-                                give: as_u32(give),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(root) = self.intents.first()
-            && !root.gives.is_empty()
-        {
-            return Err(AdmissionError::UnconsumedGive { intent: 0, give: 0 });
-        }
-        Ok(())
     }
 
     /// What fills socket `socket` of `intent`: the composer's wiring

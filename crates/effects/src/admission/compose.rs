@@ -12,8 +12,8 @@ use std::ops::Deref;
 
 use hyperscale_vm_types::{IntentHash, PrincipalAddr, ResourceAddr};
 
+use super::AdmissionError;
 use super::tree::Resolution;
-use super::{AdmissionError, MAX_SOCKETS};
 use crate::graph::{Constraint, EdgeRef, GraphArg, ManifestGraph};
 use crate::instance::InstanceMeta;
 use crate::intent::Socket;
@@ -275,17 +275,11 @@ impl<'a> Deref for IntentView<'a> {
     }
 }
 
-/// Fills and parameter consumption, intent by intent: one fill per
-/// socket, every fill naming a real source, every socket consumed by
-/// exactly one node argument or pass-through where it carries value and
-/// by at least one where it carries authority.
+/// Fills, intent by intent: one per socket, each naming a real source,
+/// each of the channel its socket declares. What an intent's own graph
+/// and wiring make of its sockets was held by the tree's shape.
 pub(super) fn check_bindings(intents: &[&Wired<'_>]) -> Result<(), AdmissionError> {
     for (index, intent) in intents.iter().enumerate() {
-        if intent.sockets.len() > MAX_SOCKETS {
-            return Err(AdmissionError::TooManySockets {
-                intent: u32::try_from(index).expect("intents are bounded by MAX_INTENTS"),
-            });
-        }
         let intent_index = u32::try_from(index).expect("intents are bounded by MAX_INTENTS");
         let fills = &intent.resolution.fills;
         if fills.len() != intent.sockets.len() {
@@ -338,39 +332,6 @@ pub(super) fn check_bindings(intents: &[&Wired<'_>]) -> Result<(), AdmissionErro
                         Fill::Value { .. } => "an edge",
                         Fill::Claim { .. } | Fill::Account(_) => "a proof",
                     },
-                });
-            }
-        }
-        let mut uses = vec![0u32; intent.sockets.len()];
-        for node in &intent.graph.nodes {
-            for socket in node.sockets() {
-                if let Some(count) = usize::try_from(socket)
-                    .ok()
-                    .and_then(|position| uses.get_mut(position))
-                {
-                    *count += 1;
-                }
-            }
-        }
-        for (count, wired) in uses.iter_mut().zip(&intent.resolution.wired_uses) {
-            *count += wired;
-        }
-        for (position, count) in uses.iter().enumerate() {
-            let socket = u32::try_from(position).expect("bounded by MAX_SOCKETS");
-            if *count == 0 {
-                return Err(AdmissionError::UnconsumedSocket {
-                    intent: intent_index,
-                    socket,
-                });
-            }
-            // Value is conserved and authority is not: an edge fills one
-            // argument, and presenting a claim twice says nothing
-            // presenting it once does not.
-            let value = matches!(intent.sockets.get(position), Some(Socket::Value { .. }));
-            if value && *count > 1 {
-                return Err(AdmissionError::SocketReused {
-                    intent: intent_index,
-                    socket,
                 });
             }
         }

@@ -559,6 +559,21 @@ impl IntentTree {
         }
     }
 
+    /// Hold the tree to its shape: everything [`flatten`] holds a tree
+    /// to, and the value depth of every literal and presented record —
+    /// what has to be true before anything hashes or walks it.
+    ///
+    /// # Errors
+    ///
+    /// Any [`AdmissionError`] the shape earns.
+    pub fn check_shape(&self) -> Result<(), AdmissionError> {
+        let flat = flatten(&self.root)?;
+        for intent in flat.intents() {
+            check_value_depth(&intent.graph)?;
+        }
+        check_instance_value_depth(&self.instances)
+    }
+
     /// Every intent's hash, in tree order, each computed once.
     ///
     /// [`Intent::hash`] recomputes the subtree beneath every member it
@@ -1240,7 +1255,7 @@ pub enum TreeDecodeError {
 /// its shape.
 pub fn decode_tree(bytes: &[u8]) -> Result<IntentTree, TreeDecodeError> {
     let tree: IntentTree = from_slice_with_depth(bytes, TREE_WIRE_DEPTH)?;
-    flatten(&tree.root)?;
+    tree.check_shape()?;
     Ok(tree)
 }
 

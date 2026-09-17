@@ -191,22 +191,46 @@ pub enum AdmissionError {
         /// The give's position in its declaration.
         give: u32,
     },
-    /// A give nothing above the intent consumes. The root's gives are
-    /// this by construction: nothing is above it.
-    #[error("intent {intent} give {give} is consumed by nothing")]
+    /// A member's give its composer never takes: not as an argument,
+    /// not in the wiring, not given on.
+    #[error("intent {intent} takes nothing from give {give} of its member {member}")]
     UnconsumedGive {
-        /// The giving intent, in tree order.
+        /// The composing intent, in tree order.
         intent: u32,
-        /// The give's position in its declaration.
+        /// The member, by its position among the composer's members.
+        member: u32,
+        /// The give's position in the member's declaration.
         give: u32,
     },
-    /// A give the composer consumes more than once. Value is conserved:
-    /// a give fills one argument, one socket or one give above.
-    #[error("intent {intent} give {give} is consumed twice")]
+    /// A member's give its composer takes more than once. Value is
+    /// conserved: a give fills one argument, one socket or one give
+    /// above.
+    #[error("intent {intent} takes give {give} of its member {member} twice")]
     GiveReused {
-        /// The giving intent, in tree order.
+        /// The composing intent, in tree order.
         intent: u32,
-        /// The give's position in its declaration.
+        /// The member, by its position among the composer's members.
+        member: u32,
+        /// The give's position in the member's declaration.
+        give: u32,
+    },
+    /// An intent declaring more gives than [`MAX_SOCKETS`].
+    #[error("intent {intent} declares more than {MAX_SOCKETS} gives")]
+    TooManyGives {
+        /// The intent, in tree order.
+        intent: u32,
+    },
+    /// The root declaring a socket. Nothing is above the root to fill
+    /// one.
+    #[error("the root declares socket {socket}, which nothing above it fills")]
+    RootSockets {
+        /// The socket's position in the root's declaration.
+        socket: u32,
+    },
+    /// The root declaring a give. Nothing is above the root to take one.
+    #[error("the root declares give {give}, which nothing above it takes")]
+    RootGives {
+        /// The give's position in the root's declaration.
         give: u32,
     },
     /// A socket filled from the other channel: a value socket with a
@@ -885,6 +909,7 @@ impl AdmissionError {
             | Self::UnknownGive { intent, .. }
             | Self::UnconsumedGive { intent, .. }
             | Self::GiveReused { intent, .. }
+            | Self::TooManyGives { intent }
             | Self::BindingArity { intent, .. }
             | Self::TooManySockets { intent, .. }
             | Self::UnknownBinding { intent, .. }
@@ -904,6 +929,8 @@ impl AdmissionError {
             // a reader that the sentence does not already say.
             Self::TooManyNodes { .. }
             | Self::TooManyIntents { .. }
+            | Self::RootSockets { .. }
+            | Self::RootGives { .. }
             | Self::DuplicateIntent { .. }
             | Self::CyclicSockets { .. }
             | Self::Resolve(..)

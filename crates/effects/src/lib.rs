@@ -44,7 +44,9 @@ pub mod types;
 pub mod vectors;
 pub mod vocabulary;
 
-pub use admission::{AdmissionError, Admitted, Asks, Injected, MAX_SOCKETS, NodeOrigin, Placed};
+pub use admission::{
+    AdmissionError, Admitted, Asks, Injected, MAX_SOCKETS, NodeOrigin, Placed, check_structure,
+};
 pub use artifact::{
     ArtifactError, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata, declaration_hash,
     decode_metadata, encode_metadata, extract_metadata, metadata_section,

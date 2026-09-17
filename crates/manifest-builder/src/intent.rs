@@ -38,11 +38,11 @@
 use std::ops::{Deref, DerefMut};
 
 use hyperscale_vm_effects::{
-    Binding, ChainRecords, Claim, ClaimRef, Constraint, GiveRef, GraphArg, Hasher, InstanceMeta,
-    Intent, IntentHeader, IntentTree, MAX_SOCKETS, MAX_TREE_DEPTH, MAX_VALUE_DEPTH, Member,
-    ResourceMeta, SignedIntent, Socket, ValueRef,
+    AdmissionError, Binding, ChainRecords, Claim, ClaimRef, Constraint, GiveRef, GraphArg, Hasher,
+    InstanceMeta, Intent, IntentHeader, IntentTree, Member, ResourceMeta, SignedIntent, Socket,
+    ValueRef, check_structure,
 };
-use hyperscale_vm_types::{MAX_INTENTS, PrincipalAddr, ResourceAddr};
+use hyperscale_vm_types::{PrincipalAddr, ResourceAddr};
 
 use crate::builder::{Bucket, SocketRef};
 use crate::projection::graph_records;
@@ -54,7 +54,8 @@ use crate::unpack::{Arity, Unpacked};
 /// Every variant is a verdict [`admit_tree`] would also reach, named
 /// against the intent the author wrote rather than against a flattened
 /// tree they have not finished composing: `intent` is `0` for the intent
-/// being written and `i + 1` for its `i`-th member.
+/// being written and `i + 1` for its `i`-th member, and a member's give
+/// is named by the member's position and the give's.
 ///
 /// [`admit_tree`]: hyperscale_vm_effects::admit_tree
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -63,46 +64,6 @@ pub enum IntentError {
     /// filled, and a give taken, by the intent that composes it.
     #[error("a socket is filled by the intent that composes it")]
     ForeignBinding,
-    /// A socket no node of the declaring graph reaches and no wiring of
-    /// its own passes on, so nothing would consume what the composition
-    /// puts in it.
-    #[error("intent {intent} socket {socket} is never reached")]
-    UnconsumedSocket {
-        /// The declaring intent.
-        intent: u32,
-        /// Its position in the declaration.
-        socket: u32,
-    },
-    /// A value socket consumed by more than one node argument. An
-    /// authority socket is not held to it: a claim presented twice says
-    /// nothing presenting it once does not.
-    #[error("intent {intent} socket {socket} is consumed twice")]
-    SocketReused {
-        /// The declaring intent.
-        intent: u32,
-        /// Its position in the declaration.
-        socket: u32,
-    },
-    /// A socket reference past what the intent declared — reachable only
-    /// from a declaration the tier did not build.
-    #[error("intent {intent} references socket {socket}, which it does not declare")]
-    UnknownSocket {
-        /// The referencing intent.
-        intent: u32,
-        /// The socket it named.
-        socket: u32,
-    },
-    /// A socket consumed from the channel its kind does not speak: a
-    /// value socket reached as evidence, or an authority socket as an
-    /// argument. Reachable only from a declaration the tier did not
-    /// build.
-    #[error("intent {intent} socket {socket} is consumed from the other channel")]
-    SocketChannelMismatch {
-        /// The declaring intent.
-        intent: u32,
-        /// Its position in the declaration.
-        socket: u32,
-    },
     /// A socket the composition never filled. On the intent being
     /// written itself, a socket nobody above it could fill — the root
     /// declares none.
@@ -133,25 +94,6 @@ pub enum IntentError {
         declared: usize,
         /// The arity the composer unpacked into.
         claimed: usize,
-    },
-    /// A give nothing above the intent takes. On the intent being
-    /// written itself, a give nobody above it could take — the root
-    /// declares none.
-    #[error("intent {intent} give {give} is taken by nothing")]
-    UnconsumedGive {
-        /// The declaring intent.
-        intent: u32,
-        /// Its position in the declaration.
-        give: u32,
-    },
-    /// A give naming an edge or a member's give the intent does not
-    /// hold. Reachable only from a declaration the tier did not build.
-    #[error("intent {intent} give {give} names nothing the intent holds")]
-    UnknownGive {
-        /// The declaring intent.
-        intent: u32,
-        /// Its position in the declaration.
-        give: u32,
     },
     /// Authority — a proof, or an account — offered to a socket that
     /// declares value.
@@ -220,32 +162,6 @@ pub enum IntentError {
         /// Its position in the declaration.
         socket: u32,
     },
-    /// An intent declaring more sockets than admission accepts.
-    #[error("intent {intent} declares more than {MAX_SOCKETS} sockets")]
-    TooManySockets {
-        /// The declaring intent.
-        intent: u32,
-    },
-    /// An intent declaring more gives than admission accepts.
-    #[error("intent {intent} declares more than {MAX_SOCKETS} gives")]
-    TooManyGives {
-        /// The declaring intent.
-        intent: u32,
-    },
-    /// More intents than a tree may hold.
-    #[error("the tree holds more than {MAX_INTENTS} intents")]
-    TooManyIntents,
-    /// A tree nesting past the depth admission accepts.
-    #[error("the tree nests deeper than {MAX_TREE_DEPTH}")]
-    TreeTooDeep,
-    /// A presented instance record whose configuration nests past what
-    /// the vocabulary encodes — the bound admission holds it to, met at
-    /// build so the tree can be hashed before any gate sees it.
-    #[error("presented instance {instance}'s configuration nests deeper than {MAX_VALUE_DEPTH}")]
-    InstanceValueTooDeep {
-        /// The record's position among the presented instances.
-        instance: u32,
-    },
     /// Records registered on an intent finished as a member. The records
     /// ride the tree beside the root, so a member carries none, and
     /// whoever composes the tree registers them.
@@ -254,6 +170,16 @@ pub enum IntentError {
     /// An intent's own graph refused to build or type.
     #[error(transparent)]
     Intent(#[from] TypedError),
+    /// A declaration admission would refuse on its shape alone: a
+    /// socket reached from the wrong channel, never or twice; a give
+    /// naming nothing; a member's give taken never or twice; the caps;
+    /// and, at the top, the tree's own shape. The rule is admission's
+    /// ([`check_structure`]), stated once; only the numbering is the
+    /// builder's.
+    ///
+    /// [`check_structure`]: hyperscale_vm_effects::check_structure
+    #[error("{0}")]
+    Structure(#[from] AdmissionError),
 }
 
 /// One member's declared socket, as its composer names it — the side a
@@ -686,14 +612,7 @@ impl<'a> IntentBuilder<'a> {
         let member = u32::try_from(self.members.len()).expect("members fit an index");
         let intent = member + 1;
         let decl = &signed.intent;
-        if decl.sockets.len() > MAX_SOCKETS {
-            return Err(IntentError::TooManySockets { intent });
-        }
-        if decl.gives.len() > MAX_SOCKETS {
-            return Err(IntentError::TooManyGives { intent });
-        }
-        check_sockets(decl, intent)?;
-        check_gives(decl, intent)?;
+        check_structure(decl, intent)?;
         let builder = self.graph_id();
         let sockets = Sockets {
             context: DeclaredBy { intent },
@@ -893,13 +812,12 @@ impl<'a> IntentBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// [`IntentError::UnconsumedSocket`], [`IntentError::SocketReused`]
-    /// or [`IntentError::UnknownSocket`] for a declaration its graph does
-    /// not discharge; [`IntentError::UnfilledSocket`] for a member's
-    /// socket the wiring left open; [`IntentError::UnconsumedGive`] for
-    /// a member's give nothing took; [`IntentError::TooManySockets`] and
-    /// [`IntentError::TooManyGives`]; [`IntentError::RecordsOnMember`]
-    /// where records were registered; or the graph's own refusal.
+    /// [`IntentError::Structure`] for a declaration its graph does not
+    /// discharge — a socket never or twice reached, a member's give
+    /// nothing took, the caps; [`IntentError::UnfilledSocket`] for a
+    /// member's socket the wiring left open;
+    /// [`IntentError::RecordsOnMember`] where records were registered;
+    /// or the graph's own refusal.
     pub fn into_decl(self) -> Result<Intent, IntentError> {
         if !self.instances.is_empty() || !self.resources.is_empty() {
             return Err(IntentError::RecordsOnMember);
@@ -912,26 +830,11 @@ impl<'a> IntentBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// As [`into_decl`](Self::into_decl), and [`IntentError::UnfilledSocket`]
-    /// or [`IntentError::UnconsumedGive`] against intent `0` where the
-    /// root declares an interface nobody above it could serve;
-    /// [`IntentError::TooManyIntents`]; [`IntentError::TreeTooDeep`];
-    /// [`IntentError::InstanceValueTooDeep`].
+    /// As [`into_decl`](Self::into_decl), and [`IntentError::Structure`]
+    /// for the tree's own shape: a root declaring an interface nobody
+    /// above it could serve, too many intents, too deep a tree, a
+    /// presented record nesting past the value bound.
     pub fn build(self) -> Result<IntentTree, IntentError> {
-        // Graph literals meet this bound at the call that binds them;
-        // presented records are registered whole, so their configuration
-        // values meet it here.
-        for (index, meta) in self.instances.iter().enumerate() {
-            if meta
-                .config
-                .iter()
-                .any(|value| value.depth() > MAX_VALUE_DEPTH)
-            {
-                return Err(IntentError::InstanceValueTooDeep {
-                    instance: u32::try_from(index).unwrap_or(u32::MAX),
-                });
-            }
-        }
         let chain = self.chain;
         let hasher = self.hasher;
         let Finished {
@@ -939,27 +842,17 @@ impl<'a> IntentBuilder<'a> {
             instances,
             resources,
         } = self.finish()?;
-        if !root.sockets.is_empty() {
-            return Err(IntentError::UnfilledSocket {
-                intent: 0,
-                socket: 0,
-            });
-        }
-        if !root.gives.is_empty() {
-            return Err(IntentError::UnconsumedGive { intent: 0, give: 0 });
-        }
-        if root.depth() > MAX_TREE_DEPTH {
-            return Err(IntentError::TreeTooDeep);
-        }
         let mut tree = IntentTree {
             root,
             instances,
             resources,
         };
+        // The tree's own shape: its caps, its depth, and a root
+        // declaring no interface. Graph literals met the value bound at
+        // the call that bound them; presented records are registered
+        // whole, so theirs is met here.
+        tree.check_shape()?;
         let intents = tree.intents();
-        if intents.len() > MAX_INTENTS {
-            return Err(IntentError::TooManyIntents);
-        }
         // The granted-rule records every call in the tree resolves
         // against, read off every graph the tree carries. A member
         // arrives whole, so what its calls need is readable off it — and
@@ -981,12 +874,6 @@ impl<'a> IntentBuilder<'a> {
     /// handles cannot carry: every socket of this intent consumed
     /// exactly once, every give of every member taken.
     fn finish(self) -> Result<Finished, IntentError> {
-        if self.sockets.len() > MAX_SOCKETS {
-            return Err(IntentError::TooManySockets { intent: 0 });
-        }
-        if self.gives.len() > MAX_SOCKETS {
-            return Err(IntentError::TooManyGives { intent: 0 });
-        }
         let accounts = self.graph.accounts().to_vec();
         let graph = self.graph.build()?;
         let mut members = Vec::with_capacity(self.members.len());
@@ -1013,8 +900,7 @@ impl<'a> IntentBuilder<'a> {
             gives: self.gives,
             members,
         };
-        check_sockets(&intent, 0)?;
-        check_give_uses(&intent)?;
+        check_structure(&intent, 0)?;
         Ok(Finished {
             intent,
             instances: self.instances,
@@ -1051,134 +937,4 @@ impl DerefMut for IntentBuilder<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.graph
     }
-}
-
-/// Check that each of an intent's sockets is consumed exactly once by
-/// its own node arguments or passed on exactly once by its own wiring —
-/// admission's own count, run against the intent that declared them —
-/// and consumed from the channel its kind speaks: a value socket as an
-/// argument, an authority socket as evidence.
-fn check_sockets(intent: &Intent, at: u32) -> Result<(), IntentError> {
-    let declared = &intent.sockets;
-    let mut uses = vec![0u32; declared.len()];
-    let args = intent.graph.nodes.iter().flat_map(|node| {
-        node.args
-            .iter()
-            .filter_map(|arg| arg.source().and_then(ValueRef::socket))
-            .map(|socket| (socket, true))
-    });
-    let presented = intent.graph.nodes.iter().flat_map(|node| {
-        node.evidence
-            .iter()
-            .filter_map(|reference| match reference {
-                ClaimRef::Socket(socket) => Some((*socket, false)),
-                ClaimRef::Account(_) | ClaimRef::Node(_) => None,
-            })
-    });
-    let passed = intent
-        .members
-        .iter()
-        .flat_map(|member| &member.wiring)
-        .filter_map(|binding| match binding {
-            Binding::Value(ValueRef::Socket(socket)) => Some((*socket, true)),
-            Binding::Authority(ClaimRef::Socket(socket)) => Some((*socket, false)),
-            Binding::Value(ValueRef::Edge(_) | ValueRef::Give(_))
-            | Binding::Authority(ClaimRef::Node(_) | ClaimRef::Account(_)) => None,
-        });
-    for (position, as_value) in args.chain(presented).chain(passed) {
-        let slot = usize::try_from(position)
-            .ok()
-            .filter(|slot| *slot < declared.len())
-            .ok_or(IntentError::UnknownSocket {
-                intent: at,
-                socket: position,
-            })?;
-        if matches!(declared[slot], Socket::Value { .. }) != as_value {
-            return Err(IntentError::SocketChannelMismatch {
-                intent: at,
-                socket: position,
-            });
-        }
-        uses[slot] += 1;
-    }
-    for (position, count) in uses.iter().enumerate() {
-        let socket = u32::try_from(position).expect("bounded by MAX_SOCKETS");
-        if *count == 0 {
-            return Err(IntentError::UnconsumedSocket { intent: at, socket });
-        }
-        // Value is conserved and authority is not: an edge fills one
-        // argument, and a claim presented twice says nothing presenting
-        // it once does not.
-        if matches!(declared[position], Socket::Value { .. }) && *count > 1 {
-            return Err(IntentError::SocketReused { intent: at, socket });
-        }
-    }
-    Ok(())
-}
-
-/// Check that each of an intent's gives names an edge of its own graph
-/// or a give of one of its members — what a composer can take of it.
-fn check_gives(intent: &Intent, at: u32) -> Result<(), IntentError> {
-    for (position, give) in intent.gives.iter().enumerate() {
-        let unknown = IntentError::UnknownGive {
-            intent: at,
-            give: u32::try_from(position).expect("bounded by MAX_SOCKETS"),
-        };
-        let held = match give {
-            ValueRef::Edge(edge) => usize::try_from(edge.producer)
-                .is_ok_and(|producer| producer < intent.graph.nodes.len()),
-            ValueRef::Give(give) => usize::try_from(give.member)
-                .ok()
-                .and_then(|member| intent.members.get(member))
-                .zip(usize::try_from(give.give).ok())
-                .is_some_and(|(member, give)| give < member.signed.intent.gives.len()),
-            ValueRef::Socket(_) => false,
-        };
-        if !held {
-            return Err(unknown);
-        }
-    }
-    Ok(())
-}
-
-/// Check that every give of every member is taken by the composing
-/// intent: as an argument of its graph, in its wiring, or among its own
-/// gives. The handles are affine, so what is left to find is the give
-/// nothing took.
-fn check_give_uses(intent: &Intent) -> Result<(), IntentError> {
-    let taken = intent
-        .graph
-        .nodes
-        .iter()
-        .flat_map(|node| &node.args)
-        .filter_map(|arg| arg.source().and_then(ValueRef::give))
-        .chain(
-            intent
-                .members
-                .iter()
-                .flat_map(|member| &member.wiring)
-                .filter_map(|binding| match binding {
-                    Binding::Value(ValueRef::Give(give)) => Some(*give),
-                    Binding::Value(ValueRef::Edge(_) | ValueRef::Socket(_))
-                    | Binding::Authority(_) => None,
-                }),
-        )
-        .chain(intent.gives.iter().filter_map(|give| give.give()))
-        .collect::<Vec<GiveRef>>();
-    for (index, member) in intent.members.iter().enumerate() {
-        let member_at = u32::try_from(index).expect("minted indices fit");
-        for give in 0..member.signed.intent.gives.len() {
-            let give = u32::try_from(give).expect("bounded by MAX_SOCKETS");
-            if !taken.contains(&GiveRef {
-                member: member_at,
-                give,
-            }) {
-                return Err(IntentError::UnconsumedGive {
-                    intent: member_at + 1,
-                    give,
-                });
-            }
-        }
-    }
-    Ok(())
 }

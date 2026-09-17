@@ -46,6 +46,7 @@ pub use inject::{Asks, Injected};
 use inject::{
     inject_destruction_rules, inject_issuance_rules, inject_movement_rules, inject_reach_rules,
 };
+pub use tree::check_structure;
 pub(crate) use tree::{flatten, resolve_tree, walk};
 
 use crate::claim::Claim;

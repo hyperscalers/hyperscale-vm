@@ -1187,7 +1187,11 @@ fn give_consumption_is_exactly_once() {
     unused.root.graph.nodes[1] = deposit_edge(ALICE, 0);
     assert_eq!(
         admit_composed(&unused),
-        Err(AdmissionError::UnconsumedGive { intent: 1, give: 0 })
+        Err(AdmissionError::UnconsumedGive {
+            intent: 0,
+            member: 0,
+            give: 0
+        })
     );
 
     let mut twice = composed_tree(100);
@@ -1198,14 +1202,18 @@ fn give_consumption_is_exactly_once() {
         .push(deposit_give(ALICE, 0, 0, Vec::new()));
     assert_eq!(
         admit_composed(&twice),
-        Err(AdmissionError::GiveReused { intent: 1, give: 0 })
+        Err(AdmissionError::GiveReused {
+            intent: 0,
+            member: 0,
+            give: 0
+        })
     );
 
     let mut rooted = composed_tree(100);
     rooted.root.gives = vec![ValueRef::Edge(edge(0, 0))];
     assert_eq!(
         admit_composed(&rooted),
-        Err(AdmissionError::UnconsumedGive { intent: 0, give: 0 })
+        Err(AdmissionError::RootGives { give: 0 })
     );
 }
 
@@ -1343,6 +1351,11 @@ fn duplicate_intents_reject() {
     let mut beside = composed_tree(100);
     let copy = beside.root.members[0].clone();
     beside.root.members.push(copy);
+    beside
+        .root
+        .graph
+        .nodes
+        .push(deposit_give(ALICE, 1, 0, Vec::new()));
     assert_eq!(
         admit_composed(&beside),
         Err(AdmissionError::DuplicateIntent { index: 2 })
@@ -1351,12 +1364,23 @@ fn duplicate_intents_reject() {
     // At two depths rather than beside: Bob beside Carol and Bob under
     // her is still one hash twice, at preorder positions one and three.
     let mut beneath = composed_tree(100);
-    let mut carol = intent(CAROL, Vec::new(), Vec::new(), Vec::new());
+    // Carol takes Bob's give and gives it on; the root takes hers.
+    let mut carol = intent(
+        CAROL,
+        Vec::new(),
+        Vec::new(),
+        vec![ValueRef::Give(give(0, 0))],
+    );
     carol.members = vec![beneath.root.members[0].clone()];
     beneath.root.members.push(Member {
         signed: SignedIntent::unsigned(carol),
         wiring: Vec::new(),
     });
+    beneath
+        .root
+        .graph
+        .nodes
+        .push(deposit_give(ALICE, 1, 0, Vec::new()));
     assert_eq!(
         admit_composed(&beneath),
         Err(AdmissionError::DuplicateIntent { index: 3 })
@@ -1427,10 +1451,11 @@ fn an_authority_socket_is_presented_not_passed() {
     // root's deposit, which takes Bob's give, come before it.
     assert_eq!(
         admit_composed(&tree),
-        Err(AdmissionError::AuthoritySocketAsArgument {
-            node: 3,
-            param: 0,
+        Err(AdmissionError::SocketKindMismatch {
+            intent: 1,
             socket: 0,
+            declared: "authority",
+            offered: "an edge",
         })
     );
 }
@@ -1753,17 +1778,25 @@ fn a_group_interface_must_agree_with_what_it_passes_through() {
     // The group routes Bob's own give back into his socket and leaves
     // its own socket unreached: the give is then consumed twice, once
     // by the wiring and once by the group's own give of it.
-    let tree = grouped_tree(
-        vec![Binding::Value(ValueRef::Give(give(0, 0)))],
-        vec![ValueRef::Give(give(0, 0))],
+    let mut tree = grouped_tree(
+        vec![Binding::Value(ValueRef::Socket(0))],
+        vec![ValueRef::Give(give(0, 0)), ValueRef::Give(give(0, 0))],
         vec![Socket::Value {
             resource: RES_X,
             constraints: Vec::new(),
         }],
     );
+    tree.root
+        .graph
+        .nodes
+        .push(deposit_give(ALICE, 0, 1, Vec::new()));
     assert_eq!(
         admit_composed(&tree),
-        Err(AdmissionError::GiveReused { intent: 2, give: 0 })
+        Err(AdmissionError::GiveReused {
+            intent: 1,
+            member: 0,
+            give: 0
+        })
     );
 }
 
@@ -1808,23 +1841,35 @@ fn a_claim_granted_two_levels_deep_resolves_only_where_every_level_regranted_it(
             .contains(&Claim::of_subject(ALICE))
     );
 
-    // Carol grants her own account instead of what she received.
+    // Carol grants her own account instead of what she received. She
+    // presents what she received herself, so her socket is reached and
+    // what is judged is the grant.
+    let mut mismatched = deep(
+        vec![Binding::Authority(ClaimRef::Account(CAROL))],
+        vec![Binding::Authority(ClaimRef::Account(ALICE))],
+    );
+    let carol = &mut mismatched.root.members[0].signed.intent;
+    let mut presenting = withdraw(CAROL, RES_Y, 1);
+    presenting.evidence.insert(ClaimRef::Socket(0));
+    carol.graph.nodes = vec![presenting, deposit_edge(CAROL, 0)];
     assert_eq!(
-        admit_composed(&deep(
-            vec![Binding::Authority(ClaimRef::Account(CAROL))],
-            vec![Binding::Authority(ClaimRef::Account(ALICE))],
-        )),
+        admit_composed(&mismatched),
         Err(AdmissionError::GrantClaimMismatch {
             intent: 2,
             socket: 0
         })
     );
     // Carol grants Alice's account, which she does not act as.
+    let mut unheld = deep(
+        vec![Binding::Authority(ClaimRef::Account(ALICE))],
+        vec![Binding::Authority(ClaimRef::Account(ALICE))],
+    );
+    let carol = &mut unheld.root.members[0].signed.intent;
+    let mut presenting = withdraw(CAROL, RES_Y, 1);
+    presenting.evidence.insert(ClaimRef::Socket(0));
+    carol.graph.nodes = vec![presenting, deposit_edge(CAROL, 0)];
     assert_eq!(
-        admit_composed(&deep(
-            vec![Binding::Authority(ClaimRef::Account(ALICE))],
-            vec![Binding::Authority(ClaimRef::Account(ALICE))],
-        )),
+        admit_composed(&unheld),
         Err(AdmissionError::GrantNotHeld {
             intent: 2,
             socket: 0,
@@ -2002,6 +2047,15 @@ fn the_intent_cap_is_checked_before_anything_else() {
     let mut at_cap = composed_tree(100);
     let copy = at_cap.root.members[0].clone();
     at_cap.root.members.resize(MAX_INTENTS - 1, copy.clone());
+    // Every copy's give taken, so the shape holds and the duplicate
+    // scan is what speaks.
+    for member in 1..as_u32(MAX_INTENTS - 1) {
+        at_cap
+            .root
+            .graph
+            .nodes
+            .push(deposit_give(ALICE, member, 0, Vec::new()));
+    }
     assert_eq!(
         admit_composed(&at_cap),
         Err(AdmissionError::DuplicateIntent { index: 2 })
