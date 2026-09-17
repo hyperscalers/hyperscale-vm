@@ -27,7 +27,7 @@ mod package;
 pub use package::account::client::*;
 /// The replacement an account keeps while one is waiting, so a consumer
 /// can read the state a flow passes through rather than only its ends.
-pub use package::account::{Error, Pending};
+pub use package::account::{Amendment, Error, Pending};
 
 /// One replacement as the cell holds it.
 ///
@@ -41,6 +41,16 @@ pub use package::account::{Error, Pending};
 #[must_use]
 pub fn encode_pending(pending: &Pending) -> Vec<u8> {
     to_vec(pending).expect("a record encodes")
+}
+
+/// One amendment as the cell holds it, on the same terms.
+///
+/// # Panics
+///
+/// Only on an encoder failure no well-formed record can reach.
+#[must_use]
+pub fn encode_amendment(amendment: &Amendment) -> Vec<u8> {
+    to_vec(amendment).expect("a record encodes")
 }
 /// The package's own bodies, dispatched natively.
 ///

@@ -185,7 +185,7 @@ pub fn auth(owner: impl Into<Address>) -> SubstateKey {
 /// One of the account's own cells, by its offset in the package band:
 /// 2 the rule that may replace the factors, 3 the rule that may veto a
 /// replacement, 4 the replacement waiting, 5 the delay, 6 how many
-/// proposals there have been.
+/// proposals there have been, 7 the amendment waiting.
 pub fn own_cell(owner: impl Into<Address>, offset: u16) -> SubstateKey {
     child_key(&TestHasher, owner, SlotId(PACKAGE_SLOT_BASE + offset), &[])
 }

@@ -147,6 +147,22 @@ fn account() -> Blueprint {
         )
         // A recovery proposal replaces the primary and nothing about who
         // may recover: the roles are the primary's to amend.
+        // The roles are the primary's to amend, under the delay, and a
+        // recovery proposal outranks the amendment.
+        .method(
+            "amend",
+            &[ParamType::Rule, ParamType::Rule, ParamType::U64],
+            |t: &mut Trace| {
+                t.fallible();
+                let holder = t.self_addr();
+                let rule = t.claim(&holder);
+                t.guarded_by(rule);
+                t.point(&holder.child(own(4), &[])).read();
+                t.point(&holder.child(own(5), &[])).read();
+                t.point(&holder.child(own(6), &[])).write();
+                t.point(&holder.child(own(7), &[])).write();
+            },
+        )
         .method(
             "rotate",
             &[ParamType::PrincipalRule, ParamType::PrincipalRule],
@@ -167,6 +183,7 @@ fn account() -> Blueprint {
                 t.point(&holder.child(own(4), &[])).write();
                 t.point(&holder.child(own(5), &[])).read();
                 t.point(&holder.child(own(6), &[])).write();
+                t.point(&holder.child(own(7), &[])).write();
             },
         )
         // A freeze is a proposal with the primary closed: the same
@@ -182,6 +199,7 @@ fn account() -> Blueprint {
                 t.point(&holder.child(own(4), &[])).write();
                 t.point(&holder.child(own(5), &[])).read();
                 t.point(&holder.child(own(6), &[])).write();
+                t.point(&holder.child(own(7), &[])).write();
             },
         )
         // Promotion is nobody's gate: the record was authorized by the
@@ -191,6 +209,10 @@ fn account() -> Blueprint {
             let holder = t.self_addr();
             t.point(&holder.child(own(4), &[])).write();
             t.point(&holder.child(AUTH, &[])).present().write();
+            t.point(&holder.child(own(7), &[])).write();
+            t.point(&holder.child(own(2), &[])).write();
+            t.point(&holder.child(own(3), &[])).write();
+            t.point(&holder.child(own(5), &[])).write();
         })
         // A cancel gives back what a freeze displaced, where one did.
         .method("cancel", &[ParamType::U64], |t: &mut Trace| {
@@ -200,6 +222,7 @@ fn account() -> Blueprint {
             t.governed_by();
             t.point(&holder.child(own(4), &[])).write();
             t.point(&holder.child(AUTH, &[])).present().write();
+            t.point(&holder.child(own(7), &[])).write();
         })
         // A veto is a cancel under the other role: it enacts nothing.
         .method("veto", &[ParamType::U64], |t: &mut Trace| {
@@ -209,6 +232,7 @@ fn account() -> Blueprint {
             t.governed_by();
             t.point(&holder.child(own(4), &[])).write();
             t.point(&holder.child(AUTH, &[])).present().write();
+            t.point(&holder.child(own(7), &[])).write();
         })
         .build()
 }

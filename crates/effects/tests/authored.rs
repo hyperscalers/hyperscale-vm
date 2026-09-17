@@ -109,6 +109,7 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
         // take none, because what may happen there is the resource's
         // answer rather than this package's.
         ("account", "accept", this(), vec![]),
+        ("account", "amend", this(), vec![]),
         ("account", "burn", open(), vec![]),
         ("account", "burn-nf", open(), vec![]),
         ("account", "cancel", governs(own_cell(2)), vec![]),

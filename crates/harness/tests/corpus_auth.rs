@@ -379,6 +379,283 @@ fn a_recovery_that_keeps_the_card_leaves_the_card_in_the_way() {
     assert_eq!(amount_of(&end, vault(BOB, RES_X)), 100);
 }
 
+/// One hour, against the corpus day: a delay an amendment may name and
+/// this account does not yet hold.
+const HOUR_MS: u64 = 3_600_000;
+
+/// Alice amends her roles: the taker may recover her, Bob may veto, and
+/// the hour is the delay from there on.
+fn amend_graph() -> ManifestGraph {
+    graph(|b| account::amend(b, ALICE, stored_rule(TAKER), stored_rule(BOB), HOUR_MS))
+}
+
+/// The amendment `owner` has waiting, as the account writes it.
+fn seed_amendment(store: &mut MemoryStore, owner: PrincipalAddr, serial: u64, at_ms: u64) {
+    let amendment = account::Amendment {
+        serial,
+        effective_at_ms: at_ms,
+        recovery: stored_rule(TAKER),
+        veto: stored_rule(BOB),
+        delay_ms: HOUR_MS,
+    };
+    store.write(own_cell(owner, 7), account::encode_amendment(&amendment));
+}
+
+/// An amendment enacts after the delay that governed when it was made
+/// and writes the three roles: from then on the taker may recover, Bob
+/// may veto, and the hour governs the next wait.
+#[test]
+fn an_amendment_enacts_after_the_delay_and_writes_the_roles() {
+    let world = world();
+    let store = recovered_store();
+    let t0 = env().clock_ms;
+
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&amend_graph(), TxHash(Hash32([0x40; 32])))],
+        Some(ALICE),
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("amend must complete; got {:?}", results[0]);
+    };
+    let mut waiting = MemoryStore::new();
+    seed_amendment(&mut waiting, ALICE, FIRST, t0 + DAY_MS);
+    assert_eq!(
+        receipt.delta.cells.get(&own_cell(ALICE, 7)),
+        Some(&waiting.cell(own_cell(ALICE, 7))),
+        "the amendment serves the delay that governs now"
+    );
+    assert_eq!(
+        receipt.delta.cells.get(&own_cell(ALICE, 2)),
+        None,
+        "and nothing governs until it is enacted"
+    );
+
+    // Unmatured, the promotion is refused; matured, anyone finishes it.
+    let (results, _) = run_both_at(
+        &world,
+        &store,
+        &[(&promote_by(ALICE), TxHash(Hash32([0x41; 32])))],
+        Some(ALICE),
+        t0 + DAY_MS - 1,
+    );
+    assert_eq!(
+        results,
+        vec![TxResult::Declined(account::Error::Unmatured.code())]
+    );
+    let at = t0 + DAY_MS;
+    let (results, _) = run_both_at(
+        &world,
+        &store,
+        &[(&promote_by(TAKER), TxHash(Hash32([0x42; 32])))],
+        Some(TAKER),
+        at,
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("promote must complete; got {:?}", results[0]);
+    };
+    assert_eq!(
+        receipt.delta.cells.get(&own_cell(ALICE, 2)),
+        Some(&Some(stored_rule(TAKER).in_cell()))
+    );
+    assert_eq!(
+        receipt.delta.cells.get(&own_cell(ALICE, 3)),
+        Some(&Some(stored_rule(BOB).in_cell()))
+    );
+    assert_eq!(
+        receipt.delta.cells.get(&own_cell(ALICE, 5)),
+        Some(&Some(HOUR_MS.to_le_bytes().to_vec()))
+    );
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        None,
+        "an amendment touches no factor"
+    );
+}
+
+/// Once an amendment is enacted the new guardian may recover, the old
+/// one may not, and the delay it carried is the one the next wait
+/// serves.
+#[test]
+fn an_enacted_amendment_hands_recovery_to_the_new_guardian() {
+    let world = world();
+    let store = recovered_store();
+    let t0 = env().clock_ms;
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&amend_graph(), TxHash(Hash32([0x4D; 32])))],
+        Some(ALICE),
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+    let at = t0 + DAY_MS;
+    let (results, store) = run_both_at(
+        &world,
+        &store,
+        &[(&promote_by(TAKER), TxHash(Hash32([0x4E; 32])))],
+        Some(TAKER),
+        at,
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+
+    let (results, _) = run_both_at(
+        &world,
+        &store,
+        &[(&propose_by(BOB), TxHash(Hash32([0x43; 32])))],
+        Some(BOB),
+        at,
+    );
+    assert_eq!(
+        results,
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Satisfies { node: 0 },
+        })],
+        "the old guardian is out"
+    );
+    let (results, _) = run_both_at(
+        &world,
+        &store,
+        &[(&propose_by(TAKER), TxHash(Hash32([0x44; 32])))],
+        Some(TAKER),
+        at,
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("the new guardian proposes; got {:?}", results[0]);
+    };
+    let mut sooner = MemoryStore::new();
+    seed_pending(
+        &mut sooner,
+        ALICE,
+        FIRST + 1,
+        at + HOUR_MS,
+        &stored_rule(BOB),
+        None,
+    );
+    assert_eq!(
+        receipt.delta.cells.get(&own_cell(ALICE, 4)),
+        Some(&sooner.cell(own_cell(ALICE, 4))),
+        "and the delay the amendment carried is the one the next wait serves"
+    );
+}
+
+/// An amendment is the guardians' to cancel and the veto's to end: a
+/// thief evicting the guardians is stopped by them, and the roles stand.
+#[test]
+fn an_amendment_is_cancelled_by_the_guardians_or_the_veto() {
+    let world = world();
+    let store = recovered_store();
+
+    for (who, tag) in [(BOB, 0x45), (MAKER, 0x47)] {
+        let (results, store) = run_both_signed(
+            &world,
+            &store,
+            &[(&amend_graph(), TxHash(Hash32([tag; 32])))],
+            Some(ALICE),
+        );
+        assert!(matches!(&results[0], TxResult::Completed(_)));
+        let verdict = if who == BOB {
+            cancel_by(BOB)
+        } else {
+            veto_by(MAKER)
+        };
+        let (results, store) = run_both_signed(
+            &world,
+            &store,
+            &[(&verdict, TxHash(Hash32([tag + 1; 32])))],
+            Some(who),
+        );
+        let TxResult::Completed(receipt) = &results[0] else {
+            panic!("the verdict must complete; got {:?}", results[0]);
+        };
+        assert_eq!(
+            receipt.delta.cells.get(&own_cell(ALICE, 7)),
+            Some(&Some(Vec::new())),
+            "no amendment waits"
+        );
+        assert_eq!(receipt.delta.cells.get(&own_cell(ALICE, 2)), None);
+        let far = env().clock_ms + 10 * DAY_MS;
+        let (results, _) = run_both_at(
+            &world,
+            &store,
+            &[(&promote_by(ALICE), TxHash(Hash32([tag + 0x10; 32])))],
+            Some(ALICE),
+            far,
+        );
+        assert_eq!(
+            results,
+            vec![TxResult::Declined(account::Error::NoSuchProposal.code())],
+            "a cancelled amendment never governs"
+        );
+    }
+}
+
+/// A recovery proposal outranks an amendment: one is refused while a
+/// proposal waits, and a freeze retires one already waiting — so the
+/// primary can never stall the guardians.
+#[test]
+fn a_recovery_proposal_outranks_an_amendment() {
+    let world = world();
+    let store = recovered_store();
+
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&propose_by(BOB), TxHash(Hash32([0x48; 32])))],
+        Some(BOB),
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+    let (results, _) = run_both_signed(
+        &world,
+        &store,
+        &[(&amend_graph(), TxHash(Hash32([0x49; 32])))],
+        Some(ALICE),
+    );
+    assert_eq!(
+        results,
+        vec![TxResult::Declined(account::Error::Outranked.code())],
+        "an amendment is refused while a recovery proposal waits"
+    );
+
+    // The other order: the amendment is waiting, and the freeze retires
+    // it along with the primary.
+    let store = recovered_store();
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&amend_graph(), TxHash(Hash32([0x4A; 32])))],
+        Some(ALICE),
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&freeze_by(BOB), TxHash(Hash32([0x4B; 32])))],
+        Some(BOB),
+    );
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("freeze must complete; got {:?}", results[0]);
+    };
+    assert_eq!(
+        receipt.delta.cells.get(&own_cell(ALICE, 7)),
+        Some(&Some(Vec::new())),
+        "a recovery filing retires the amendment"
+    );
+    let far = env().clock_ms + 10 * DAY_MS;
+    let (results, _) = run_both_at(
+        &world,
+        &store,
+        &[(&promote_by(BOB), TxHash(Hash32([0x4C; 32])))],
+        Some(BOB),
+        far,
+    );
+    assert_eq!(
+        results,
+        vec![TxResult::Declined(account::Error::NoSuchProposal.code())],
+        "the amendment's serial names nothing now"
+    );
+}
+
 /// Sign in and hand the account to Bob's rule, uniformly.
 fn securify_graph(rule: &StoredRule) -> ManifestGraph {
     graph(|b| account::securify_uniform(b, ALICE, rule, DAY_MS))

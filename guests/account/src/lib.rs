@@ -50,6 +50,8 @@ pub mod account {
         NoSuchProposal,
         /// The proposal named has not reached its instant.
         Unmatured,
+        /// A recovery proposal waits, and it outranks an amendment.
+        Outranked,
     }
 
     /// A replacement for the account's factors, waiting on the delay
@@ -80,6 +82,29 @@ pub mod account {
         /// proposal that replaces a frozen one carries this forward, so
         /// re-proposing never loses the rule a cancel gives back.
         frozen: Option<RuleBytes>,
+    }
+
+    /// A replacement for who may recover the account, waiting on the
+    /// delay that governed when it was made.
+    ///
+    /// The primary's to file and the recovery role's to cancel, which is
+    /// the one asymmetry a stolen key requires: a thief evicting the
+    /// guardians is stopped by the guardians, and an owner replacing a
+    /// guardian who has gone quiet succeeds after the wait. Its own
+    /// record because it replaces different cells than a recovery does,
+    /// and a leaf holds fewer than four rules at the argument cap.
+    #[record]
+    struct Amendment {
+        /// Which proposal this is, drawn from the same count a recovery
+        /// proposal draws from, so a verdict's serial names one record
+        /// or none.
+        serial: u64,
+        /// When it may be enacted.
+        effective_at_ms: u64,
+        /// What the three role cells become.
+        recovery: RuleBytes,
+        veto: RuleBytes,
+        delay_ms: u64,
     }
 
     /// What the account keeps beyond the governing rule every address
@@ -141,6 +166,10 @@ pub mod account {
         /// How many proposals this account has had, which is the serial
         /// the next one takes.
         serials: Cell<u64>,
+        /// The amendment waiting, where one is: two rules at the
+        /// argument cap, their lengths, and three words.
+        #[width(8220)]
+        amendment: Cell<Option<Amendment>>,
     }
 
     impl Account {
@@ -326,6 +355,38 @@ pub mod account {
             self.auth().set(Some(authority));
         }
 
+        /// Change who may recover the account, after the delay.
+        ///
+        /// The roles are the primary's to amend and never a recovery's
+        /// to rewrite, and the amendment waits the delay the guardians
+        /// serve so that a thief evicting them is stopped by them: it is
+        /// theirs to cancel throughout. A recovery proposal outranks it —
+        /// refused while one waits, retired when one is filed — so the
+        /// primary can never stall the guardians. Withdrawing one is
+        /// amending to the current values.
+        #[requires(self)]
+        pub fn amend(
+            &mut self,
+            recovery: RuleBytes,
+            veto: RuleBytes,
+            delay_ms: u64,
+        ) -> Result<(), Error> {
+            if self.pending.get().is_some() {
+                return Err(Error::Outranked);
+            }
+            let effective_at_ms = clock_ms().saturating_add(self.delay_ms.get());
+            let serial = self.serials.get().saturating_add(1);
+            self.serials.set(serial);
+            self.amendment.set(Some(Amendment {
+                serial,
+                effective_at_ms,
+                recovery,
+                veto,
+                delay_ms,
+            }));
+            Ok(())
+        }
+
         /// Wait out a replacement's delay, or replace one still waiting.
         ///
         /// The wait is the delay that governs now: a proposal cannot
@@ -368,7 +429,8 @@ pub mod account {
 
         /// File a replacement as the one waiting, under the next serial
         /// and the delay that governs now, carrying the primary a freeze
-        /// displaced where there is one.
+        /// displaced where there is one — and retiring any amendment,
+        /// which a recovery outranks.
         fn file(
             &mut self,
             primary: PrincipalRule,
@@ -385,6 +447,7 @@ pub mod account {
                 confirmation,
                 frozen,
             }));
+            self.amendment.set(None);
         }
 
         /// Enact the replacement `serial` names, whose delay has run out.
@@ -396,11 +459,24 @@ pub mod account {
         /// proposal named this is a refusal rather than nothing, so a
         /// caller is told rather than charged for a no-op.
         pub fn promote(&mut self, serial: u64) -> Result<(), Error> {
-            let pending = self.proposal(serial)?;
-            if clock_ms() < pending.effective_at_ms {
-                return Err(Error::Unmatured);
+            let now = clock_ms();
+            if let Some(pending) = self.pending.get()
+                && pending.serial == serial
+            {
+                if now < pending.effective_at_ms {
+                    return Err(Error::Unmatured);
+                }
+                self.enact(pending);
+            } else if let Some(amendment) = self.amendment.get()
+                && amendment.serial == serial
+            {
+                if now < amendment.effective_at_ms {
+                    return Err(Error::Unmatured);
+                }
+                self.enact_amendment(amendment);
+            } else {
+                return Err(Error::NoSuchProposal);
             }
-            self.enact(pending);
             Ok(())
         }
 
@@ -431,30 +507,27 @@ pub mod account {
             self.withdraw_proposal(serial)
         }
 
-        /// Drop the replacement `serial` names and give back what a
-        /// freeze displaced, where one did.
+        /// Drop whatever `serial` names — a replacement, giving back what
+        /// a freeze displaced where one did, or an amendment — or refuse:
+        /// a verdict answers the proposal its signer saw and no other.
         fn withdraw_proposal(&mut self, serial: u64) -> Result<(), Error> {
-            let pending = self.proposal(serial)?;
-            self.pending.set(None);
-            if let Some(primary) = pending.frozen {
-                let mut authority = self.auth().existing();
-                authority.primary = primary;
-                self.auth().set(Some(authority));
+            if let Some(pending) = self.pending.get()
+                && pending.serial == serial
+            {
+                self.pending.set(None);
+                if let Some(primary) = pending.frozen {
+                    let mut authority = self.auth().existing();
+                    authority.primary = primary;
+                    self.auth().set(Some(authority));
+                }
+            } else if let Some(amendment) = self.amendment.get()
+                && amendment.serial == serial
+            {
+                self.amendment.set(None);
+            } else {
+                return Err(Error::NoSuchProposal);
             }
             Ok(())
-        }
-
-        /// The replacement waiting under `serial`, or the refusal that
-        /// none is: a verdict answers the proposal its signer saw and no
-        /// other.
-        fn proposal(&self, serial: u64) -> Result<Pending, Error> {
-            let Some(pending) = self.pending.get() else {
-                return Err(Error::NoSuchProposal);
-            };
-            if pending.serial != serial {
-                return Err(Error::NoSuchProposal);
-            }
-            Ok(pending)
         }
 
         /// File `pending`'s factors as the governing ones and clear the
@@ -471,6 +544,15 @@ pub mod account {
             authority.confirmation = pending.confirmation.into_bytes();
             self.auth().set(Some(authority));
             self.pending.set(None);
+        }
+
+        /// File `amendment`'s roles as the governing ones and clear the
+        /// wait.
+        fn enact_amendment(&mut self, amendment: Amendment) {
+            self.recovery.set(Some(amendment.recovery));
+            self.veto.set(Some(amendment.veto));
+            self.delay_ms.set(amendment.delay_ms);
+            self.amendment.set(None);
         }
     }
 }
