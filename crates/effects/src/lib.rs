@@ -20,6 +20,7 @@
 pub mod admission;
 pub mod artifact;
 pub mod auth;
+pub mod cells;
 pub mod claim;
 pub mod dsl;
 pub mod explain;
@@ -52,6 +53,11 @@ pub use artifact::{
     decode_metadata, encode_metadata, extract_metadata, metadata_section,
 };
 pub use auth::{PrincipalRule, RuleBytes, auth_cell_admits};
+pub use cells::{
+    COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, CrossingCell, CrossingSite, ESCROW_CLAIM_SLOT,
+    ESCROW_RECORD_SLOT, MARKER_CELL_BYTES, Marked, Marker, NULLIFIER_SLOT, committed_tx_key,
+    crossing_expiry_ms, escrow_claim_key, escrow_record_key, nullifier_expiry_ms, nullifier_key,
+};
 pub use claim::Claim;
 pub use dsl::{
     Clause, Condition, Declaration, DeclaredAccess, EvalBudget, EvalError, EvalInputs, Expr,
@@ -83,12 +89,9 @@ pub use hyperscale_vm_types::{
 };
 pub use instance::{InstanceMeta, InstanceRegistry, ResolveError};
 pub use intent::{
-    Binding, COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, CrossingCell, CrossingSite, ESCROW_CLAIM_SLOT,
-    ESCROW_RECORD_SLOT, Intent, IntentHeader, IntentRecord, IntentTree, MARKER_CELL_BYTES,
-    MAX_ACCOUNTS, MAX_INTENTS, MAX_TREE_DEPTH, Marked, Marker, Member, NULLIFIER_SLOT, Nullifier,
-    SignedIntent, Socket, TREE_WIRE_DEPTH, TreeDecodeError, admit_tree, attest, committed_tx_key,
-    crossing_expiry_ms, decode_tree, encode_tree, escrow_claim_key, escrow_record_key,
-    nullifier_expiry_ms, nullifier_key,
+    Binding, Intent, IntentHeader, IntentRecord, IntentTree, MAX_ACCOUNTS, MAX_INTENTS,
+    MAX_TREE_DEPTH, Member, Nullifier, SignedIntent, Socket, TREE_WIRE_DEPTH, TreeDecodeError,
+    admit_tree, attest, decode_tree, encode_tree,
 };
 pub use invoke::{CallArg, EdgeBound, IssuanceGrant, NodeCall, distinct_ids};
 pub use manifest::{Bounds, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};

@@ -56,11 +56,12 @@ use hyperscale_vm_types::{
 use crate::admission::{
     AdmissionError, Admitted, Asks, Injected, Placed, Wired, flatten, interleave, resolve_tree,
 };
+use crate::cells::NULLIFIER_SLOT;
 use crate::claim::Claim;
 use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr, preorder_len};
 use crate::graph::{GraphArg, GraphNode, ManifestGraph, ValueRef};
 use crate::hash::Hasher;
-use crate::intent::{IntentTree, NULLIFIER_SLOT};
+use crate::intent::IntentTree;
 use crate::manifest::JudgedLeaf;
 use crate::metadata::{LeafForm, PACKAGE_SLOT, PackageMetadata, SlotKind, SlotShape};
 use crate::records::ChainRecords;

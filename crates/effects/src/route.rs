@@ -107,13 +107,12 @@ mod tests {
 
     use super::{Admitted, PrefixShardResolver, ShardResolver, per_shard};
     use crate::admission::AdmissionError;
+    use crate::cells::{nullifier_expiry_ms, nullifier_key};
     use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
     use crate::graph::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
     use crate::hash::{Hash32, Hasher, TestHasher};
     use crate::instance::{InstanceMeta, ResolveError};
-    use crate::intent::{
-        Intent, IntentHeader, IntentTree, admit_tree, nullifier_expiry_ms, nullifier_key,
-    };
+    use crate::intent::{Intent, IntentHeader, IntentTree, admit_tree};
     use crate::invoke::CallArg;
     use crate::manifest::Bounds;
     use crate::metadata::{MetadataCache, PackageMetadata, PublishRefusal};

@@ -19,9 +19,9 @@ use hyperscale_vm_types::{
 };
 
 use crate::admission::{Admitted, NodeOrigin};
+use crate::cells::CrossingSite;
 use crate::claim::Claim;
 use crate::hash::Hasher;
-use crate::intent::CrossingSite;
 use crate::manifest::{Manifest, NodeInput};
 use crate::route::ShardResolver;
 use crate::types::{EdgeContent, ShardId};

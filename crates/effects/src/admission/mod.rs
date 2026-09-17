@@ -49,6 +49,7 @@ use inject::{
 pub use tree::check_structure;
 pub(crate) use tree::{flatten, resolve_tree, walk};
 
+use crate::cells::MARKER_CELL_BYTES;
 use crate::claim::Claim;
 use crate::dsl::{
     Condition, Declaration, DeclaredAccess, EvalBudget, EvalInputs, PresentedGrants,
@@ -57,7 +58,7 @@ use crate::dsl::{
 use crate::graph::{ClaimRef, Constraint, GiveRef, GraphArg, GraphNode, ValueRef};
 use crate::hash::{Hash32, Hasher};
 use crate::instance::{InstanceMeta, ResolveError};
-use crate::intent::{IntentRecord, MARKER_CELL_BYTES, Socket};
+use crate::intent::{IntentRecord, Socket};
 use crate::invoke::{IssuanceGrant, NodeCall};
 use crate::manifest::{JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 use crate::metadata::PackageMetadata;
