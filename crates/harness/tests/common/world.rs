@@ -6,7 +6,7 @@ use std::sync::{Arc, LazyLock};
 
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG};
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, Claim, Hash32, Hasher, InstanceMeta, Intent, IntentHeader,
+    AdmissionError, Admitted, Authority, Claim, Hash32, Hasher, InstanceMeta, Intent, IntentHeader,
     IntentTree, LegShape, ManifestGraph, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver,
     PrincipalRule, Records, RuleBytes, ShardId, ShardResolver, SlotId, Star, StoredRule,
     TestHasher, Value, admit_tree, child_key, collection_id, holdings_collection, legs_of,
@@ -193,6 +193,13 @@ pub fn own_cell(owner: impl Into<Address>, offset: u16) -> SubstateKey {
 pub fn stored_rule(identity: PrincipalAddr) -> RuleBytes {
     RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(identity)))
         .expect("a rule within the vocabulary caps")
+}
+
+/// One identity as the whole of an account's governing record: the
+/// primary, and a confirmation anyone satisfies — what the governing
+/// cell holds after a securify naming no second factor.
+pub fn governing(identity: PrincipalAddr) -> Vec<u8> {
+    Authority::primary_only(stored_rule(identity)).in_cell()
 }
 
 /// The same rule at the narrowed kind the governing cell takes.

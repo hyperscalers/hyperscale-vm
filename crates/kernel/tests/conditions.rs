@@ -6,8 +6,9 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use hyperscale_vm_effects::{
-    Claim, Condition, Declaration, Hash32, Hasher, JudgedLeaf, MAX_RULE_BRANCHES, MAX_RULE_DEPTH,
-    NodeCall, PackageHash, Rule, RuleBytes, SlotId, StoredRule, TestHasher, child_key,
+    Authority, Claim, Condition, Declaration, Hash32, Hasher, JudgedLeaf, MAX_RULE_BRANCHES,
+    MAX_RULE_DEPTH, NodeCall, PackageHash, Rule, RuleBytes, SlotId, StoredRule, TestHasher,
+    child_key,
 };
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
@@ -295,7 +296,7 @@ fn a_sign_in_is_judged_against_the_rule_stored_at_the_accounts_cell() {
     // answering the moment it names somebody else.
     let mut securified = MemoryStore::new();
     let stored = RuleBytes::try_from(&StoredRule::claim(identity(2))).unwrap();
-    securified.write(key, stored.in_cell());
+    securified.write(key, Authority::primary_only(stored).in_cell());
     assert!(matches!(
         judged(&securified, vec![identity(2)]),
         Outcome::Completed { .. }

@@ -3,9 +3,9 @@
 //! gates badges open.
 
 use hyperscale_vm_effects::{
-    Claim, ClaimRef, GraphArg, GraphNode, Hash32, InstanceMeta, IntentTree, ManifestGraph, Marked,
-    Marker, PrincipalRule, Records, RuleBytes, StoredRule, TestHasher, Value, holdings_collection,
-    never,
+    Authority, Claim, ClaimRef, GraphArg, GraphNode, Hash32, InstanceMeta, IntentTree,
+    ManifestGraph, Marked, Marker, PrincipalRule, Records, RuleBytes, StoredRule, TestHasher,
+    Value, holdings_collection, never,
 };
 use hyperscale_vm_fixtures::nf;
 use hyperscale_vm_harness::driver::{amount_of, cells, vault};
@@ -34,7 +34,7 @@ fn a_refused_sign_in_takes_its_transaction_with_it() {
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
     // Her cell admits her own key and nothing else, and Bob's is what
     // attests the intent.
-    store.write(auth(ALICE), stored_rule(ALICE).in_cell());
+    store.write(auth(ALICE), governing(ALICE));
 
     let graph = transfer_graph();
     let (results, final_store) = run_both_attested_at(
@@ -127,7 +127,7 @@ fn one_refusing_rule_refuses_the_whole_intent() {
     let mut store = two_account_store();
     // Bob's cell admits his own key alone; Alice's is unwritten and
     // admits hers. Only Alice attests.
-    store.write(auth(BOB), stored_rule(BOB).in_cell());
+    store.write(auth(BOB), governing(BOB));
     let mut tree = acting_as(&[ALICE, BOB], swap_across_own_accounts());
     tree.root.attested_by = vec![ALICE];
     let (outcome, end, admitted) =
@@ -173,9 +173,10 @@ fn a_threshold_rule_is_judged_over_the_intents_attesting_set() {
     };
     store.write(
         auth(ALICE),
-        RuleBytes::try_from(&two_of_two)
-            .expect("a rule within the vocabulary caps")
-            .in_cell(),
+        Authority::primary_only(
+            RuleBytes::try_from(&two_of_two).expect("a rule within the vocabulary caps"),
+        )
+        .in_cell(),
     );
     let tx = |tree: &IntentTree| TxHash(tree.hash(&TestHasher).0);
 
@@ -206,6 +207,53 @@ fn a_threshold_rule_is_judged_over_the_intents_attesting_set() {
     assert_eq!(amount_of(&end, vault(BOB, RES_X)), 0);
 }
 
+/// The governing record's second rule is a second factor: an account
+/// whose confirmation names the maker's key opens only to an intent Bob
+/// and the maker both attest, and Bob's key alone — the phone without
+/// the card — is refused at the same sign-in, on the same shard.
+#[test]
+fn a_second_factor_is_required_beside_the_primary() {
+    let world = world();
+    let mut store = sealed_store();
+    store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
+    store.write(
+        auth(ALICE),
+        Authority {
+            primary: stored_rule(BOB),
+            confirmation: stored_rule(MAKER),
+        }
+        .in_cell(),
+    );
+    let tx = |tree: &IntentTree| TxHash(tree.hash(&TestHasher).0);
+
+    let mut both = acting_as(&[ALICE], transfer_graph());
+    both.root.attested_by = vec![BOB, MAKER];
+    let (outcome, end) = run_both_tree(&world, &store, &both).expect("admissible");
+    assert!(
+        matches!(
+            outcome.receipts[&tx(&both)].outcome,
+            Outcome::Completed { .. }
+        ),
+        "phone and card attest; got {:?}",
+        outcome.receipts[&tx(&both)].outcome
+    );
+    assert_eq!(amount_of(&end, vault(BOB, RES_X)), 100);
+
+    let mut phone = acting_as(&[ALICE], transfer_graph());
+    phone.root.attested_by = vec![BOB];
+    let (outcome, end) = run_both_tree(&world, &store, &phone).expect("admissible");
+    assert_eq!(
+        outcome.receipts[&tx(&phone)].outcome,
+        Outcome::ConditionUnmet {
+            condition: UnmetCondition::SignedIn {
+                account: ALICE.address(),
+            },
+        },
+        "the primary alone is not the account"
+    );
+    assert_eq!(amount_of(&end, vault(BOB, RES_X)), 0);
+}
+
 /// Sign in and hand the account to Bob's rule, uniformly.
 fn securify_graph(rule: &StoredRule) -> ManifestGraph {
     graph(|b| account::securify_uniform(b, ALICE, rule, DAY_MS))
@@ -228,7 +276,7 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
     let TxResult::Completed(receipt) = &results[0] else {
         panic!("securify must complete; got {:?}", results[0]);
     };
-    let cell_bytes = stored_rule(BOB).in_cell();
+    let cell_bytes = governing(BOB);
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
         Some(&Some(cell_bytes)),
@@ -300,8 +348,8 @@ fn securify_retires_the_old_key_and_installs_the_rule() {
 fn chained_store() -> MemoryStore {
     let mut store = sealed_store();
     store.write(vault(MAKER, RES_X), encode_amount(150).to_vec());
-    store.write(auth(ALICE), stored_rule(BOB).in_cell());
-    store.write(auth(MAKER), stored_rule(ALICE).in_cell());
+    store.write(auth(ALICE), governing(BOB));
+    store.write(auth(MAKER), governing(ALICE));
     store
 }
 
@@ -453,7 +501,10 @@ fn seed_authority(
     enacts: &RuleBytes,
     delay_ms: u64,
 ) {
-    store.write(auth(owner), governing.in_cell());
+    store.write(
+        auth(owner),
+        Authority::primary_only(governing.clone()).in_cell(),
+    );
     store.write(own_cell(owner, 2), replaces.in_cell());
     store.write(own_cell(owner, 3), enacts.in_cell());
     store.write(own_cell(owner, 5), delay_ms.to_le_bytes().to_vec());
@@ -477,9 +528,11 @@ fn seed_pending(
     store.write(own_cell(owner, 4), account::encode_pending(&pending));
 }
 
-/// The rule nobody satisfies, as a freeze writes it.
-fn nobody_rule() -> RuleBytes {
-    RuleBytes::try_from(&never()).expect("the empty threshold encodes")
+/// The governing record a freeze writes: the rule nobody satisfies as
+/// the primary, the confirmation left as it stood.
+fn frozen() -> Vec<u8> {
+    Authority::primary_only(RuleBytes::try_from(&never()).expect("the empty threshold encodes"))
+        .in_cell()
 }
 
 /// The split setup every recovery test starts from: Alice governs, Bob
@@ -492,7 +545,7 @@ fn nobody_rule() -> RuleBytes {
 fn recovered_store() -> MemoryStore {
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
-    store.write(auth(ALICE), stored_rule(ALICE).in_cell());
+    store.write(auth(ALICE), governing(ALICE));
     store.write(own_cell(ALICE, 2), stored_rule(BOB).in_cell());
     store.write(own_cell(ALICE, 3), stored_rule(MAKER).in_cell());
     store.write(own_cell(ALICE, 5), DAY_MS.to_le_bytes().to_vec());
@@ -783,7 +836,7 @@ fn recovery_rotates_a_hostile_primary_out() {
     };
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(nobody_rule().in_cell())),
+        Some(&Some(frozen())),
         "a freeze writes the rule nobody satisfies, rather than removing \
          one — an unwritten cell is what the address's own key still \
          governs, so a removal would hand the account back to the key \
@@ -862,7 +915,7 @@ fn a_freeze_keeps_the_proposal_it_finds_pending() {
     };
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(nobody_rule().in_cell())),
+        Some(&Some(frozen())),
         "the freeze closes the governing rule"
     );
     assert_eq!(
@@ -922,7 +975,7 @@ fn a_freeze_after_maturity_strips_the_promoted_primary() {
     };
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(nobody_rule().in_cell())),
+        Some(&Some(frozen())),
         "a freeze closes the governing rule whether or not a replacement \
          is waiting"
     );
@@ -1017,7 +1070,7 @@ fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
     };
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(nobody_rule().in_cell())),
+        Some(&Some(frozen())),
         "an unmet delay gates a takeover, never the freeze"
     );
 
@@ -1109,7 +1162,7 @@ fn confirmation_enacts_a_proposal_early() {
     };
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(stored_rule(BOB).in_cell())),
+        Some(&Some(governing(BOB))),
         "confirm promotes the proposal whole"
     );
 

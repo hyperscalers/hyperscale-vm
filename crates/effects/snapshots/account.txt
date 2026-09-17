@@ -38,12 +38,13 @@ cancel() — infallible
 confirm() — infallible
   declares
       0  write self.pending
-      1  write self.auth
-      2  write self.recovery
-      3  write self.confirmation
-      4  write self.delay_ms
-      5  requires 1 of (the rule stored at self.confirmation, 2 of (self.confirmation is absent, claim self))
-  exports  handles for clauses 0–4
+      1  requires self.auth is present
+      2  write self.auth
+      3  write self.recovery
+      4  write self.confirmation
+      5  write self.delay_ms
+      6  requires 1 of (the rule stored at self.confirmation, 2 of (self.confirmation is absent, claim self))
+  exports  handle for clause 0, handles for clauses 2–5
 
 deposit(bucket) — total
   emits    deposited — at most 54 bytes
@@ -64,8 +65,9 @@ freeze() — infallible
   declares
       0  read self.recovery
       1  requires 1 of (the rule stored at self.recovery, 2 of (self.recovery is absent, claim self))
-      2  write self.auth
-  exports  handle for clause 2
+      2  requires self.auth is present
+      3  write self.auth
+  exports  handle for clause 3
 
 present-badge(address) — infallible
   declares
@@ -84,12 +86,13 @@ present-instance(address, u64) — infallible
 promote() — infallible
   declares
       0  write self.pending
-      1  write self.auth
-      2  write self.recovery
-      3  write self.confirmation
-      4  write self.delay_ms
-      5  requires 1 of (the rule stored at self.recovery, 2 of (self.recovery is absent, claim self))
-  exports  handles for clauses 0–4
+      1  requires self.auth is present
+      2  write self.auth
+      3  write self.recovery
+      4  write self.confirmation
+      5  write self.delay_ms
+      6  requires 1 of (the rule stored at self.recovery, 2 of (self.recovery is absent, claim self))
+  exports  handle for clause 0, handles for clauses 2–5
 
 propose(principal-rule, rule, rule, u64) — infallible
   declares

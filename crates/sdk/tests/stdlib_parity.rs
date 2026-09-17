@@ -163,7 +163,7 @@ fn account() -> Blueprint {
         .method("promote", &[], |t: &mut Trace| {
             let holder = t.self_addr();
             t.point(&holder.child(own(4), &[])).write();
-            t.point(&holder.child(AUTH, &[])).write();
+            t.point(&holder.child(AUTH, &[])).present().write();
             t.point(&holder.child(own(2), &[])).write();
             t.point(&holder.child(own(3), &[])).write();
             t.point(&holder.child(own(5), &[])).write();
@@ -178,7 +178,7 @@ fn account() -> Blueprint {
         .method("confirm", &[], |t: &mut Trace| {
             let holder = t.self_addr();
             t.point(&holder.child(own(4), &[])).write();
-            t.point(&holder.child(AUTH, &[])).write();
+            t.point(&holder.child(AUTH, &[])).present().write();
             t.point(&holder.child(own(2), &[])).write();
             t.point(&holder.child(own(3), &[])).write();
             t.point(&holder.child(own(5), &[])).write();
@@ -188,7 +188,7 @@ fn account() -> Blueprint {
             let holder = t.self_addr();
             t.point(&holder.child(own(2), &[])).read();
             t.governed_by();
-            t.point(&holder.child(AUTH, &[])).write();
+            t.point(&holder.child(AUTH, &[])).present().write();
         })
         .build()
 }

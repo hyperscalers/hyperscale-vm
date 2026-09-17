@@ -2091,10 +2091,11 @@ fn authoring_accessors(
 
             #protocol_balances
 
-            /// The rule governing this address, absent until the holder
+            /// The rules governing this address — the everyday one and
+            /// the second factor beside it — absent until the holder
             /// securifies.
             fn auth(&self) -> ::hyperscale_vm_sdk::state::Cell<
-                ::core::option::Option<::hyperscale_vm_sdk::RuleBytes>,
+                ::core::option::Option<::hyperscale_vm_sdk::Authority>,
             > {
                 ::core::unimplemented!("a contract body runs on the guest")
             }

@@ -94,7 +94,7 @@ fn a_refused_preview_prints_the_refusal() -> Result<()> {
     // Securifying an account that already stored a rule: the one-way
     // door is a declared precondition, so the shard holding the cell
     // refuses against committed state and the body never runs.
-    store.write(auth(ALICE), stored_rule(ALICE).in_cell());
+    store.write(auth(ALICE), governing(ALICE));
     let securify = graph(|b| {
         account::securify_uniform(b, ALICE, &StoredRule::claim(Claim::of_subject(BOB)), DAY_MS)
     });

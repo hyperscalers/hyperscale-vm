@@ -58,7 +58,7 @@ use hyperscale_hbor::{
 /// `create` on the record handle states at most a display width, and the
 /// kind comes from the mark's own declaration.
 pub use hyperscale_vm_effects::ResourceRecord;
-use hyperscale_vm_effects::{LeafForm, RECORD_WIRE_DEPTH};
+use hyperscale_vm_effects::{AUTHORITY_WIRE_DEPTH, Authority, LeafForm, RECORD_WIRE_DEPTH};
 /// The stored-authority vocabulary, named where a body's words live.
 ///
 /// A rule parameter is [`RuleBytes`] — the same type a cell holds, so a
@@ -291,6 +291,14 @@ impl<T: Record> Cellular for Option<T> {
 /// cell, and the framing `RuleBytes::rule_in_cell` reads back.
 impl Record for RuleBytes {
     const WIRE_DEPTH: usize = 1;
+}
+
+/// An account's governing record, under the cap its own crate states:
+/// this is what frames the governing cell, and the framing
+/// `Authority::from_cell` reads back where the kernel's sign-in and the
+/// fee reservation both read it.
+impl Record for Authority {
+    const WIRE_DEPTH: usize = AUTHORITY_WIRE_DEPTH;
 }
 
 /// A period, an epoch, a sequence number: the one scalar the vocabulary
@@ -1746,6 +1754,13 @@ impl LeafShape for Seal {
 
 /// A record's leaf is the record's own encoding.
 impl LeafShape for RuleBytes {
+    fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
+        LeafForm::Value(Self::shape(types))
+    }
+}
+
+/// Likewise the governing record.
+impl LeafShape for Authority {
     fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
         LeafForm::Value(Self::shape(types))
     }

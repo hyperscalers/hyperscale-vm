@@ -28,7 +28,7 @@ pub mod account {
         Bucket, Cell, Ids, Keyed, NfBucket, PrincipalRule, Quantity, RuleBytes, Vault, clock_ms,
         destroy, destroy_nf,
     };
-    use hyperscale_vm_sdk::{Address, ResourceAddr, nobody};
+    use hyperscale_vm_sdk::{Address, Authority, ResourceAddr, anybody, nobody};
 
     /// Funds left the account.
     #[event]
@@ -274,7 +274,10 @@ pub mod account {
             confirmation: RuleBytes,
             delay_ms: u64,
         ) {
-            self.auth().create(primary.into_bytes());
+            self.auth().create(Authority {
+                primary: primary.into_bytes(),
+                confirmation: anybody(),
+            });
             self.recovery.set(Some(recovery));
             self.confirmation.set(Some(confirmation));
             self.delay_ms.set(delay_ms);
@@ -343,8 +346,14 @@ pub mod account {
         }
 
         /// File `pending` as the governing rules and clear the wait.
+        ///
+        /// The second factor stands: a replacement is of the primary,
+        /// and what colluding guardians get is a new primary rather
+        /// than the account.
         fn enact(&mut self, pending: Pending) {
-            self.auth().set(Some(pending.primary.into_bytes()));
+            let mut authority = self.auth().existing();
+            authority.primary = pending.primary.into_bytes();
+            self.auth().set(Some(authority));
             self.recovery.set(Some(pending.recovery));
             self.confirmation.set(Some(pending.confirmation));
             self.delay_ms.set(pending.delay_ms);
@@ -369,7 +378,9 @@ pub mod account {
         /// long enough not to arrive.
         #[requires(governs(recovery))]
         pub fn freeze(&mut self) {
-            self.auth().set(Some(nobody()));
+            let mut authority = self.auth().existing();
+            authority.primary = nobody();
+            self.auth().set(Some(authority));
         }
     }
 }

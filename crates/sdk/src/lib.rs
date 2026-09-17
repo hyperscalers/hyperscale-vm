@@ -165,7 +165,7 @@ pub use blueprint::{Blueprint, Builder, Method};
 // Re-exported so `#[blueprint]` output names one crate, and so a contract
 // never has to depend on `vm-effects` directly.
 pub use hyperscale_vm_effects::vocabulary::{NF_VAULT, VAULT};
-use hyperscale_vm_effects::{NOBODY_BYTES, always, never};
+use hyperscale_vm_effects::{ANYBODY_BYTES, NOBODY_BYTES, always, never};
 
 /// The granted entry anyone satisfies: the threshold over nothing.
 ///
@@ -198,6 +198,20 @@ pub fn nobody() -> RuleBytes {
     RuleBytes(NOBODY_BYTES.to_vec())
 }
 
+/// The stored rule anyone satisfies, as a body writes one.
+///
+/// What an account keeps as its confirmation while it names no second
+/// factor: the sign-in conjoins the two rules, and none of nothing is
+/// met by every attesting set.
+///
+/// # Panics
+///
+/// Never: the empty threshold is the smallest rule there is.
+#[must_use]
+pub fn anybody() -> RuleBytes {
+    RuleBytes(ANYBODY_BYTES.to_vec())
+}
+
 /// The code a declined invocation crosses the boundary as.
 ///
 /// Implemented by `#[blueprint]` for every `#[error]` enum: a variant's
@@ -223,8 +237,8 @@ pub trait DeclinesAs: Sized {
 }
 
 pub use hyperscale_vm_effects::{
-    GrantRuleExpr, GrantSubject, GrantedBehaviour, GrantsExpr, Issued, LeafForm, ParamType,
-    PrincipalRule, ResourceKind, RuleBytes, SlotId, SlotKind, encode_metadata,
+    Authority, GrantRuleExpr, GrantSubject, GrantedBehaviour, GrantsExpr, Issued, LeafForm,
+    ParamType, PrincipalRule, ResourceKind, RuleBytes, SlotId, SlotKind, encode_metadata,
 };
 /// Author a package from one module.
 ///

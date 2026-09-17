@@ -572,6 +572,9 @@ pub const fn never<L>() -> Rule<L> {
 /// cannot drift from what the vocabulary would produce.
 pub const NOBODY_BYTES: &[u8] = &[1, 1, 0];
 
+/// [`always()`]'s canonical bytes, as a constant, on the same terms.
+pub const ANYBODY_BYTES: &[u8] = &[1, 0, 0];
+
 impl<L> Rule<L> {
     /// Whether the tree sits inside the caps a stored rule is decoded
     /// under, so a signature that passes bounds cannot evaluate into a
@@ -801,8 +804,8 @@ mod tests {
 
     use super::testing::{WideRule, chain, identity, wide_chain};
     use super::{
-        Holding, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_LEAVES, NOBODY_BYTES, Rule,
-        SealedLeaf, StoredRule, always, never,
+        ANYBODY_BYTES, Holding, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, MAX_RULE_LEAVES, NOBODY_BYTES,
+        Rule, SealedLeaf, StoredRule, always, never,
     };
     use crate::types::MAX_VALUE_BYTES;
 
@@ -1028,6 +1031,9 @@ mod tests {
         let closed: StoredRule = never();
         assert_eq!(closed.to_bytes().unwrap(), NOBODY_BYTES);
         assert_eq!(StoredRule::from_slice(NOBODY_BYTES).unwrap(), closed);
+        let open: StoredRule = always();
+        assert_eq!(open.to_bytes().unwrap(), ANYBODY_BYTES);
+        assert_eq!(StoredRule::from_slice(ANYBODY_BYTES).unwrap(), open);
     }
 
     /// The algebra's top and bottom are the threshold over nothing, and

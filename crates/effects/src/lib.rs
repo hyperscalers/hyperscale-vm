@@ -52,7 +52,7 @@ pub use artifact::{
     ArtifactError, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata, declaration_hash,
     decode_metadata, encode_metadata, extract_metadata, metadata_section,
 };
-pub use auth::{PrincipalRule, RuleBytes, auth_cell_admits};
+pub use auth::{AUTHORITY_WIRE_DEPTH, Authority, PrincipalRule, RuleBytes, auth_cell_admits};
 pub use cells::{
     COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, CrossingCell, CrossingSite, ESCROW_CLAIM_SLOT,
     ESCROW_RECORD_SLOT, MARKER_CELL_BYTES, Marked, Marker, NULLIFIER_SLOT, committed_tx_key,
@@ -115,9 +115,9 @@ pub use resource::{
 };
 pub use route::{FrameDeclaration, PrefixShardResolver, ShardResolver, per_shard};
 pub use rule::{
-    GrantRuleExpr, GrantSubject, Holding, Judged, Leaf, MAX_RULE_BRANCHES, MAX_RULE_DEPTH,
-    MAX_RULE_LEAVES, MAX_RULE_WIRE_DEPTH, NOBODY_BYTES, Rule, RuleExpr, RuleLeaf, SealedLeaf,
-    StoredRule, always, never, well_formed,
+    ANYBODY_BYTES, GrantRuleExpr, GrantSubject, Holding, Judged, Leaf, MAX_RULE_BRANCHES,
+    MAX_RULE_DEPTH, MAX_RULE_LEAVES, MAX_RULE_WIRE_DEPTH, NOBODY_BYTES, Rule, RuleExpr, RuleLeaf,
+    SealedLeaf, StoredRule, always, never, well_formed,
 };
 pub use signature::{
     AbiParam, Issuance, Issued, MAX_ISSUANCES_PER_SIGNATURE, MAX_PROVEN_PER_SIGNATURE,

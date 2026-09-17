@@ -1,15 +1,22 @@
-//! The bytes a stored rule travels as.
+//! The bytes a stored rule travels as, and the record an account's
+//! governing cell holds.
 //!
-//! One thing, opaque to whoever carries it and decoded only where the
-//! rule is judged. What a package does with a rule it stores — how many
-//! it keeps, under what names, and what it takes to replace one — is that
-//! package's own business, held in that package's own cells.
+//! A rule is one thing, opaque to whoever carries it and decoded only
+//! where the rule is judged. What a package does with a rule it stores —
+//! how many it keeps, under what names, and what it takes to replace one
+//! — is that package's own business, held in that package's own cells.
+//! The one cell the kernel itself reads is the governing cell, and what
+//! it holds is stated here so the package that writes it and the two
+//! judges that read it agree.
 
-use hyperscale_hbor::{DecodeError, EncodeError, Hbor, HborShape, from_slice, to_vec};
+use hyperscale_hbor::{
+    DecodeError, EncodeError, Hbor, HborShape, from_slice, from_slice_with_depth, to_vec,
+    to_vec_with_depth,
+};
 use hyperscale_vm_types::Address;
 
 use crate::claim::Claim;
-use crate::rule::StoredRule;
+use crate::rule::{ANYBODY_BYTES, StoredRule};
 
 /// A stored rule as the bytes it travels as.
 ///
@@ -112,6 +119,79 @@ impl TryFrom<&StoredRule> for PrincipalRule {
     }
 }
 
+/// What an account's governing cell holds: the everyday rule, and the
+/// second factor beside it.
+///
+/// Both are rules over principal claims, judged against the keys
+/// attesting an intent, and an intent acts as the account only when
+/// both admit its attesting set. One record rather than two cells
+/// because the sign-in asks one question, so the policy is one value:
+/// the fields say what the account requires without the judge having
+/// to, a third factor would be a field rather than a slot and another
+/// provisioned read, and every intent on every account provisions one
+/// leaf to carry the three bytes `always()` encodes to.
+///
+/// The two are separate rather than folded into one conjunction because
+/// their lifecycles differ: a recovery replaces the primary and may
+/// leave the confirmation standing, so what colluding guardians get is
+/// a new primary and not the account.
+#[derive(Clone, Debug, PartialEq, Eq, Hbor, HborShape)]
+pub struct Authority {
+    /// The everyday rule: one key, or a threshold over several.
+    pub primary: RuleBytes,
+    /// The second factor, required beside the primary at every sign-in.
+    /// The rule anyone satisfies where the account keeps none.
+    pub confirmation: RuleBytes,
+}
+
+/// The decoder cap for the governing cell: the record frame is one
+/// level, and each of the two byte strings it holds is one more.
+///
+/// Exactly what the shape takes, so a record that grows a nested field
+/// fails to encode until somebody raises this on purpose. Public because
+/// the record crosses one boundary: the account writes the cell its
+/// shard and the fee reservation later decode, and the three agree by
+/// reading it here.
+pub const AUTHORITY_WIRE_DEPTH: usize = 2;
+
+impl Authority {
+    /// The policy an account has before it names a second factor: the
+    /// primary alone, and a confirmation anyone satisfies.
+    #[must_use]
+    pub fn primary_only(primary: RuleBytes) -> Self {
+        Self {
+            primary,
+            confirmation: RuleBytes(ANYBODY_BYTES.to_vec()),
+        }
+    }
+
+    /// This record as the cell holding it reads.
+    ///
+    /// The other half of [`from_cell`](Self::from_cell), so a consumer
+    /// seeding a governing cell writes exactly what the account would.
+    ///
+    /// # Panics
+    ///
+    /// Only on an encoder failure no pair of byte strings can reach.
+    #[must_use]
+    pub fn in_cell(&self) -> Vec<u8> {
+        to_vec_with_depth(self, AUTHORITY_WIRE_DEPTH).expect("a pair of byte strings encodes")
+    }
+
+    /// The record a governing cell holds.
+    ///
+    /// Read in one place so the package that writes the cell and the
+    /// kernel that judges it cannot disagree about its shape. An
+    /// unwritten cell reads as no bytes at all, which is no record.
+    ///
+    /// # Errors
+    ///
+    /// [`DecodeError`] on bytes that are not this record.
+    pub fn from_cell(cell: &[u8]) -> Result<Self, DecodeError> {
+        from_slice_with_depth(cell, AUTHORITY_WIRE_DEPTH)
+    }
+}
+
 /// Whether the rule stored in `owner`'s `auth` cell admits `keys`.
 ///
 /// The one judgment made against keys rather than against the claims a
@@ -125,16 +205,31 @@ impl TryFrom<&StoredRule> for PrincipalRule {
 /// An unwritten cell is governed by the key its address derives — the
 /// rule naming that one principal, judged as a stored one would be, so
 /// an attesting set answers it by holding the principal, whoever else
-/// signed beside it. Bytes that are not a rule are not a rule admitting
-/// everybody, and neither is a rule asking about anything but claims:
-/// both fail closed.
+/// signed beside it. A written cell holds an [`Authority`], and the set
+/// must answer both of its rules. Bytes that are not the record are not
+/// a record admitting everybody, bytes in a rule's place that are not a
+/// rule are not one either, and neither is a rule asking about anything
+/// but claims: all fail closed.
 #[must_use]
 pub fn auth_cell_admits(owner: Address, cell: Option<&[u8]>, keys: &[Claim]) -> bool {
-    let rule = match cell {
-        None | Some([]) => Some(StoredRule::claim(Claim::of_subject(owner))),
-        Some(bytes) => RuleBytes::rule_in_cell(bytes).ok(),
-    };
-    rule.and_then(|rule| rule.claims_only())
+    match cell {
+        None | Some([]) => admitted_by(&StoredRule::claim(Claim::of_subject(owner)), keys),
+        Some(bytes) => Authority::from_cell(bytes).is_ok_and(|authority| {
+            rule_admits(&authority.primary, keys) && rule_admits(&authority.confirmation, keys)
+        }),
+    }
+}
+
+/// Whether one stored rule's bytes admit `keys`, failing closed on
+/// bytes that are not a rule.
+fn rule_admits(rule: &RuleBytes, keys: &[Claim]) -> bool {
+    rule.decode().is_ok_and(|rule| admitted_by(&rule, keys))
+}
+
+/// Whether one stored rule admits `keys`, failing closed on a rule
+/// asking about anything but claims.
+fn admitted_by(rule: &StoredRule, keys: &[Claim]) -> bool {
+    rule.claims_only()
         .is_some_and(|claims| claims.satisfied_by(keys))
 }
 
@@ -150,9 +245,18 @@ impl TryFrom<&StoredRule> for RuleBytes {
 mod tests {
     use hyperscale_vm_types::{Address, AddressClass};
 
-    use super::RuleBytes;
+    use super::{Authority, RuleBytes, auth_cell_admits};
     use crate::claim::Claim;
     use crate::rule::StoredRule;
+
+    fn principal(tag: u8) -> Address {
+        Address::new([tag; 31], AddressClass::Principal)
+    }
+
+    fn naming(who: Address) -> RuleBytes {
+        RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(who)))
+            .expect("a rule within the caps")
+    }
 
     fn one_rule() -> StoredRule {
         StoredRule::claim(Claim::of_subject(Address::new(
@@ -190,5 +294,42 @@ mod tests {
 
         assert!(RuleBytes::rule_in_cell(carried.bytes()).is_err());
         assert!(RuleBytes::rule_in_cell(&[]).is_err());
+    }
+
+    /// The governing cell admits an attesting set only when both of its
+    /// rules do: the primary alone is the phone without the card, the
+    /// confirmation alone is the card without the phone, and an account
+    /// naming no second factor is opened by its primary.
+    #[test]
+    fn a_governing_cell_admits_a_set_both_rules_admit() {
+        let owner = principal(1);
+        let phone = Claim::of_subject(principal(2));
+        let card = Claim::of_subject(principal(3));
+        let both = Authority {
+            primary: naming(phone.subject),
+            confirmation: naming(card.subject),
+        }
+        .in_cell();
+
+        assert!(auth_cell_admits(owner, Some(&both), &[phone, card]));
+        assert!(!auth_cell_admits(owner, Some(&both), &[phone]));
+        assert!(!auth_cell_admits(owner, Some(&both), &[card]));
+
+        let phone_only = Authority::primary_only(naming(phone.subject)).in_cell();
+        assert!(auth_cell_admits(owner, Some(&phone_only), &[phone]));
+        assert!(!auth_cell_admits(owner, Some(&phone_only), &[card]));
+    }
+
+    /// A cell holding one bare rule where the record belongs admits
+    /// nobody, the key that rule names included: bytes that are not the
+    /// record are not a record admitting somebody.
+    #[test]
+    fn a_governing_cell_holding_one_bare_rule_admits_nobody() {
+        let owner = principal(1);
+        let phone = Claim::of_subject(principal(2));
+        let bare = naming(phone.subject).in_cell();
+
+        assert!(!auth_cell_admits(owner, Some(&bare), &[phone]));
+        assert!(auth_cell_admits(owner, None, &[Claim::of_subject(owner)]));
     }
 }

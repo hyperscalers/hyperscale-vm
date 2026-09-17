@@ -346,7 +346,7 @@ pub fn accessors(config: Option<&syn::Ident>, serves: Serves) -> BTreeMap<String
             slot: AUTH.0,
             kind: FieldKind::Cell,
             element: Some(syn::parse_quote!(
-                ::core::option::Option<::hyperscale_vm_sdk::RuleBytes>
+                ::core::option::Option<::hyperscale_vm_sdk::Authority>
             )),
             denomination: None,
             width: None,

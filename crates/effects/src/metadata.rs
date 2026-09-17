@@ -216,7 +216,7 @@ const fn protocol_width(slot: SlotId) -> u32 {
         NF_VAULT => 0,
         HALT => 1,
         RESOURCE => 2,
-        AUTH => RULE_WIDTH,
+        AUTH => AUTHORITY_WIDTH,
         NULLIFIER_SLOT | ESCROW_CLAIM_SLOT | COMMITTED_TX_SLOT => MARKER_CELL_BYTES,
         ESCROW_RECORD_SLOT => CROSSING_CELL_BYTES,
         _ => MAX_SLOT_WIDTH,
@@ -242,6 +242,12 @@ const VALUE_LENGTH_BYTES: usize = 2;
 /// Held to the encoding by `a_rule_at_the_argument_cap_fits_its_cell`.
 const RULE_WIDTH: u32 = 4098;
 const _: () = assert!(RULE_WIDTH as usize == MAX_VALUE_BYTES + VALUE_LENGTH_BYTES);
+
+/// The governing cell's width: two rules at the cap. The record holding
+/// them is its two fields and nothing around them, which
+/// `an_authority_at_the_argument_cap_fits_its_cell` holds the encoding
+/// to.
+const AUTHORITY_WIDTH: u32 = 2 * RULE_WIDTH;
 
 impl PackageMetadata {
     /// The width of every slot this package declares.
@@ -551,10 +557,10 @@ impl MetadataCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::RuleBytes;
+    use crate::auth::{Authority, RuleBytes};
     use crate::vocabulary::AUTH;
 
-    /// The auth cell is wide enough for the widest rule anyone can hand
+    /// A rule cell is wide enough for the widest rule anyone can hand
     /// it, which is the only width worth stating.
     ///
     /// [`RULE_WIDTH`] is arithmetic over the argument cap and the length
@@ -571,9 +577,26 @@ mod tests {
             RULE_WIDTH as usize,
             "the width is the encoding, not the argument it carries"
         );
+    }
+
+    /// The governing cell holds two such rules, and is priced and
+    /// bounded at exactly what the record of two at the cap encodes to.
+    #[test]
+    fn an_authority_at_the_argument_cap_fits_its_cell() {
+        let widest = RuleBytes(vec![0xAB; MAX_VALUE_BYTES]);
+        let authority = Authority {
+            primary: widest.clone(),
+            confirmation: widest,
+        }
+        .in_cell();
+        assert_eq!(
+            authority.len(),
+            AUTHORITY_WIDTH as usize,
+            "the width is the encoding, not the arguments it carries"
+        );
         assert_eq!(
             protocol_width(AUTH),
-            RULE_WIDTH,
+            AUTHORITY_WIDTH,
             "and the auth cell is priced and bounded at it"
         );
     }
