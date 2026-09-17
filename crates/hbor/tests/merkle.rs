@@ -1,70 +1,70 @@
-//! Field-level proofs against the real envelope shape.
+//! Field-level proofs against a shape with a field of every kind.
 //!
-//! [`Envelope`] mirrors the protocol's signed transaction envelope, the same
-//! shape the signing tests use. Here the question is whether a holder of only
-//! its root can be shown one field, and only that field.
+//! [`Order`] is the stand-in shape the signing tests use. Here the question
+//! is whether a holder of only its root can be shown one field, and only
+//! that field.
 
 use hyperscale_hbor::hash::TestHasher;
 use hyperscale_hbor::merkle::{Chunked, prove, root_of, sequence_chunks, verify};
 use hyperscale_hbor::{Hbor, HborMerkle, to_vec};
 
-const MAX_TREE: usize = 4096;
-const MAX_MESSAGE: usize = 1024;
+const MAX_ITEM: usize = 4096;
+const MAX_NOTE: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hbor, HborMerkle)]
-#[hbor(merkle_domain = "test-body-v1")]
-enum Body {
-    Call(#[hbor(max = MAX_TREE)] Vec<u8>),
-    Publish(#[hbor(max = MAX_TREE)] Vec<u8>),
+#[hbor(merkle_domain = "test-item-v1")]
+enum Item {
+    Goods(#[hbor(max = MAX_ITEM)] Vec<u8>),
+    Service(#[hbor(max = MAX_ITEM)] Vec<u8>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hbor)]
-struct SubintentSig {
+struct Endorsement {
     public_key: [u8; 32],
     signature: [u8; 64],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hbor, HborMerkle)]
-#[hbor(merkle_domain = "test-envelope-v1")]
-struct Envelope {
-    body: Body,
-    subintent_sigs: Vec<SubintentSig>,
-    fee_payer: [u8; 16],
-    max_fee: u128,
-    gas_limits: Vec<u64>,
+#[hbor(merkle_domain = "test-order-v1")]
+struct Order {
+    item: Item,
+    endorsements: Vec<Endorsement>,
+    buyer: [u8; 16],
+    budget: u128,
+    quotas: Vec<u64>,
     priority_bp: u32,
-    validity_start_ms: u64,
-    validity_end_ms: u64,
-    #[hbor(max = MAX_MESSAGE)]
-    message: Vec<u8>,
+    opens_ms: u64,
+    closes_ms: u64,
+    #[hbor(max = MAX_NOTE)]
+    note: Vec<u8>,
     signer: [u8; 32],
     signature: [u8; 64],
 }
 
 /// Field positions, in declaration order. A leaf index is a position in the
 /// type, so naming them here is what makes the assertions below readable.
-const BODY: usize = 0;
-const SUBINTENT_SIGS: usize = 1;
-const FEE_PAYER: usize = 2;
-const MAX_FEE: usize = 3;
-const GAS_LIMITS: usize = 4;
-const MESSAGE: usize = 8;
+const ITEM: usize = 0;
+const ENDORSEMENTS: usize = 1;
+const BUYER: usize = 2;
+const BUDGET: usize = 3;
+const QUOTAS: usize = 4;
+const NOTE: usize = 8;
 const FIELD_COUNT: usize = 11;
 
-fn sample() -> Envelope {
-    Envelope {
-        body: Body::Call(vec![1, 2, 3]),
-        subintent_sigs: vec![SubintentSig {
+fn sample() -> Order {
+    Order {
+        item: Item::Goods(vec![1, 2, 3]),
+        endorsements: vec![Endorsement {
             public_key: [0x11; 32],
             signature: [0x22; 64],
         }],
-        fee_payer: [0x33; 16],
-        max_fee: 1_000_000,
-        gas_limits: vec![300_000, 200_000],
+        buyer: [0x33; 16],
+        budget: 1_000_000,
+        quotas: vec![300_000, 200_000],
         priority_bp: 250,
-        validity_start_ms: 1_700_000_000_000,
-        validity_end_ms: 1_700_000_060_000,
-        message: b"hello".to_vec(),
+        opens_ms: 1_700_000_000_000,
+        closes_ms: 1_700_000_060_000,
+        note: b"hello".to_vec(),
         signer: [0x44; 32],
         signature: [0x55; 64],
     }
@@ -75,31 +75,28 @@ fn sample() -> Envelope {
 /// prove the wrong field, which is why this is pinned rather than assumed.
 #[test]
 fn leaf_order_is_declaration_order() {
-    let envelope = sample();
-    let leaves = envelope.chunks().unwrap();
-    assert_eq!(leaves[BODY], to_vec(&envelope.body).unwrap());
-    assert_eq!(
-        leaves[SUBINTENT_SIGS],
-        to_vec(&envelope.subintent_sigs).unwrap()
-    );
-    assert_eq!(leaves[FEE_PAYER], to_vec(&envelope.fee_payer).unwrap());
-    assert_eq!(leaves[MAX_FEE], to_vec(&envelope.max_fee).unwrap());
-    assert_eq!(leaves[GAS_LIMITS], to_vec(&envelope.gas_limits).unwrap());
-    assert_eq!(leaves[MESSAGE], to_vec(&envelope.message).unwrap());
+    let order = sample();
+    let leaves = order.chunks().unwrap();
+    assert_eq!(leaves[ITEM], to_vec(&order.item).unwrap());
+    assert_eq!(leaves[ENDORSEMENTS], to_vec(&order.endorsements).unwrap());
+    assert_eq!(leaves[BUYER], to_vec(&order.buyer).unwrap());
+    assert_eq!(leaves[BUDGET], to_vec(&order.budget).unwrap());
+    assert_eq!(leaves[QUOTAS], to_vec(&order.quotas).unwrap());
+    assert_eq!(leaves[NOTE], to_vec(&order.note).unwrap());
 }
 
 #[test]
 fn every_field_proves_against_the_root() {
     let hasher = TestHasher;
-    let envelope = sample();
-    let root = envelope.merkle_root(&hasher).unwrap();
-    let leaves = envelope.chunks().unwrap();
+    let order = sample();
+    let root = order.merkle_root(&hasher).unwrap();
+    let leaves = order.chunks().unwrap();
     assert_eq!(leaves.len(), FIELD_COUNT);
 
     for (index, leaf) in leaves.iter().enumerate() {
-        let proof = envelope.prove(&hasher, index).unwrap().expect("a field");
+        let proof = order.prove(&hasher, index).unwrap().expect("a field");
         assert!(
-            verify(&hasher, Envelope::MERKLE_DOMAIN, root, leaf, &proof),
+            verify(&hasher, Order::MERKLE_DOMAIN, root, leaf, &proof),
             "field {index} failed to verify"
         );
     }
@@ -110,14 +107,14 @@ fn every_field_proves_against_the_root() {
 #[test]
 fn a_proof_carries_one_field_and_a_path() {
     let hasher = TestHasher;
-    let envelope = sample();
-    let root = envelope.merkle_root(&hasher).unwrap();
+    let order = sample();
+    let root = order.merkle_root(&hasher).unwrap();
 
-    let proof = envelope.prove(&hasher, MAX_FEE).unwrap().unwrap();
-    let claimed = to_vec(&envelope.max_fee).unwrap();
+    let proof = order.prove(&hasher, BUDGET).unwrap().unwrap();
+    let claimed = to_vec(&order.budget).unwrap();
     assert!(verify(
         &hasher,
-        Envelope::MERKLE_DOMAIN,
+        Order::MERKLE_DOMAIN,
         root,
         &claimed,
         &proof
@@ -131,22 +128,22 @@ fn a_proof_carries_one_field_and_a_path() {
 #[test]
 fn an_altered_field_fails_against_the_root() {
     let hasher = TestHasher;
-    let envelope = sample();
-    let root = envelope.merkle_root(&hasher).unwrap();
-    let proof = envelope.prove(&hasher, GAS_LIMITS).unwrap().unwrap();
+    let order = sample();
+    let root = order.merkle_root(&hasher).unwrap();
+    let proof = order.prove(&hasher, QUOTAS).unwrap().unwrap();
 
     assert!(verify(
         &hasher,
-        Envelope::MERKLE_DOMAIN,
+        Order::MERKLE_DOMAIN,
         root,
-        &to_vec(&envelope.gas_limits).unwrap(),
+        &to_vec(&order.quotas).unwrap(),
         &proof
     ));
-    let mut raised = envelope.gas_limits;
+    let mut raised = order.quotas;
     raised[1] += 1;
     assert!(!verify(
         &hasher,
-        Envelope::MERKLE_DOMAIN,
+        Order::MERKLE_DOMAIN,
         root,
         &to_vec(&raised).unwrap(),
         &proof
@@ -161,23 +158,23 @@ fn every_field_is_covered_by_the_root() {
     let base = sample().merkle_root(&hasher).unwrap();
 
     let mut altered = sample();
-    altered.body = Body::Publish(vec![1, 2, 3]);
+    altered.item = Item::Service(vec![1, 2, 3]);
     assert_ne!(altered.merkle_root(&hasher).unwrap(), base);
 
     let mut altered = sample();
-    altered.subintent_sigs.clear();
+    altered.endorsements.clear();
     assert_ne!(altered.merkle_root(&hasher).unwrap(), base);
 
     let mut altered = sample();
-    altered.fee_payer = [0x77; 16];
+    altered.buyer = [0x77; 16];
     assert_ne!(altered.merkle_root(&hasher).unwrap(), base);
 
     let mut altered = sample();
-    altered.max_fee += 1;
+    altered.budget += 1;
     assert_ne!(altered.merkle_root(&hasher).unwrap(), base);
 
     let mut altered = sample();
-    altered.gas_limits[1] += 1;
+    altered.quotas[1] += 1;
     assert_ne!(altered.merkle_root(&hasher).unwrap(), base);
 
     let mut altered = sample();
@@ -185,15 +182,15 @@ fn every_field_is_covered_by_the_root() {
     assert_ne!(altered.merkle_root(&hasher).unwrap(), base);
 
     let mut altered = sample();
-    altered.validity_start_ms += 1;
+    altered.opens_ms += 1;
     assert_ne!(altered.merkle_root(&hasher).unwrap(), base);
 
     let mut altered = sample();
-    altered.validity_end_ms += 1;
+    altered.closes_ms += 1;
     assert_ne!(altered.merkle_root(&hasher).unwrap(), base);
 
     let mut altered = sample();
-    altered.message.push(b'!');
+    altered.note.push(b'!');
     assert_ne!(altered.merkle_root(&hasher).unwrap(), base);
 
     let mut altered = sample();
@@ -211,9 +208,9 @@ fn every_field_is_covered_by_the_root() {
 /// invented for the tree, nothing left out of it.
 #[test]
 fn the_leaves_partition_the_encoding() {
-    let envelope = sample();
-    let joined: Vec<u8> = envelope.chunks().unwrap().concat();
-    assert_eq!(joined, to_vec(&envelope).unwrap());
+    let order = sample();
+    let joined: Vec<u8> = order.chunks().unwrap().concat();
+    assert_eq!(joined, to_vec(&order).unwrap());
 }
 
 /// A proof for one field must not verify when presented at another field's
@@ -221,25 +218,19 @@ fn the_leaves_partition_the_encoding() {
 #[test]
 fn a_proof_does_not_transfer_between_fields() {
     let hasher = TestHasher;
-    let envelope = sample();
-    let root = envelope.merkle_root(&hasher).unwrap();
+    let order = sample();
+    let root = order.merkle_root(&hasher).unwrap();
 
-    let proof = envelope.prove(&hasher, FEE_PAYER).unwrap().unwrap();
-    let other = to_vec(&envelope.message).unwrap();
+    let proof = order.prove(&hasher, BUYER).unwrap().unwrap();
+    let other = to_vec(&order.note).unwrap();
+    assert!(!verify(&hasher, Order::MERKLE_DOMAIN, root, &other, &proof));
+
+    let message_proof = order.prove(&hasher, NOTE).unwrap().unwrap();
     assert!(!verify(
         &hasher,
-        Envelope::MERKLE_DOMAIN,
+        Order::MERKLE_DOMAIN,
         root,
-        &other,
-        &proof
-    ));
-
-    let message_proof = envelope.prove(&hasher, MESSAGE).unwrap().unwrap();
-    assert!(!verify(
-        &hasher,
-        Envelope::MERKLE_DOMAIN,
-        root,
-        &to_vec(&envelope.fee_payer).unwrap(),
+        &to_vec(&order.buyer).unwrap(),
         &message_proof
     ));
 }
@@ -259,16 +250,16 @@ fn a_field_index_past_the_type_has_no_proof() {
 #[test]
 fn a_variant_proves_without_its_content() {
     let hasher = TestHasher;
-    let body = Body::Publish(vec![9; 64]);
-    let root = body.merkle_root(&hasher).unwrap();
+    let item = Item::Service(vec![9; 64]);
+    let root = item.merkle_root(&hasher).unwrap();
 
-    let leaves = body.chunks().unwrap();
+    let leaves = item.chunks().unwrap();
     assert_eq!(leaves.len(), 2, "a discriminant leaf and one field");
 
-    let tag_proof = body.prove(&hasher, 0).unwrap().unwrap();
+    let tag_proof = item.prove(&hasher, 0).unwrap().unwrap();
     assert!(verify(
         &hasher,
-        Body::MERKLE_DOMAIN,
+        Item::MERKLE_DOMAIN,
         root,
         &leaves[0],
         &tag_proof
@@ -285,8 +276,8 @@ fn a_variant_proves_without_its_content() {
 #[test]
 fn variants_with_the_same_content_differ_at_the_root() {
     let hasher = TestHasher;
-    let call = Body::Call(vec![7, 7]);
-    let publish = Body::Publish(vec![7, 7]);
+    let call = Item::Goods(vec![7, 7]);
+    let publish = Item::Service(vec![7, 7]);
     assert_ne!(
         call.merkle_root(&hasher).unwrap(),
         publish.merkle_root(&hasher).unwrap()
