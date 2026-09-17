@@ -162,11 +162,6 @@ pub enum IntentError {
         /// Its position in the declaration.
         socket: u32,
     },
-    /// Records registered on an intent finished as a member. The records
-    /// ride the tree beside the root, so a member carries none, and
-    /// whoever composes the tree registers them.
-    #[error("presented records ride the tree; a member carries none")]
-    RecordsOnMember,
     /// An intent's own graph refused to build or type.
     #[error(transparent)]
     Intent(#[from] TypedError),
@@ -410,13 +405,6 @@ pub struct IntentBuilder<'a> {
     sockets: Vec<Socket>,
     gives: Vec<ValueRef>,
     members: Vec<Placed>,
-    /// The creation-fixed records the tree carries for targets beyond
-    /// the genesis registry. The root's alone: a member carries none.
-    instances: Vec<InstanceMeta>,
-    /// The resource records the tree presents — the preimage of each
-    /// granting address a gate reads through — in the order the
-    /// composer added them. The root's alone, as the instances are.
-    resources: Vec<ResourceMeta>,
 }
 
 impl<'a> IntentBuilder<'a> {
@@ -471,8 +459,6 @@ impl<'a> IntentBuilder<'a> {
             sockets: Vec::new(),
             gives: Vec::new(),
             members: Vec::new(),
-            instances: Vec::new(),
-            resources: Vec::new(),
         }
     }
 
@@ -608,7 +594,8 @@ impl<'a> IntentBuilder<'a> {
     ///
     /// Past a `u32` of members, far beyond [`MAX_INTENTS`], which
     /// [`build`](Self::build) enforces as an error.
-    pub fn adopt(&mut self, signed: SignedIntent) -> Result<Interface, IntentError> {
+    pub fn adopt(&mut self, signed: impl Into<SignedIntent>) -> Result<Interface, IntentError> {
+        let signed = signed.into();
         let member = u32::try_from(self.members.len()).expect("members fit an index");
         let intent = member + 1;
         let decl = &signed.intent;
@@ -787,26 +774,6 @@ impl<'a> IntentBuilder<'a> {
         }
     }
 
-    /// Carry `meta` in the tree's instance section, registering the
-    /// component address it derives for this tree's calls.
-    ///
-    /// The builder resolves targets against the registry it was given,
-    /// so a presenting build composes that registry with the same
-    /// records first — this records them in the tree, where admission
-    /// will compose identically. The tree's, so the root's: an intent
-    /// finished as a member refuses them.
-    pub fn register_instance(&mut self, meta: InstanceMeta) {
-        self.instances.push(meta);
-    }
-
-    /// Present a resource's granted-rule record, registered at the
-    /// address its own content derives — what a granted gate in this
-    /// tree resolves against, on the terms
-    /// [`register_instance`](Self::register_instance) states.
-    pub fn register_resource(&mut self, meta: ResourceMeta) {
-        self.resources.push(meta);
-    }
-
     /// The declaration, for its attesters to sign and a composer to
     /// adopt.
     ///
@@ -815,18 +782,33 @@ impl<'a> IntentBuilder<'a> {
     /// [`IntentError::Structure`] for a declaration its graph does not
     /// discharge — a socket never or twice reached, a member's give
     /// nothing took, the caps; [`IntentError::UnfilledSocket`] for a
-    /// member's socket the wiring left open;
-    /// [`IntentError::RecordsOnMember`] where records were registered;
-    /// or the graph's own refusal.
+    /// member's socket the wiring left open; or the graph's own refusal.
     pub fn into_decl(self) -> Result<Intent, IntentError> {
-        if !self.instances.is_empty() || !self.resources.is_empty() {
-            return Err(IntentError::RecordsOnMember);
-        }
-        Ok(self.finish()?.intent)
+        self.finish()
+    }
+
+    /// Emit the tree: this intent as the root, every member's wiring
+    /// complete, presenting no record beyond the genesis registry.
+    ///
+    /// # Errors
+    ///
+    /// As [`build_presenting`](Self::build_presenting).
+    pub fn build(self) -> Result<IntentTree, IntentError> {
+        self.build_presenting(Vec::new(), Vec::new())
     }
 
     /// Emit the tree: this intent as the root, every member's wiring
     /// complete, the records beside it.
+    ///
+    /// `instances` are the creation-fixed records the tree carries for
+    /// targets beyond the genesis registry, registering the component
+    /// address each derives for this tree's calls. The builder resolves
+    /// targets against the registry it was given, so a presenting build
+    /// composes that registry with the same records first — this
+    /// records them in the tree, where admission will compose
+    /// identically. `resources` are the granted-rule records the tree
+    /// presents, each registered at the address its own content
+    /// derives — what a granted gate in this tree resolves against.
     ///
     /// # Errors
     ///
@@ -834,14 +816,14 @@ impl<'a> IntentBuilder<'a> {
     /// for the tree's own shape: a root declaring an interface nobody
     /// above it could serve, too many intents, too deep a tree, a
     /// presented record nesting past the value bound.
-    pub fn build(self) -> Result<IntentTree, IntentError> {
+    pub fn build_presenting(
+        self,
+        instances: Vec<InstanceMeta>,
+        resources: Vec<ResourceMeta>,
+    ) -> Result<IntentTree, IntentError> {
         let chain = self.chain;
         let hasher = self.hasher;
-        let Finished {
-            intent: root,
-            instances,
-            resources,
-        } = self.finish()?;
+        let root = self.finish()?;
         let mut tree = IntentTree {
             root,
             instances,
@@ -873,7 +855,7 @@ impl<'a> IntentBuilder<'a> {
     /// Build the graph, close every member's wiring, and check what the
     /// handles cannot carry: every socket of this intent consumed
     /// exactly once, every give of every member taken.
-    fn finish(self) -> Result<Finished, IntentError> {
+    fn finish(self) -> Result<Intent, IntentError> {
         let accounts = self.graph.accounts().to_vec();
         let graph = self.graph.build()?;
         let mut members = Vec::with_capacity(self.members.len());
@@ -901,19 +883,8 @@ impl<'a> IntentBuilder<'a> {
             members,
         };
         check_structure(&intent, 0)?;
-        Ok(Finished {
-            intent,
-            instances: self.instances,
-            resources: self.resources,
-        })
+        Ok(intent)
     }
-}
-
-/// A finished intent and the records registered beside it.
-struct Finished {
-    intent: Intent,
-    instances: Vec<InstanceMeta>,
-    resources: Vec<ResourceMeta>,
 }
 
 /// A wiring judged to hold, before anything is spent on it.

@@ -14,7 +14,7 @@ use hyperscale_vm_effects::{
     Claim, Clause, Constraint, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta, Intent,
     IntentHeader, IntentTree, ManifestGraph, MethodSignature, PackageHash, PackageMetadata,
     PrefixShardResolver, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes,
-    ShardResolver, SignedIntent, StoredRule, TestHasher, Totality, Value, admit_tree, footprint,
+    ShardResolver, StoredRule, TestHasher, Totality, Value, admit_tree, footprint,
 };
 use hyperscale_vm_manifest_builder::{
     Authority, IntentBuilder, Interface, PreflightError, Report, TypedBuilder, preflight_tree,
@@ -298,9 +298,7 @@ fn a_composition_names_every_signer_it_needs() {
     account::deposit(&mut sub, BOB, taken).unwrap();
 
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
-    let Interface { sockets, gives } = root
-        .adopt(SignedIntent::unsigned(sub.into_decl().unwrap()))
-        .unwrap();
+    let Interface { sockets, gives } = root.adopt(sub.into_decl().unwrap()).unwrap();
     let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
     root.bind(sockets.one().unwrap(), funds).unwrap();
     account::deposit(&mut root, ALICE, gives.one().unwrap().min(10)).unwrap();
@@ -330,9 +328,7 @@ fn a_root_that_calls_nothing_is_still_one_of_the_intents() {
     let funds = account::withdraw(&mut sub, BOB, RES_X, 10).unwrap();
     account::deposit(&mut sub, BOB, funds).unwrap();
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
-    let Interface { sockets, gives } = root
-        .adopt(SignedIntent::unsigned(sub.into_decl().unwrap()))
-        .unwrap();
+    let Interface { sockets, gives } = root.adopt(sub.into_decl().unwrap()).unwrap();
     sockets.none().unwrap();
     gives.none().unwrap();
     let tree = root.build().unwrap();
@@ -405,9 +401,7 @@ fn a_shared_cell_is_named_rather_than_charged_to_either_intent() {
     account::deposit(&mut sub, ALICE, taken).unwrap();
 
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
-    let Interface { sockets, gives } = root
-        .adopt(SignedIntent::unsigned(sub.into_decl().unwrap()))
-        .unwrap();
+    let Interface { sockets, gives } = root.adopt(sub.into_decl().unwrap()).unwrap();
     let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
     root.bind(sockets.one().unwrap(), funds).unwrap();
     account::deposit(&mut root, BOB, gives.one().unwrap().min(10)).unwrap();
@@ -487,9 +481,7 @@ fn the_compute_column_sums_to_the_terms_and_splits_per_intent() {
     account::deposit(&mut sub, BOB, taken).unwrap();
 
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
-    let Interface { sockets, gives } = root
-        .adopt(SignedIntent::unsigned(sub.into_decl().unwrap()))
-        .unwrap();
+    let Interface { sockets, gives } = root.adopt(sub.into_decl().unwrap()).unwrap();
     let funds = account::withdraw(&mut root, ALICE, RES_X, 100).unwrap();
     root.bind(sockets.one().unwrap(), funds).unwrap();
     account::deposit(&mut root, ALICE, gives.one().unwrap().min(10)).unwrap();
@@ -644,15 +636,11 @@ fn a_disjunction_reports_its_branches_and_names_no_certain_signer() {
 
     // The desk's composition grants the account its own intent acts as.
     let mut root = IntentBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
-    let wants = root
-        .adopt(SignedIntent::unsigned(request))
-        .unwrap()
-        .sockets
-        .one()
-        .unwrap();
+    let wants = root.adopt(request).unwrap().sockets.one().unwrap();
     root.bind(wants, DESK).unwrap();
-    root.register_resource(either_note_meta());
-    let tree = root.build().unwrap();
+    let tree = root
+        .build_presenting(Vec::new(), vec![either_note_meta()])
+        .unwrap();
 
     let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
     let withdrawing = report
@@ -771,8 +759,9 @@ fn a_component_claim_the_transaction_mints_is_satisfiable() {
         .one()
         .unwrap();
     account::deposit(&mut root, BOB, funds).unwrap();
-    root.register_resource(ticket_meta());
-    let tree = root.build().unwrap();
+    let tree = root
+        .build_presenting(Vec::new(), vec![ticket_meta()])
+        .unwrap();
 
     let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
     let withdrawing = report
@@ -808,15 +797,11 @@ fn a_conjunction_reports_what_each_branch_asks() {
     let request = request.into_decl().unwrap();
 
     let mut root = IntentBuilder::new(&chain, &TestHasher, DESK, TEST_HEADER);
-    let wants = root
-        .adopt(SignedIntent::unsigned(request))
-        .unwrap()
-        .sockets
-        .one()
-        .unwrap();
+    let wants = root.adopt(request).unwrap().sockets.one().unwrap();
     root.bind(wants, DESK).unwrap();
-    root.register_resource(note_meta());
-    let tree = root.build().unwrap();
+    let tree = root
+        .build_presenting(Vec::new(), vec![note_meta()])
+        .unwrap();
 
     let report = preflight_tree(&tree, &chain, &TestHasher, NETWORK).unwrap();
 

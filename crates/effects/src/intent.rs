@@ -308,6 +308,13 @@ pub struct SignedIntent {
     pub signatures: Vec<Attestation>,
 }
 
+impl From<Intent> for SignedIntent {
+    /// The intent with no attestation yet.
+    fn from(intent: Intent) -> Self {
+        Self::unsigned(intent)
+    }
+}
+
 impl SignedIntent {
     /// `intent` with no attestation yet.
     #[must_use]

@@ -30,7 +30,7 @@
 
 use hyperscale_vm_effects::{
     Admitted, CallArg, Constraint, Hasher, IntentHeader, IntentTree, PackageHash,
-    PrefixShardResolver, Records, SignedIntent, TestHasher, admit_tree, per_shard,
+    PrefixShardResolver, Records, TestHasher, admit_tree, per_shard,
 };
 use hyperscale_vm_embed::abi::{ABI, EVENTS, MEMORY, STATE};
 use hyperscale_vm_harness::driver::{Lanes, run_lanes, seed_vault};
@@ -104,9 +104,7 @@ fn traded() -> IntentTree {
         .expect("the subintent discharges its declaration");
 
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
-    let Interface { sockets, gives } = root
-        .adopt(SignedIntent::unsigned(sub))
-        .expect("the subintent adopts");
+    let Interface { sockets, gives } = root.adopt(sub).expect("the subintent adopts");
     let wants_x = sockets.one().expect("the subintent declares one socket");
     let paid_y = gives.one().expect("the subintent declares one give");
     let funds = account::withdraw(&mut root, ALICE, RES_X, PAYS).expect("withdraw types");

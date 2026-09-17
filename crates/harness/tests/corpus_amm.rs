@@ -2,8 +2,8 @@
 //! math, output floors, and the share vault's rounding.
 
 use hyperscale_vm_effects::{
-    AdmissionError, Claim, Hash32, Intent, IntentHeader, IntentTree, ManifestGraph, SignedIntent,
-    SlotId, TestHasher, Value, child_key, holdings_collection,
+    AdmissionError, Claim, Hash32, Intent, IntentHeader, IntentTree, ManifestGraph, SlotId,
+    TestHasher, Value, child_key, holdings_collection,
 };
 use hyperscale_vm_fixtures::{amm, shares};
 use hyperscale_vm_harness::driver::{amount_of, declared_vault, vault};
@@ -510,7 +510,7 @@ fn approved_composition(request: Intent) -> Result<IntentTree, IntentError> {
     let chain = world();
     let mut root = IntentBuilder::new(&chain, &TestHasher, REGISTRAR, TEST_HEADER);
     let wants = root
-        .adopt(SignedIntent::unsigned(request))?
+        .adopt(request)?
         .sockets
         .one()
         .expect("the request declares one socket");

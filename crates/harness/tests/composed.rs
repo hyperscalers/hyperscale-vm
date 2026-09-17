@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 
 use hyperscale_vm_effects::{
     Admitted, Constraint, Hasher, IntentHeader, IntentTree, Marked, Marker, PackageHash,
-    PrefixShardResolver, Records, SignedIntent, TestHasher, admit_tree, per_shard,
+    PrefixShardResolver, Records, TestHasher, admit_tree, per_shard,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_harness::fixtures::build_guest;
@@ -67,9 +67,7 @@ fn composed_tree(account: PrincipalAddr, pay: u128) -> IntentTree {
         .expect("the subintent discharges its declaration");
 
     let mut root = IntentBuilder::new(&chain, &TestHasher, account, TEST_HEADER);
-    let Interface { sockets, gives } = root
-        .adopt(SignedIntent::unsigned(sub))
-        .expect("the subintent adopts");
+    let Interface { sockets, gives } = root.adopt(sub).expect("the subintent adopts");
     let wants_x = sockets.one().expect("the subintent declares one socket");
     let paid_y = gives.one().expect("the subintent declares one give");
     let funds = account::withdraw(&mut root, account, RES_X, pay).expect("withdraw types");

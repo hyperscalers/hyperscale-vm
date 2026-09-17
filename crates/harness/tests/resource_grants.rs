@@ -104,8 +104,8 @@ fn governed_tree(entry: RuleBytes) -> Result<IntentTree> {
         account::deposit(b, HOLDER, funds)
     };
     build(&mut root).context("the withdrawal types against the account")?;
-    root.register_resource(governed_meta(entry));
-    root.build().context("the tree builds")
+    root.build_presenting(Vec::new(), vec![governed_meta(entry)])
+        .context("the tree builds")
 }
 
 /// A holder's store, holding the governed resource and — where `carries`
@@ -213,8 +213,9 @@ fn a_changed_rule_is_a_different_resource() -> Result<()> {
         rules: Vec::new(),
     }));
     assert_ne!(forged.address(&TestHasher), governed(entry));
-    root.register_resource(forged);
-    let tree = root.build().context("the tree builds")?;
+    let tree = root
+        .build_presenting(Vec::new(), vec![forged])
+        .context("the tree builds")?;
     let identity = tree.hash(&TestHasher);
     let refusal = admit_tree(&tree, identity, &chain, &TestHasher)
         .expect_err("a forged record registers a different resource");
@@ -286,8 +287,9 @@ fn a_withdrawal_credential_leaves_receiving_alone() -> Result<()> {
         account::deposit(b, STRANGER, funds)
     };
     build(&mut root).context("the transfer types")?;
-    root.register_resource(governed_meta(entry.clone()));
-    let tree = root.build().context("the tree builds")?;
+    let tree = root
+        .build_presenting(Vec::new(), vec![governed_meta(entry.clone())])
+        .context("the tree builds")?;
 
     let sent = batch_entry(&tree)?;
     let (outcome, end) = run(
@@ -460,8 +462,8 @@ fn admitted_tree(entry: RuleBytes, recipient: PrincipalAddr) -> Result<IntentTre
         account::deposit(b, recipient, funds)
     };
     build(&mut root).context("the transfer types against the account")?;
-    root.register_resource(admitting_meta(entry));
-    root.build().context("the tree builds")
+    root.build_presenting(Vec::new(), vec![admitting_meta(entry)])
+        .context("the tree builds")
 }
 
 /// A deposit credential governs the crediting side, and a transfer to a
