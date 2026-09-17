@@ -519,15 +519,13 @@ fn seed_pending(
     serial: u64,
     at_ms: u64,
     rule: &RuleBytes,
-    delay_ms: u64,
+    frozen: Option<&RuleBytes>,
 ) {
     let pending = account::Pending {
         serial,
         effective_at_ms: at_ms,
         primary: PrincipalRule(rule.0.clone()),
-        recovery: rule.clone(),
-        confirmation: rule.clone(),
-        delay_ms,
+        frozen: frozen.cloned(),
     };
     store.write(own_cell(owner, 4), account::encode_pending(&pending));
     store.write(own_cell(owner, 6), serial.to_le_bytes().to_vec());
@@ -572,8 +570,10 @@ fn confirm_by(signer: PrincipalAddr) -> ManifestGraph {
     graph_signed(signer, |b| account::confirm(b, ALICE, FIRST))
 }
 
+/// Alice's recovery freezes her and proposes Bob in one call, composed
+/// by `signer`.
 fn freeze_by(signer: PrincipalAddr) -> ManifestGraph {
-    graph_signed(signer, |b| account::freeze(b, ALICE))
+    graph_signed(signer, |b| account::freeze(b, ALICE, governing_rule(BOB)))
 }
 
 fn cancel_graph() -> ManifestGraph {
@@ -668,7 +668,7 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
         FIRST,
         t0 + DAY_MS,
         &stored_rule(BOB),
-        DAY_MS,
+        None,
     );
     assert_eq!(
         receipt.delta.cells.get(&own_cell(ALICE, 4)),
@@ -818,22 +818,22 @@ fn recovery_withdraws_its_own_unmatured_proposal() {
 }
 
 /// A compromised primary cannot outlast its replacement: recovery
-/// freezes the acting power, proposes, and waits. The frozen key can
-/// neither act nor cancel, and the delay is how long the funds sat
-/// behind a freeze rather than how long the attacker had them —
-/// unfreezing is the rotation itself.
+/// freezes the acting power and proposes in one call, then waits. The
+/// frozen key can neither spend nor cancel, and the rotation lands on
+/// the frozen account when the clock licenses it.
 #[test]
 fn recovery_rotates_a_hostile_primary_out() {
     let world = world();
     let store = recovered_store();
     let t0 = env().clock_ms;
 
-    // Freeze first: the acting entry goes, everything else stands.
-    let freeze = freeze_by(BOB);
+    // A freeze is a proposal with the primary closed: the acting entry
+    // goes, the displaced rule rides the proposal, and everything else
+    // stands.
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&freeze, TxHash(Hash32([0x90; 32])))],
+        &[(&freeze_by(BOB), TxHash(Hash32([0x90; 32])))],
         Some(BOB),
     );
     let TxResult::Completed(receipt) = &results[0] else {
@@ -846,6 +846,20 @@ fn recovery_rotates_a_hostile_primary_out() {
          one — an unwritten cell is what the address's own key still \
          governs, so a removal would hand the account back to the key \
          being frozen out"
+    );
+    let mut waiting = MemoryStore::new();
+    seed_pending(
+        &mut waiting,
+        ALICE,
+        FIRST,
+        t0 + DAY_MS,
+        &stored_rule(BOB),
+        Some(&stored_rule(ALICE)),
+    );
+    assert_eq!(
+        receipt.delta.cells.get(&own_cell(ALICE, 4)),
+        Some(&waiting.cell(own_cell(ALICE, 4))),
+        "and the proposal carries the primary it displaced"
     );
 
     // The frozen key neither acts nor cancels.
@@ -865,16 +879,8 @@ fn recovery_rotates_a_hostile_primary_out() {
         })]
     );
 
-    // Recovery proposes its replacement and waits it out. The maturity
-    // boundary itself is pinned once, by the proposal test; what this
-    // adds is that the rotation lands on a frozen account.
-    let (results, store) = run_both_signed(
-        &world,
-        &store,
-        &[(&propose_by(BOB), TxHash(Hash32([0x93; 32])))],
-        Some(BOB),
-    );
-    assert!(matches!(&results[0], TxResult::Completed(_)));
+    // The clock licenses the rotation, and enacting it ends the freeze
+    // with the primary the proposal named.
     let at = t0 + DAY_MS;
     let (results, enacted) = run_both_at(
         &world,
@@ -888,14 +894,11 @@ fn recovery_rotates_a_hostile_primary_out() {
     assert_acts(&world, &enacted, BOB, at, true, 0x98);
 }
 
-/// Freeze after propose: the pending replacement survives the removal.
-///
-/// The order matters because freeze rewrites the whole cell. Its
-/// headline clause is that it keeps whatever is pending — the frozen
-/// account is still on its way to a new primary, and a freeze that
-/// dropped the proposal would restart the delay it was already serving.
+/// A proposal while frozen carries the displaced primary forward: the
+/// freeze is the proposal's, so replacing the proposal neither lifts
+/// the freeze nor loses the rule a cancel gives back.
 #[test]
-fn a_freeze_keeps_the_proposal_it_finds_pending() {
+fn a_proposal_while_frozen_carries_the_displaced_primary_forward() {
     let world = world();
     let store = recovered_store();
     let t0 = env().clock_ms;
@@ -903,55 +906,67 @@ fn a_freeze_keeps_the_proposal_it_finds_pending() {
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&propose_by(BOB), TxHash(Hash32([0xA0; 32])))],
+        &[(&freeze_by(BOB), TxHash(Hash32([0xA0; 32])))],
         Some(BOB),
     );
     assert!(matches!(&results[0], TxResult::Completed(_)));
 
-    let freeze = freeze_by(BOB);
+    // A second proposal replaces the first and keeps the account frozen.
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&freeze, TxHash(Hash32([0xA1; 32])))],
+        &[(&propose_by(BOB), TxHash(Hash32([0xA1; 32])))],
         Some(BOB),
     );
     let TxResult::Completed(receipt) = &results[0] else {
-        panic!("freeze must complete; got {:?}", results[0]);
+        panic!("propose must complete; got {:?}", results[0]);
     };
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(frozen())),
-        "the freeze closes the governing rule"
+        None,
+        "a proposal touches no governing rule, so the freeze stands"
+    );
+    let mut waiting = MemoryStore::new();
+    seed_pending(
+        &mut waiting,
+        ALICE,
+        FIRST + 1,
+        t0 + DAY_MS,
+        &stored_rule(BOB),
+        Some(&stored_rule(ALICE)),
     );
     assert_eq!(
         receipt.delta.cells.get(&own_cell(ALICE, 4)),
-        None,
-        "and leaves the replacement waiting exactly where it was"
+        Some(&waiting.cell(own_cell(ALICE, 4))),
+        "and the replacement carries the displaced primary forward"
     );
+    assert_acts(&world, &store, ALICE, t0, false, 0xA2);
 
-    // The instant the replacement was already serving is the instant it
-    // may be enacted: the freeze moved nothing about it. The boundary
-    // itself is the proposal test's pin.
-    let at = t0 + DAY_MS;
-    let (results, enacted) = run_both_at(
+    // Cancelling the second gives back what the first displaced.
+    let cancel = graph_signed(BOB, |b| account::cancel(b, ALICE, FIRST + 1));
+    let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&promote_by(BOB), TxHash(Hash32([0xA4; 32])))],
+        &[(&cancel, TxHash(Hash32([0xA3; 32])))],
         Some(BOB),
-        at,
     );
-    assert!(matches!(&results[0], TxResult::Completed(_)));
-    assert_acts(&world, &enacted, BOB, at, true, 0xA5);
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("cancel must complete; got {:?}", results[0]);
+    };
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        Some(&Some(governing(ALICE))),
+        "the primary the freeze displaced comes back"
+    );
+    assert_acts(&world, &store, ALICE, t0, true, 0xA4);
+    assert_acts(&world, &store, BOB, t0, false, 0xA5);
 }
 
-/// Freeze after maturity: the promoted base is what gets frozen.
-///
-/// A matured proposal already governs, so the read that finds it
-/// promotes it — and the primary the freeze strips is the promoted
-/// one's, not the base it replaced. What is left has no proposal,
-/// because there is no longer one waiting.
+/// A cancelled freeze gives the primary back: the freeze is the
+/// proposal's, so the verdict that drops the proposal restores what it
+/// displaced, and the account is where it was before.
 #[test]
-fn a_freeze_after_maturity_strips_the_promoted_primary() {
+fn a_cancelled_freeze_gives_the_primary_back() {
     let world = world();
     let store = recovered_store();
     let t0 = env().clock_ms;
@@ -959,35 +974,33 @@ fn a_freeze_after_maturity_strips_the_promoted_primary() {
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&propose_by(BOB), TxHash(Hash32([0xA5; 32])))],
+        &[(&freeze_by(BOB), TxHash(Hash32([0xA5; 32])))],
         Some(BOB),
     );
     assert!(matches!(&results[0], TxResult::Completed(_)));
+    assert_acts(&world, &store, ALICE, t0, false, 0xA6);
 
-    // Past the instant, so Bob is primary by the read alone; his
-    // recovery entry is the same rule, so he freezes his own primary.
-    let at = t0 + DAY_MS;
-    let freeze = freeze_by(BOB);
-    let (results, store) = run_both_at(
+    let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&freeze, TxHash(Hash32([0xA6; 32])))],
+        &[(&cancel_by(BOB), TxHash(Hash32([0xA7; 32])))],
         Some(BOB),
-        at,
     );
     let TxResult::Completed(receipt) = &results[0] else {
-        panic!("freeze must complete; got {:?}", results[0]);
+        panic!("cancel must complete; got {:?}", results[0]);
     };
     assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(frozen())),
-        "a freeze closes the governing rule whether or not a replacement \
-         is waiting"
+        Some(&Some(governing(ALICE))),
+        "the governing rule is exactly what securify wrote"
     );
-
-    // Neither key acts: the promoted primary is the one that went.
-    assert_acts(&world, &store, BOB, at, false, 0xA7);
-    assert_acts(&world, &store, ALICE, at, false, 0xA8);
+    assert_eq!(
+        receipt.delta.cells.get(&own_cell(ALICE, 4)),
+        Some(&Some(Vec::new())),
+        "and no replacement waits"
+    );
+    assert_acts(&world, &store, ALICE, t0, true, 0xA8);
+    assert_acts(&world, &store, BOB, t0, false, 0xA9);
 }
 
 /// A hostile recovery under an effectively infinite delay matures
@@ -1035,20 +1048,14 @@ fn an_infinite_delay_keeps_a_hostile_recovery_waiting() {
     assert_acts(&world, &store, ALICE, far, false, 0x9C);
 }
 
-/// The freeze trade, made visible: a hostile recovery under an
-/// effectively infinite delay locks the account and there is no way
-/// back.
-///
-/// `freeze` is deliberately immediate and outside the delay dial —
-/// protecting funds from a compromised key is worth nothing if it has
-/// to wait — and its inverse is the rotation, which under this delay
-/// only the confirmation role can bring about. So a recovery factor in
-/// the wrong hands can freeze with nothing pending and leave a base
-/// with no primary and no proposal: the funds are locked, not stolen,
-/// and they stay locked. A change that gave the primary a way back
-/// without a rotation would break this test, which is the point of it.
+/// A hostile freeze under an effectively infinite delay waits on a
+/// verdict rather than maturing: nobody acts however far out, the
+/// proposal the freeze rides never reaches its instant, securify's door
+/// stays shut, and the confirmation role's co-signature is what ends it
+/// — by enacting the replacement, which under this delay is the only
+/// way one lands. The funds are locked, not stolen, until that verdict.
 #[test]
-fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
+fn a_frozen_account_under_an_infinite_delay_waits_on_a_verdict() {
     let world = world();
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
@@ -1062,12 +1069,10 @@ fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
     );
     let t0 = env().clock_ms;
 
-    // Nothing pending, and the freeze lands anyway.
-    let freeze = freeze_by(BOB);
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&freeze, TxHash(Hash32([0xB0; 32])))],
+        &[(&freeze_by(BOB), TxHash(Hash32([0xB0; 32])))],
         Some(BOB),
     );
     let TxResult::Completed(receipt) = &results[0] else {
@@ -1079,30 +1084,27 @@ fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
         "an unmet delay gates a takeover, never the freeze"
     );
 
-    // However far out, nobody acts: the primary entry is gone and no
-    // proposal is on its way to restoring one.
+    // However far out, nobody acts: the primary entry is gone and the
+    // proposal that would restore one never matures.
     let far = t0 + 1_000 * DAY_MS;
     assert_acts(&world, &store, ALICE, far, false, 0xB1);
     assert_acts(&world, &store, BOB, far, false, 0xB2);
     assert_acts(&world, &store, MAKER, far, false, 0xB3);
-
-    // No method restores a primary. `confirm` names a proposal that is
-    // not there, `securify` refuses a cell that is present, and the
-    // recovery-gated moves are the attacker's.
-    let (results, store) = run_both_at(
+    let (results, _) = run_both_at(
         &world,
         &store,
-        &[(&confirm_by(MAKER), TxHash(Hash32([0xB4; 32])))],
-        Some(MAKER),
+        &[(&promote_by(BOB), TxHash(Hash32([0xB4; 32])))],
+        Some(BOB),
         far,
     );
     assert_eq!(
         results,
-        vec![TxResult::Declined(account::Error::NoSuchProposal.code())],
-        "nothing pending is nothing to confirm"
+        vec![TxResult::Declined(account::Error::Unmatured.code())],
+        "a delay past the clock's reach is a proposal that never matures"
     );
-    assert_acts(&world, &store, ALICE, far, false, 0xB5);
 
+    // Nor does securify: it is a one-way door and the cell is on the
+    // far side of it.
     let securify = securify_graph(&StoredRule::claim(Claim::of_subject(ALICE)));
     let (results, store) = run_both_at(
         &world,
@@ -1124,9 +1126,19 @@ fn a_frozen_account_under_an_infinite_delay_has_no_way_back() {
         })],
         "securify is a one-way door and the cell is on the far side of it"
     );
-
-    // And the funds are still there, which is what the freeze is for.
     assert_eq!(amount_of(&store, vault(ALICE, RES_X)), 150);
+
+    // The confirmation role's verdict is what ends it.
+    let (results, store) = run_both_at(
+        &world,
+        &store,
+        &[(&confirm_by(MAKER), TxHash(Hash32([0xB7; 32])))],
+        Some(MAKER),
+        far,
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+    assert_acts(&world, &store, BOB, far, true, 0xB8);
+    assert_acts(&world, &store, ALICE, far, false, 0xB9);
 }
 
 /// Confirmation enacts a proposal early: the new roles govern from the
@@ -1200,16 +1212,7 @@ fn a_verdict_names_the_proposal_its_signer_saw() {
 
     // Bob replaces his proposal with the maker's rules before the
     // maker's confirmation of the first is included.
-    let replace = graph_signed(BOB, |b| {
-        account::propose(
-            b,
-            ALICE,
-            governing_rule(MAKER),
-            stored_rule(MAKER),
-            stored_rule(MAKER),
-            DAY_MS,
-        )
-    });
+    let replace = graph_signed(BOB, |b| account::propose(b, ALICE, governing_rule(MAKER)));
     let (results, store) = run_both_signed(
         &world,
         &store,
@@ -1251,118 +1254,6 @@ fn a_verdict_names_the_proposal_its_signer_saw() {
     assert_acts(&world, &store, ALICE, t0, false, 0xD7);
 }
 
-/// One hour, against the corpus day: a delay a proposal may name and
-/// this account does not yet hold.
-const HOUR_MS: u64 = 3_600_000;
-
-/// Propose Bob for all three rules, naming `delay_ms` as the wait every
-/// replacement after this one serves.
-/// Bob, as the recovery role, proposes himself under `delay_ms`.
-fn propose_at_delay(delay_ms: u64) -> ManifestGraph {
-    graph_signed(BOB, |b| {
-        account::propose(
-            b,
-            ALICE,
-            governing_rule(BOB),
-            stored_rule(BOB),
-            stored_rule(BOB),
-            delay_ms,
-        )
-    })
-}
-
-/// The delay is the fourth thing a replacement replaces, and it starts
-/// governing when the replacement does.
-///
-/// Both halves matter and only together. That it moves at all is what
-/// keeps the one security parameter an account most wants to tune from
-/// being fixed at the moment its holder knew least about it — `securify`
-/// is one-way, so a delay set once would be set forever. That it moves
-/// only on enactment is what stops a recovery factor in the wrong hands
-/// shortening its own takeover: the number a proposal names binds
-/// whoever comes after it, never the proposal carrying it.
-#[test]
-fn a_replacement_replaces_the_delay_too_and_not_before_it_is_enacted() {
-    let world = world();
-    let store = recovered_store();
-    let t0 = env().clock_ms;
-
-    // Bob proposes an hour where a day governs. The wait is the day.
-    let (results, store) = run_both_signed(
-        &world,
-        &store,
-        &[(&propose_at_delay(HOUR_MS), TxHash(Hash32([0x75; 32])))],
-        Some(BOB),
-    );
-    let TxResult::Completed(receipt) = &results[0] else {
-        panic!("propose must complete; got {:?}", results[0]);
-    };
-    let mut waiting = MemoryStore::new();
-    seed_pending(
-        &mut waiting,
-        ALICE,
-        FIRST,
-        t0 + DAY_MS,
-        &stored_rule(BOB),
-        HOUR_MS,
-    );
-    assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 4)),
-        Some(&waiting.cell(own_cell(ALICE, 4))),
-        "the proposer names the next delay and serves the current one"
-    );
-    assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 5)),
-        None,
-        "and a delay proposed is not a delay in force"
-    );
-
-    // Enacted a day later, and the hour is what governs from here.
-    let at = t0 + DAY_MS;
-    let (results, store) = run_both_at(
-        &world,
-        &store,
-        &[(&promote_by(BOB), TxHash(Hash32([0x76; 32])))],
-        Some(BOB),
-        at,
-    );
-    let TxResult::Completed(receipt) = &results[0] else {
-        panic!("promote must complete; got {:?}", results[0]);
-    };
-    assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 5)),
-        Some(&Some(HOUR_MS.to_le_bytes().to_vec())),
-        "promotion writes the delay beside the three rules"
-    );
-
-    // Bob governs and Bob may replace, so the next proposal is his — and
-    // it waits the hour he bought rather than the day he served.
-    let (results, _) = run_both_at(
-        &world,
-        &store,
-        &[(&propose_at_delay(HOUR_MS), TxHash(Hash32([0x77; 32])))],
-        Some(BOB),
-        at,
-    );
-    let TxResult::Completed(receipt) = &results[0] else {
-        panic!("the second propose must complete; got {:?}", results[0]);
-    };
-    let mut sooner = MemoryStore::new();
-    seed_pending(
-        &mut sooner,
-        ALICE,
-        FIRST + 1,
-        at + HOUR_MS,
-        &stored_rule(BOB),
-        HOUR_MS,
-    );
-    assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 4)),
-        Some(&sooner.cell(own_cell(ALICE, 4))),
-        "the delay a replacement carried is the one the next one serves"
-    );
-}
-
 /// A second propose replaces an unmatured proposal — its timer restarts
 /// from the replacing clock — and an unsecurified account has nothing
 /// to propose against.
@@ -1382,16 +1273,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
 
     // Replace it half a day later: one proposal, the fresh instant.
     let later = t0 + DAY_MS / 2;
-    let replace = graph_signed(BOB, |b| {
-        account::propose(
-            b,
-            ALICE,
-            governing_rule(MAKER),
-            stored_rule(MAKER),
-            stored_rule(MAKER),
-            DAY_MS,
-        )
-    });
+    let replace = graph_signed(BOB, |b| account::propose(b, ALICE, governing_rule(MAKER)));
     let (results, _) = run_both_at(
         &world,
         &store,
@@ -1409,7 +1291,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
         FIRST + 1,
         later + DAY_MS,
         &stored_rule(MAKER),
-        DAY_MS,
+        None,
     );
     assert_eq!(
         receipt.delta.cells.get(&own_cell(ALICE, 4)),
@@ -1425,16 +1307,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
     // account nobody has written to.
     let mut virtual_store = sealed_store();
     virtual_store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
-    let own_propose = graph(|b| {
-        account::propose(
-            b,
-            ALICE,
-            governing_rule(BOB),
-            stored_rule(BOB),
-            stored_rule(BOB),
-            DAY_MS,
-        )
-    });
+    let own_propose = graph(|b| account::propose(b, ALICE, governing_rule(BOB)));
     let (results, _) = run_both_signed(
         &world,
         &virtual_store,

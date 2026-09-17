@@ -144,23 +144,27 @@ fn account() -> Blueprint {
                 t.point(&holder.child(own(5), &[])).write();
             },
         )
-        .method(
-            "propose",
-            &[
-                ParamType::PrincipalRule,
-                ParamType::Rule,
-                ParamType::Rule,
-                ParamType::U64,
-            ],
-            |t: &mut Trace| {
-                let holder = t.self_addr();
-                t.point(&holder.child(own(2), &[])).read();
-                t.governed_by();
-                t.point(&holder.child(own(5), &[])).read();
-                t.point(&holder.child(own(6), &[])).write();
-                t.point(&holder.child(own(4), &[])).write();
-            },
-        )
+        // A recovery proposal replaces the primary and nothing about who
+        // may recover: the roles are the primary's to amend.
+        .method("propose", &[ParamType::PrincipalRule], |t: &mut Trace| {
+            let holder = t.self_addr();
+            t.point(&holder.child(own(2), &[])).read();
+            t.governed_by();
+            t.point(&holder.child(own(4), &[])).write();
+            t.point(&holder.child(own(5), &[])).read();
+            t.point(&holder.child(own(6), &[])).write();
+        })
+        // A freeze is a proposal with the primary closed: the same
+        // filing, and the governing record rewritten beside it.
+        .method("freeze", &[ParamType::PrincipalRule], |t: &mut Trace| {
+            let holder = t.self_addr();
+            t.point(&holder.child(own(2), &[])).read();
+            t.governed_by();
+            t.point(&holder.child(AUTH, &[])).present().write();
+            t.point(&holder.child(own(4), &[])).write();
+            t.point(&holder.child(own(5), &[])).read();
+            t.point(&holder.child(own(6), &[])).write();
+        })
         // Promotion is nobody's gate: the record was authorized by the
         // gate that wrote it, and the clock is the only condition left.
         .method("promote", &[ParamType::U64], |t: &mut Trace| {
@@ -168,31 +172,22 @@ fn account() -> Blueprint {
             let holder = t.self_addr();
             t.point(&holder.child(own(4), &[])).write();
             t.point(&holder.child(AUTH, &[])).present().write();
-            t.point(&holder.child(own(2), &[])).write();
-            t.point(&holder.child(own(3), &[])).write();
-            t.point(&holder.child(own(5), &[])).write();
         })
+        // A cancel gives back what a freeze displaced, where one did.
         .method("cancel", &[ParamType::U64], |t: &mut Trace| {
             t.fallible();
             let holder = t.self_addr();
             t.point(&holder.child(own(2), &[])).read();
             t.governed_by();
             t.point(&holder.child(own(4), &[])).write();
+            t.point(&holder.child(AUTH, &[])).present().write();
         })
         .method("confirm", &[ParamType::U64], |t: &mut Trace| {
             t.fallible();
             let holder = t.self_addr();
-            t.point(&holder.child(own(4), &[])).write();
-            t.point(&holder.child(AUTH, &[])).present().write();
-            t.point(&holder.child(own(2), &[])).write();
-            t.point(&holder.child(own(3), &[])).write();
-            t.point(&holder.child(own(5), &[])).write();
-            t.governed_by_what_it_writes(own(3));
-        })
-        .method("freeze", &[], |t: &mut Trace| {
-            let holder = t.self_addr();
-            t.point(&holder.child(own(2), &[])).read();
+            t.point(&holder.child(own(3), &[])).read();
             t.governed_by();
+            t.point(&holder.child(own(4), &[])).write();
             t.point(&holder.child(AUTH, &[])).present().write();
         })
         .build()

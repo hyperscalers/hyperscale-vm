@@ -1149,16 +1149,7 @@ pub fn propose_graph() -> ManifestGraph {
 /// Alice's recovery proposes Bob, composed by `signer`: the recovery
 /// role's own sign-in precedes the proposal for anyone but Alice.
 pub fn propose_by(signer: PrincipalAddr) -> ManifestGraph {
-    graph_signed(signer, |b| {
-        account::propose(
-            b,
-            ALICE,
-            governing_rule(BOB),
-            stored_rule(BOB),
-            stored_rule(BOB),
-            DAY_MS,
-        )
-    })
+    graph_signed(signer, |b| account::propose(b, ALICE, governing_rule(BOB)))
 }
 
 pub fn swap_graph(min_out: u128) -> ManifestGraph {

@@ -4,7 +4,7 @@ state
      17  quarantine — a leaf per key, holding u128, at most 16 bytes
      18  recovery — one leaf, holding [u8], at most 4099 bytes
      19  confirmation — one leaf, holding [u8], at most 4099 bytes
-     20  pending — one leaf, holding pending, at most 12352 bytes
+     20  pending — one leaf, holding pending, at most 8213 bytes
      21  delay_ms — one leaf, holding u64, at most 8 bytes
      22  serials — one leaf, holding u64, at most 8 bytes
 events
@@ -15,7 +15,7 @@ errors
       1  unmatured
 types
   deposited = { amount: u128 }
-  pending = { serial: u64, effective_at_ms: u64, primary: [u8], recovery: [u8], confirmation: [u8], delay_ms: u64 }
+  pending = { serial: u64, effective_at_ms: u64, primary: [u8], frozen: [u8]? }
   withdrawn = { amount: u128 }
 
 accept(resource-address) — infallible
@@ -37,18 +37,18 @@ cancel(u64) — fallible
       0  read self.recovery
       1  requires 1 of (the rule stored at self.recovery, 2 of (self.recovery is absent, claim self))
       2  write self.pending
-  exports  handle for clause 2, arg0
+      3  requires self.auth is present
+      4  write self.auth
+  exports  handle for clause 2, handle for clause 4, arg0
 
 confirm(u64) — fallible
   declares
-      0  write self.pending
-      1  requires self.auth is present
-      2  write self.auth
-      3  write self.recovery
-      4  write self.confirmation
-      5  write self.delay_ms
-      6  requires 1 of (the rule stored at self.confirmation, 2 of (self.confirmation is absent, claim self))
-  exports  handle for clause 0, handles for clauses 2–5, arg0
+      0  read self.confirmation
+      1  requires 1 of (the rule stored at self.confirmation, 2 of (self.confirmation is absent, claim self))
+      2  write self.pending
+      3  requires self.auth is present
+      4  write self.auth
+  exports  handle for clause 2, handle for clause 4, arg0
 
 deposit(bucket) — total
   emits    deposited — at most 54 bytes
@@ -65,13 +65,16 @@ deposit-nf(nf-bucket) — infallible
            clause 0's bounds — footprint
   exports  handle for clause 0, edge arg0
 
-freeze() — infallible
+freeze(principal-rule) — infallible
   declares
       0  read self.recovery
       1  requires 1 of (the rule stored at self.recovery, 2 of (self.recovery is absent, claim self))
       2  requires self.auth is present
       3  write self.auth
-  exports  handle for clause 3
+      4  write self.pending
+      5  read self.delay_ms
+      6  write self.serials
+  exports  handles for clauses 3–6, arg0
 
 present-badge(address) — infallible
   declares
@@ -92,19 +95,16 @@ promote(u64) — fallible
       0  write self.pending
       1  requires self.auth is present
       2  write self.auth
-      3  write self.recovery
-      4  write self.confirmation
-      5  write self.delay_ms
-  exports  handle for clause 0, handles for clauses 2–5, arg0
+  exports  handle for clause 0, handle for clause 2, arg0
 
-propose(principal-rule, rule, rule, u64) — infallible
+propose(principal-rule) — infallible
   declares
       0  read self.recovery
       1  requires 1 of (the rule stored at self.recovery, 2 of (self.recovery is absent, claim self))
-      2  read self.delay_ms
-      3  write self.serials
-      4  write self.pending
-  exports  handles for clauses 2–4, arg0, arg1, arg2, arg3
+      2  write self.pending
+      3  read self.delay_ms
+      4  write self.serials
+  exports  handles for clauses 2–4, arg0
 
 refuse(resource-address) — infallible
   declares

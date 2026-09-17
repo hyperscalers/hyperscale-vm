@@ -155,10 +155,9 @@ fn the_account_wrappers_match_their_signatures() {
             86_400_000,
         )?;
         let stored = StoredRule::claim(Claim::of_subject(BOB));
-        let rule = RuleBytes::try_from(&stored).expect("a rule within the vocabulary caps");
         let governing =
             PrincipalRule::try_from(&stored).expect("a rule over principal claims encodes");
-        account::propose(b, ALICE, governing, rule.clone(), rule, 86_400_000)?;
+        account::propose(b, ALICE, governing)?;
         account::cancel(b, ALICE, 1)?;
         account::confirm(b, ALICE, 1)
     });
@@ -184,13 +183,13 @@ fn a_degenerate_rule_is_refused_where_it_is_written() {
             ..
         })
     ));
-    // And the wide kind the recovery surface takes, which decodes the
-    // same vocabulary and refuses the same bytes.
+    // And the wide kind the recovery cells take, which decodes the same
+    // vocabulary and refuses the same bytes.
     let stored = StoredRule::claim(Claim::of_subject(ALICE));
     let governing = PrincipalRule::try_from(&stored).expect("a rule over principal claims encodes");
     let broken = RuleBytes::try_from(&degenerate).expect("a degenerate rule still encodes");
     assert!(matches!(
-        account::propose(&mut b, ALICE, governing, broken.clone(), broken, 86_400_000),
+        account::securify(&mut b, ALICE, governing, broken.clone(), broken, 86_400_000),
         Err(TypedError::ParamKind {
             expected: "rule",
             ..
@@ -227,7 +226,7 @@ fn the_governing_cell_takes_a_rule_over_principals_alone() {
     let stored = StoredRule::claim(Claim::of_subject(ALICE));
     let governing = PrincipalRule::try_from(&stored).expect("a rule over principal claims encodes");
     let recovery = RuleBytes::try_from(&badge).expect("a rule within the vocabulary caps");
-    account::propose(
+    account::securify(
         &mut b,
         ALICE,
         governing,

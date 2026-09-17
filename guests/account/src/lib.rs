@@ -52,8 +52,14 @@ pub mod account {
         Unmatured,
     }
 
-    /// A replacement for the whole recovery surface, waiting on the
-    /// delay that governed when it was made.
+    /// A replacement for the account's factors, waiting on the delay
+    /// that governed when it was made.
+    ///
+    /// A recovery replaces what the account acts with and nothing
+    /// about who may recover it: the roles are the primary's to amend,
+    /// under the same delay, once it can act again. That is also what
+    /// keeps this record inside one leaf — a leaf holds fewer than four
+    /// rules at the argument cap.
     #[record]
     struct Pending {
         /// Which proposal this is, so a verdict names the one its signer
@@ -62,20 +68,17 @@ pub mod account {
         serial: u64,
         /// When it may be enacted without a confirmation.
         effective_at_ms: u64,
-        /// What each cell becomes. The primary at the narrowed kind the
-        /// governing cell takes, the other two at the wide one their own
-        /// gates read.
+        /// The primary the governing record takes, at the narrowed kind
+        /// that record holds.
         primary: PrincipalRule,
-        recovery: RuleBytes,
-        confirmation: RuleBytes,
-        /// How long the proposals after this one wait.
+        /// The primary a freeze displaced, where the account is frozen.
         ///
-        /// Carried rather than kept, because it is the fourth thing a
-        /// replacement replaces: an account whose delay could never move
-        /// again would have one security parameter fixed at the moment
-        /// its holder knew least about what it was for, and `securify`
-        /// is one-way.
-        delay_ms: u64,
+        /// In the proposal rather than in a cell of its own, so a frozen
+        /// account has a proposal waiting by construction: the freeze
+        /// ends when the proposal does, enacted or cancelled, and a
+        /// proposal that replaces a frozen one carries this forward, so
+        /// re-proposing never loses the rule a cancel gives back.
+        frozen: Option<RuleBytes>,
     }
 
     /// What the account keeps beyond the governing rule every address
@@ -119,9 +122,10 @@ pub mod account {
         /// Who may enact one before its delay runs out.
         #[width(4099)]
         confirmation: Cell<Option<RuleBytes>>,
-        /// The replacement waiting, where one is: three rules at the
-        /// argument cap, their lengths, and two words.
-        #[width(12352)]
+        /// The replacement waiting, where one is: two rules at the
+        /// argument cap, their lengths and the tag on the optional one,
+        /// and two words.
+        #[width(8213)]
         pending: Cell<Option<Pending>>,
         /// How long a proposal waits when nothing confirms it.
         ///
@@ -302,20 +306,48 @@ pub mod account {
 
         /// Wait out a replacement's delay, or replace one still waiting.
         ///
-        /// The wait comes from the delay that governs now, never from the
-        /// proposer: a proposal's own delay starts governing when the
-        /// proposal does. So a recovery factor in the wrong hands cannot
-        /// shorten its own takeover — the number it names binds whoever
-        /// comes after it, and by the time it governs, this proposal has
-        /// already been enacted or dropped.
+        /// The wait is the delay that governs now: a proposal cannot
+        /// shorten its own takeover, because the delay is not a
+        /// proposal's to name.
         #[requires(governs(recovery))]
-        pub fn propose(
-            &mut self,
-            primary: PrincipalRule,
-            recovery: RuleBytes,
-            confirmation: RuleBytes,
-            delay_ms: u64,
-        ) {
+        pub fn propose(&mut self, primary: PrincipalRule) {
+            let frozen = self.pending.get().and_then(|waiting| waiting.frozen);
+            self.file(primary, frozen);
+        }
+
+        /// Propose a replacement and strip the primary's acting power
+        /// now, the confirmation standing: what stops a compromised key
+        /// draining the account while its replacement matures.
+        ///
+        /// A freeze is a proposal with the primary closed, never a state
+        /// of its own. It ends when the proposal does — enacted, which
+        /// writes the primary the proposal names, or cancelled, which
+        /// gives the displaced one back — so a frozen account always has
+        /// a clock running on it. A freeze or a proposal while frozen
+        /// replaces the proposal and carries the displaced primary
+        /// forward, so re-proposing never loses it.
+        ///
+        /// Written as the rule nobody satisfies rather than as a removal,
+        /// and the difference is the whole of the freeze: an absent cell
+        /// is what the address's own key still governs, so removing the
+        /// rule would hand the account back to the key being frozen out.
+        #[requires(governs(recovery))]
+        pub fn freeze(&mut self, primary: PrincipalRule) {
+            let mut authority = self.auth().existing();
+            let displaced = self
+                .pending
+                .get()
+                .and_then(|waiting| waiting.frozen)
+                .unwrap_or_else(|| authority.primary.clone());
+            self.file(primary, Some(displaced));
+            authority.primary = nobody();
+            self.auth().set(Some(authority));
+        }
+
+        /// File a replacement as the one waiting, under the next serial
+        /// and the delay that governs now, carrying the primary a freeze
+        /// displaced where there is one.
+        fn file(&mut self, primary: PrincipalRule, frozen: Option<RuleBytes>) {
             let effective_at_ms = clock_ms().saturating_add(self.delay_ms.get());
             let serial = self.serials.get().saturating_add(1);
             self.serials.set(serial);
@@ -323,9 +355,7 @@ pub mod account {
                 serial,
                 effective_at_ms,
                 primary,
-                recovery,
-                confirmation,
-                delay_ms,
+                frozen,
             }));
         }
 
@@ -346,7 +376,8 @@ pub mod account {
             Ok(())
         }
 
-        /// Drop the replacement `serial` names, whatever its instant.
+        /// Drop the replacement `serial` names, whatever its instant,
+        /// giving back the primary a freeze displaced.
         ///
         /// Withdrawn by whoever may propose one: a replacement is the
         /// recovery rule's, so a compromised governing key cannot veto
@@ -356,8 +387,13 @@ pub mod account {
         /// transaction they proposed it or any since.
         #[requires(governs(recovery))]
         pub fn cancel(&mut self, serial: u64) -> Result<(), Error> {
-            self.proposal(serial)?;
+            let pending = self.proposal(serial)?;
             self.pending.set(None);
+            if let Some(primary) = pending.frozen {
+                let mut authority = self.auth().existing();
+                authority.primary = primary;
+                self.auth().set(Some(authority));
+            }
             Ok(())
         }
 
@@ -382,7 +418,9 @@ pub mod account {
             Ok(pending)
         }
 
-        /// File `pending` as the governing rules and clear the wait.
+        /// File `pending`'s primary as the governing one and clear the
+        /// wait — and with it any freeze, whose displaced primary the
+        /// proposal has just replaced.
         ///
         /// The second factor stands: a replacement is of the primary,
         /// and what colluding guardians get is a new primary rather
@@ -391,33 +429,7 @@ pub mod account {
             let mut authority = self.auth().existing();
             authority.primary = pending.primary.into_bytes();
             self.auth().set(Some(authority));
-            self.recovery.set(Some(pending.recovery));
-            self.confirmation.set(Some(pending.confirmation));
-            self.delay_ms.set(pending.delay_ms);
             self.pending.set(None);
-        }
-
-        /// Strip the primary's acting power, now, keeping whatever
-        /// replacement is waiting: what stops a compromised key draining
-        /// the account while its replacement matures.
-        ///
-        /// A write of the rule nobody satisfies rather than a removal,
-        /// and the difference is the whole of the freeze: an absent cell
-        /// is what the address's own key still governs, so removing the
-        /// rule would hand the account back to the key being frozen out.
-        ///
-        /// Unfreezing is the replacement itself, and only that. Nothing
-        /// here requires one to be waiting, so a freeze is immediate and
-        /// one-way, and the delay governs takeover rather than this. A
-        /// recovery factor in the wrong hands can therefore lock the
-        /// account for good; the dial against that is the confirmation
-        /// rule, which every replacement must satisfy once the delay is
-        /// long enough not to arrive.
-        #[requires(governs(recovery))]
-        pub fn freeze(&mut self) {
-            let mut authority = self.auth().existing();
-            authority.primary = nobody();
-            self.auth().set(Some(authority));
         }
     }
 }

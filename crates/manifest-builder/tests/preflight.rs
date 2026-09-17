@@ -13,8 +13,8 @@ use common::admit_leaf;
 use hyperscale_vm_effects::{
     Claim, Clause, Constraint, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta, Intent,
     IntentHeader, IntentTree, ManifestGraph, MethodSignature, PackageHash, PackageMetadata,
-    PrefixShardResolver, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes,
-    ShardResolver, StoredRule, TestHasher, Totality, Value, admit_tree, footprint,
+    PrefixShardResolver, PrincipalRule, Records, ResourceGrants, ResourceKind, ResourceMeta,
+    RuleBytes, ShardResolver, StoredRule, TestHasher, Totality, Value, admit_tree, footprint,
 };
 use hyperscale_vm_manifest_builder::{
     Authority, IntentBuilder, Interface, PreflightError, Report, TypedBuilder, preflight_tree,
@@ -598,8 +598,10 @@ fn either_note_meta() -> ResourceMeta {
 #[test]
 fn a_stored_rule_on_another_account_is_reported_unread() {
     let chain = world();
+    let bob = StoredRule::claim(Claim::of_subject(BOB));
+    let governing = PrincipalRule::try_from(&bob).expect("a rule over principal claims encodes");
     let graph = TypedBuilder::compose(&chain, &TestHasher, BOB, |b| {
-        account::freeze(b, ALICE)?;
+        account::freeze(b, ALICE, governing)?;
         Ok(())
     })
     .unwrap();
