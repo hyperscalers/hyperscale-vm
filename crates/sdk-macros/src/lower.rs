@@ -2733,11 +2733,12 @@ impl<'a> Lowerer<'a> {
                         quote!(#member: #value)
                     })
                     .collect();
-                let rest = strct
-                    .rest
-                    .as_ref()
-                    .map(|rest| self.code(rest))
-                    .map(|rest| quote!(..#rest));
+                // A bare `..` is a pattern's rest, reached here through a
+                // macro argument such as `matches!`, and stays as it was.
+                let rest = strct.dot2_token.map(|_| {
+                    let base = strct.rest.as_ref().map(|rest| self.code(rest));
+                    quote!(..#base)
+                });
                 Eval::plain(quote!(#path { #(#fields),* #rest }))
             }
             syn::Expr::Range(range) => {

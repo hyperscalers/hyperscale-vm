@@ -81,19 +81,18 @@ pub fn emit_closure(items: &[syn::Item]) -> BTreeSet<String> {
     let mut named: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut frontier: Vec<String> = Vec::new();
     for item in items {
-        let syn::Item::Struct(item) = item else {
+        let Some(declared) = Declared::of(item) else {
             continue;
         };
-        let marked = |name: &str| item.attrs.iter().any(|a| a.path().is_ident(name));
-        if !marked("record") && !marked("event") && !marked("resource") {
+        if !declared.marked("record") && !declared.marked("event") && !declared.marked("resource") {
             continue;
         }
-        if marked("event") {
-            frontier.push(item.ident.to_string());
+        if declared.marked("event") {
+            frontier.push(declared.ident.to_string());
         }
         named.insert(
-            item.ident.to_string(),
-            item.fields.iter().flat_map(|f| type_names(&f.ty)).collect(),
+            declared.ident.to_string(),
+            declared.fields().flat_map(|f| type_names(&f.ty)).collect(),
         );
     }
     let mut reached = BTreeSet::new();
@@ -143,9 +142,52 @@ pub fn walk_type_names(ty: &syn::Type, found: &mut Vec<String>) {
     }
 }
 
+/// A struct or an enum the module declares, read one way.
+///
+/// A record may be either: a struct where one shape is stored, an enum
+/// where the cell holds one of several — a proposal that replaces the
+/// factors or the roles, never both. An event and a resource are structs
+/// alone; the enum is admitted where a codec is all the marker asks for.
+struct Declared<'a> {
+    attrs: &'a [syn::Attribute],
+    ident: &'a syn::Ident,
+    item: &'a syn::Item,
+}
+
+impl<'a> Declared<'a> {
+    fn of(item: &'a syn::Item) -> Option<Self> {
+        match item {
+            syn::Item::Struct(it) => Some(Self {
+                attrs: &it.attrs,
+                ident: &it.ident,
+                item,
+            }),
+            syn::Item::Enum(it) => Some(Self {
+                attrs: &it.attrs,
+                ident: &it.ident,
+                item,
+            }),
+            _ => None,
+        }
+    }
+
+    fn marked(&self, name: &str) -> bool {
+        self.attrs.iter().any(|a| a.path().is_ident(name))
+    }
+
+    /// Every field the wire carries: a struct's own, or each variant's.
+    fn fields(&self) -> Box<dyn Iterator<Item = &'a syn::Field> + 'a> {
+        match self.item {
+            syn::Item::Struct(it) => Box::new(it.fields.iter()),
+            syn::Item::Enum(it) => Box::new(it.variants.iter().flat_map(|v| v.fields.iter())),
+            _ => Box::new(std::iter::empty()),
+        }
+    }
+}
+
 /// The codec every declared record and event carries.
 ///
-/// Pushed onto the author's own struct rather than asked for, on the same
+/// Pushed onto the author's own type rather than asked for, on the same
 /// terms as every other fact this macro derives: the encoding is the
 /// protocol's, so naming it is the protocol's job. The path routes
 /// through the SDK, which is the one crate a contract depends on.
@@ -154,20 +196,25 @@ pub fn encode_declared(items: &mut [syn::Item]) -> (Vec<syn::Item>, Vec<syn::Ide
     let mut records = Vec::new();
     let mut stored_types = Vec::new();
     for item in items {
-        let syn::Item::Struct(item) = item else {
+        let Some(declared) = Declared::of(item) else {
             continue;
         };
-        let marked = |name: &str| item.attrs.iter().any(|a| a.path().is_ident(name));
-        let (record, event) = (marked("record"), marked("event"));
+        let (record, event) = (declared.marked("record"), declared.marked("event"));
         // A `#[resource]` struct with fields is an instance's data
         // schema, and its cell is read and written as the record it is.
         // A bare mark declares no fields and encodes nothing.
-        let instance = marked("resource") && !item.fields.is_empty();
+        let instance = declared.marked("resource") && declared.fields().next().is_some();
+        let ident = declared.ident.clone();
+        let (attrs, vis): (&mut Vec<syn::Attribute>, &mut syn::Visibility) = match item {
+            syn::Item::Struct(it) => (&mut it.attrs, &mut it.vis),
+            syn::Item::Enum(it) => (&mut it.attrs, &mut it.vis),
+            _ => continue,
+        };
         let stored = record || instance;
         if !stored && !event {
             continue;
         }
-        item.attrs.push(syn::parse_quote!(
+        attrs.push(syn::parse_quote!(
             #[derive(
                 ::core::clone::Clone,
                 ::core::fmt::Debug,
@@ -175,7 +222,7 @@ pub fn encode_declared(items: &mut [syn::Item]) -> (Vec<syn::Item>, Vec<syn::Ide
                 ::core::cmp::Eq
             )]
         ));
-        item.attrs.push(syn::parse_quote!(
+        attrs.push(syn::parse_quote!(
             #[derive(::hyperscale_vm_sdk::hbor::Hbor, ::hyperscale_vm_sdk::hbor::HborShape)]
         ));
         // Fixed width where an emit spends it. The payload goes into a
@@ -187,30 +234,32 @@ pub fn encode_declared(items: &mut [syn::Item]) -> (Vec<syn::Item>, Vec<syn::Ide
         // allocating encode whatever it holds, so a record no event
         // reaches is held to what the encoding carries rather than to
         // what a stack buffer could.
-        if emitted.contains(&item.ident.to_string()) {
-            item.attrs.push(syn::parse_quote!(
+        if emitted.contains(&ident.to_string()) {
+            attrs.push(syn::parse_quote!(
                 #[hbor(crate = ::hyperscale_vm_sdk::hbor, infallible)]
             ));
         } else {
-            item.attrs
-                .push(syn::parse_quote!(#[hbor(crate = ::hyperscale_vm_sdk::hbor)]));
+            attrs.push(syn::parse_quote!(#[hbor(crate = ::hyperscale_vm_sdk::hbor)]));
         }
         // Named by whoever reads it: a record by the reader of its cell,
         // an event by the decoder of its payload. Both are the package's
         // own surface, so both are open the way the configuration struct
         // is.
-        item.vis = syn::parse_quote!(pub);
-        item.attrs.push(syn::parse_quote!(#[allow(missing_docs)]));
-        for field in &mut item.fields {
-            field.vis = syn::parse_quote!(pub);
+        *vis = syn::parse_quote!(pub);
+        attrs.push(syn::parse_quote!(#[allow(missing_docs)]));
+        // A variant's fields share the enum's visibility and refuse a
+        // qualifier of their own.
+        if let syn::Item::Struct(it) = item {
+            for field in &mut it.fields {
+                field.vis = syn::parse_quote!(pub);
+            }
         }
         if stored {
-            let name = &item.ident;
             records.push(syn::parse_quote!(
-                impl ::hyperscale_vm_sdk::state::Record for #name {}
+                impl ::hyperscale_vm_sdk::state::Record for #ident {}
             ));
             records.push(syn::parse_quote!(
-                impl ::hyperscale_vm_sdk::state::LeafShape for #name {
+                impl ::hyperscale_vm_sdk::state::LeafShape for #ident {
                     fn leaf_form(
                         types: &mut ::hyperscale_vm_sdk::hbor::ShapeRegistry,
                     ) -> ::hyperscale_vm_sdk::LeafForm {
@@ -220,7 +269,7 @@ pub fn encode_declared(items: &mut [syn::Item]) -> (Vec<syn::Item>, Vec<syn::Ide
                     }
                 }
             ));
-            stored_types.push(name.clone());
+            stored_types.push(ident);
         }
     }
     (records, stored_types)

@@ -1180,6 +1180,18 @@ impl<T: Record> Cell<Option<T>> {
         unimplemented!("{OFF_HOST}")
     }
 
+    /// Replace the value in a leaf that must already hold one.
+    ///
+    /// [`Cell::create`]'s door read the other way: a set through the
+    /// requirement [`Cell::existing`] states, with no read of what it
+    /// replaces. What a body reaches for when every field is new.
+    #[allow(clippy::needless_pass_by_value)] // an authoring stub consumes nothing
+    #[inline(always)]
+    pub fn rewrite(&mut self, value: T) {
+        let _ = value;
+        unimplemented!("{OFF_HOST}")
+    }
+
     /// End the leaf, which must already hold a value.
     ///
     /// The way back from [`Cell::create`], and what makes presence

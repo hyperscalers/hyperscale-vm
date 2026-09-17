@@ -36,10 +36,19 @@ mod shapes {
         weight: u64,
     }
 
+    /// A record may be an enum: a cell holding one of several shapes is
+    /// still one codec, and the declaration carries the variants.
+    #[record]
+    enum Kind {
+        Plain { weight: u64 },
+        Marked { mark: u64, weight: u64 },
+    }
+
     #[state]
     struct Shapes {
         vaults: Keyed<Vault>,
         notes: Keyed<Option<Note>>,
+        kinds: Keyed<Option<Kind>>,
     }
 
     impl Shapes {
@@ -109,7 +118,40 @@ mod shapes {
         pub fn touched(&mut self, id: u64) {
             let _ = self.notes.at(id).existing();
         }
+
+        /// An enum record is written through the same door a struct is,
+        /// and read back by the arm it holds.
+        pub fn kinded(&mut self, id: u64, weight: u64) -> u64 {
+            self.kinds.at(id).rewrite(Kind::Plain { weight });
+            match self.kinds.at(id).existing() {
+                Kind::Plain { weight } => weight,
+                Kind::Marked { mark, .. } => mark,
+            }
+        }
     }
+}
+
+/// A `#[record]` on an enum declares its variants in the shape table and
+/// round-trips through the codec every record carries.
+#[test]
+fn an_enum_record_declares_its_variants_and_encodes() {
+    use hyperscale_vm_sdk::hbor::{TypeShape, from_slice, to_vec};
+
+    let metadata = shapes::blueprint().metadata();
+    let TypeShape::Enum(variants) = &metadata.types["kind"] else {
+        panic!("an enum record declares an enum shape");
+    };
+    assert_eq!(
+        variants.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(),
+        ["plain", "marked"]
+    );
+    let marked = shapes::Kind::Marked { mark: 7, weight: 9 };
+    let bytes = to_vec(&marked).expect("a record encodes");
+    assert_eq!(bytes, [1, 7, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(
+        from_slice::<shapes::Kind>(&bytes).expect("and decodes"),
+        marked
+    );
 }
 
 #[test]

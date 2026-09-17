@@ -867,8 +867,11 @@ fn check_reserved_locals(items: &[syn::Item], state_name: &syn::Ident) -> syn::R
         .map_or(Ok(()), Err)
 }
 
-/// The markers whose reader scans structs, and the two field pins.
-const ON_A_STRUCT: &[&str] = &["state", "config", "event", "record", "resource"];
+/// The markers whose reader scans structs alone, and the two field pins.
+/// A `#[record]` marks a struct or an enum: a cell holding one of several
+/// shapes is still one codec, and the other markers read fields a struct
+/// has.
+const ON_A_STRUCT: &[&str] = &["state", "config", "event", "resource"];
 const ON_A_METHOD: &[&str] = &["proves", "total", "name", "emits"];
 const ON_A_STATE_FIELD: &[&str] = &["slot", "holds", "denomination", "width"];
 
