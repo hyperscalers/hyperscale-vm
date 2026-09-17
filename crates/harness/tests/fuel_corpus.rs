@@ -60,6 +60,14 @@ fn funded() -> MemoryStore {
     store
 }
 
+/// The same, securified to her own key: a recovery filing states the
+/// governing cell present, and the absent recovery cell still names her.
+fn securified() -> MemoryStore {
+    let mut store = funded();
+    store.write(auth(ALICE), governing(ALICE));
+    store
+}
+
 /// The same, with the pool's own pair stocked.
 fn stocked() -> MemoryStore {
     let mut store = funded();
@@ -84,8 +92,8 @@ fn the_corpus_costs_what_it_costs() {
         ),
         (
             "recovery proposal",
-            spent(&funded(), propose_graph(), ALICE),
-            75_590,
+            spent(&securified(), propose_graph(), ALICE),
+            82_328,
         ),
         ("swap", spent(&stocked(), swap_graph(1), ALICE), 135_694),
     ];

@@ -25,14 +25,14 @@ use hyperscale_vm_types::PrincipalAddr;
 mod package;
 
 pub use package::account::client::*;
-/// The replacement an account keeps while one is waiting, so a consumer
-/// can read the state a flow passes through rather than only its ends.
-pub use package::account::{Amendment, Error, Pending};
 /// What the account says about a replacement, so a consumer decodes the
 /// type the package declared rather than a layout it was told about.
 pub use package::account::{Cancelled, Enacted, Proposed};
+/// The replacement an account keeps while one is waiting, so a consumer
+/// can read the state a flow passes through rather than only its ends.
+pub use package::account::{Error, Proposal, Replacement};
 
-/// One replacement as the cell holds it.
+/// One proposal as the cell holds it.
 ///
 /// The account's own encoder rather than a second one beside it: a
 /// consumer seeding the state a flow passes through writes exactly what
@@ -42,19 +42,10 @@ pub use package::account::{Cancelled, Enacted, Proposed};
 ///
 /// Only on an encoder failure no well-formed record can reach.
 #[must_use]
-pub fn encode_pending(pending: &Pending) -> Vec<u8> {
-    to_vec(pending).expect("a record encodes")
+pub fn encode_proposal(proposal: &Proposal) -> Vec<u8> {
+    to_vec(proposal).expect("a record encodes")
 }
 
-/// One amendment as the cell holds it, on the same terms.
-///
-/// # Panics
-///
-/// Only on an encoder failure no well-formed record can reach.
-#[must_use]
-pub fn encode_amendment(amendment: &Amendment) -> Vec<u8> {
-    to_vec(amendment).expect("a record encodes")
-}
 /// The package's own bodies, dispatched natively.
 ///
 /// The same module the declaration is traced from, so a test running

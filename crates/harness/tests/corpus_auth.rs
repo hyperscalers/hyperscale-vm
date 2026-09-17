@@ -390,16 +390,13 @@ fn amend_graph() -> ManifestGraph {
     graph(|b| account::amend(b, ALICE, stored_rule(TAKER), stored_rule(BOB), HOUR_MS))
 }
 
-/// The amendment `owner` has waiting, as the account writes it.
-fn seed_amendment(store: &mut MemoryStore, owner: PrincipalAddr, serial: u64, at_ms: u64) {
-    let amendment = account::Amendment {
-        serial,
-        effective_at_ms: at_ms,
+/// The roles Alice's amendment names, as the record carries them.
+fn roles() -> account::Replacement {
+    account::Replacement::Roles {
         recovery: stored_rule(TAKER),
         veto: stored_rule(BOB),
         delay_ms: HOUR_MS,
-    };
-    store.write(own_cell(owner, 7), account::encode_amendment(&amendment));
+    }
 }
 
 /// An amendment enacts after the delay that governed when it was made
@@ -421,10 +418,10 @@ fn an_amendment_enacts_after_the_delay_and_writes_the_roles() {
         panic!("amend must complete; got {:?}", results[0]);
     };
     let mut waiting = MemoryStore::new();
-    seed_amendment(&mut waiting, ALICE, FIRST, t0 + DAY_MS);
+    seed_proposal(&mut waiting, ALICE, FIRST, t0 + DAY_MS, roles());
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 7)),
-        Some(&waiting.cell(own_cell(ALICE, 7))),
+        receipt.delta.cells.get(&own_cell(ALICE, 4)),
+        Some(&waiting.cell(own_cell(ALICE, 4))),
         "the amendment serves the delay that governs now"
     );
     assert_eq!(
@@ -525,13 +522,12 @@ fn an_enacted_amendment_hands_recovery_to_the_new_guardian() {
         panic!("the new guardian proposes; got {:?}", results[0]);
     };
     let mut sooner = MemoryStore::new();
-    seed_pending(
+    seed_proposal(
         &mut sooner,
         ALICE,
         FIRST + 1,
         at + HOUR_MS,
-        &stored_rule(BOB),
-        None,
+        factors(&stored_rule(BOB), None),
     );
     assert_eq!(
         receipt.delta.cells.get(&own_cell(ALICE, 4)),
@@ -570,7 +566,7 @@ fn an_amendment_is_cancelled_by_the_guardians_or_the_veto() {
             panic!("the verdict must complete; got {:?}", results[0]);
         };
         assert_eq!(
-            receipt.delta.cells.get(&own_cell(ALICE, 7)),
+            receipt.delta.cells.get(&own_cell(ALICE, 4)),
             Some(&Some(Vec::new())),
             "no amendment waits"
         );
@@ -637,10 +633,18 @@ fn a_recovery_proposal_outranks_an_amendment() {
     let TxResult::Completed(receipt) = &results[0] else {
         panic!("freeze must complete; got {:?}", results[0]);
     };
+    let mut retired = MemoryStore::new();
+    seed_proposal(
+        &mut retired,
+        ALICE,
+        FIRST + 1,
+        env().clock_ms + DAY_MS,
+        factors(&stored_rule(BOB), Some(&stored_rule(ALICE))),
+    );
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 7)),
-        Some(&Some(Vec::new())),
-        "a recovery filing retires the amendment"
+        receipt.delta.cells.get(&own_cell(ALICE, 4)),
+        Some(&retired.cell(own_cell(ALICE, 4))),
+        "a recovery filing retires the amendment: one cell, and the freeze holds it"
     );
     let far = env().clock_ms + 10 * DAY_MS;
     let (results, _) = run_both_at(
@@ -913,25 +917,33 @@ fn seed_authority(
     store.write(own_cell(owner, 5), delay_ms.to_le_bytes().to_vec());
 }
 
-/// The replacement `owner` has waiting, as the account writes it, and
-/// the count of proposals that makes `serial` the one it took.
-fn seed_pending(
+/// The proposal `owner` has waiting, as the account writes it, and the
+/// count of proposals that makes `serial` the one it took.
+fn seed_proposal(
     store: &mut MemoryStore,
     owner: PrincipalAddr,
     serial: u64,
     at_ms: u64,
-    rule: &RuleBytes,
-    frozen: Option<&RuleBytes>,
+    replaces: account::Replacement,
 ) {
-    let pending = account::Pending {
+    let proposal = account::Proposal {
         serial,
         effective_at_ms: at_ms,
+        replaces,
+    };
+    store.write(own_cell(owner, 4), account::encode_proposal(&proposal));
+    store.write(own_cell(owner, 6), serial.to_le_bytes().to_vec());
+}
+
+/// A replacement of the factors: `rule` as the primary, no second
+/// factor, and the primary a freeze displaced where the account is
+/// frozen.
+fn factors(rule: &RuleBytes, frozen: Option<&RuleBytes>) -> account::Replacement {
+    account::Replacement::Factors {
         primary: PrincipalRule(rule.0.clone()),
         confirmation: no_factor(),
         frozen: frozen.cloned(),
-    };
-    store.write(own_cell(owner, 4), account::encode_pending(&pending));
-    store.write(own_cell(owner, 6), serial.to_le_bytes().to_vec());
+    }
 }
 
 /// The governing record a freeze writes: the rule nobody satisfies as
@@ -1176,13 +1188,12 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
         panic!("propose must complete; got {:?}", results[0]);
     };
     let mut waiting = MemoryStore::new();
-    seed_pending(
+    seed_proposal(
         &mut waiting,
         ALICE,
         FIRST,
         t0 + DAY_MS,
-        &stored_rule(BOB),
-        None,
+        factors(&stored_rule(BOB), None),
     );
     assert_eq!(
         receipt.delta.cells.get(&own_cell(ALICE, 4)),
@@ -1362,13 +1373,12 @@ fn recovery_rotates_a_hostile_primary_out() {
          being frozen out"
     );
     let mut waiting = MemoryStore::new();
-    seed_pending(
+    seed_proposal(
         &mut waiting,
         ALICE,
         FIRST,
         t0 + DAY_MS,
-        &stored_rule(BOB),
-        Some(&stored_rule(ALICE)),
+        factors(&stored_rule(BOB), Some(&stored_rule(ALICE))),
     );
     assert_eq!(
         receipt.delta.cells.get(&own_cell(ALICE, 4)),
@@ -1441,13 +1451,12 @@ fn a_proposal_while_frozen_carries_the_displaced_primary_forward() {
         "a proposal touches no governing rule, so the freeze stands"
     );
     let mut waiting = MemoryStore::new();
-    seed_pending(
+    seed_proposal(
         &mut waiting,
         ALICE,
         FIRST + 1,
         t0 + DAY_MS,
-        &stored_rule(BOB),
-        Some(&stored_rule(ALICE)),
+        factors(&stored_rule(BOB), Some(&stored_rule(ALICE))),
     );
     assert_eq!(
         receipt.delta.cells.get(&own_cell(ALICE, 4)),
@@ -1838,7 +1847,8 @@ fn a_verdict_names_the_proposal_its_signer_saw() {
 
 /// A second propose replaces an unmatured proposal — its timer restarts
 /// from the replacing clock — and an unsecurified account has nothing
-/// to propose against.
+/// to propose against: the filing is refused on the governing cell's
+/// absence.
 #[test]
 fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
     let world = world();
@@ -1869,13 +1879,12 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
         panic!("propose must complete; got {:?}", results[0]);
     };
     let mut replaced = MemoryStore::new();
-    seed_pending(
+    seed_proposal(
         &mut replaced,
         ALICE,
         FIRST + 1,
         later + DAY_MS,
-        &stored_rule(MAKER),
-        None,
+        factors(&stored_rule(MAKER), None),
     );
     assert_eq!(
         receipt.delta.cells.get(&own_cell(ALICE, 4)),
@@ -1885,10 +1894,10 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
 
     // A virtual account has nothing stored anywhere, so the address's
     // own key is what governs every one of its rules — including the one
-    // that may replace them. Proposing against yourself before you have
-    // securified is therefore admitted and does exactly what it says,
-    // which is the same answer the key gets everywhere else on an
-    // account nobody has written to.
+    // that may replace them. The gate admits the owner; the filing does
+    // not: the recovery surface exists only once the account has
+    // securified, since no verdict could reach a record filed before,
+    // and the door is the governing cell's presence.
     let mut virtual_store = sealed_store();
     virtual_store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
     let own_propose = graph(|b| account::propose(b, ALICE, governing_rule(BOB), no_factor()));
@@ -1898,15 +1907,20 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
         &[(&own_propose, TxHash(Hash32([0x74; 32])))],
         Some(ALICE),
     );
-    assert!(
-        matches!(&results[0], TxResult::Completed(_)),
-        "an unwritten account is governed by its own key, this rule included; got {:?}",
-        results[0]
+    assert_eq!(
+        results,
+        vec![TxResult::Refused(Outcome::ConditionUnmet {
+            condition: UnmetCondition::Holds {
+                target: EffectTarget::Point(auth(ALICE)),
+                required: Presence::Present,
+                node: Some(0),
+            },
+        })],
+        "an account still governed by its own key has nothing to propose against"
     );
 
-    // And a stranger gets nothing from that: the key the absent cell
-    // admits is the account's own, and a stranger's sign-in reaches no
-    // cell of Alice's.
+    // A stranger meets the same door, judged before the gate the
+    // absent recovery cell would have refused them at.
     let (results, _) = run_both_signed(
         &world,
         &virtual_store,
@@ -1916,9 +1930,13 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
     assert_eq!(
         results,
         vec![TxResult::Refused(Outcome::ConditionUnmet {
-            condition: UnmetCondition::Satisfies { node: 0 },
+            condition: UnmetCondition::Holds {
+                target: EffectTarget::Point(auth(ALICE)),
+                required: Presence::Present,
+                node: Some(0),
+            },
         })],
-        "and the branch an absent cell meets names the account, not a caller"
+        "the door is the same whoever knocks"
     );
 }
 

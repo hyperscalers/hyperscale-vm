@@ -6,15 +6,17 @@
 //! composes under the sender's single signature — the recipient is not
 //! asked for one, because nothing about a deposit is theirs to refuse.
 //!
-//! Every address has one governing rule, in the cell the protocol keeps
-//! for it, and while nothing is stored there the address governs itself.
-//! No method here reads it: the account's shard judges the attesting keys
-//! of every intent against that cell before any body runs, so a method
-//! naming `self` is naming a sign-in already made. Everything past that
-//! is this package's policy and lives in this package's cells: the two
-//! further rules a recovery surface needs, the replacement waiting on a
-//! delay, and what it takes to enact one — each read by the gate that
-//! needs it and judged against the claims the call presents.
+//! Every address has a governing record, in the cell the protocol keeps
+//! for it: the everyday rule and a second factor beside it, judged
+//! together at sign-in. While nothing is stored there the address
+//! governs itself. No method here reads it as a gate: the account's
+//! shard judges the attesting keys of every intent against that cell
+//! before any body runs, so a method naming `self` is naming a sign-in
+//! already made. Everything past that is this package's policy and lives
+//! in this package's cells: the two roles that may recover or stop a
+//! recovery, the replacement waiting on a delay, and the count that
+//! names it — each read by the gate that needs it and judged against the
+//! claims the call presents.
 //!
 //! Rule bytes stay opaque here. The kernel decodes them where it judges a
 //! call against them, and a body that stores what it was handed converts
@@ -79,66 +81,75 @@ pub mod account {
         Outranked,
     }
 
-    /// A replacement for the account's factors, waiting on the delay
-    /// that governed when it was made.
+    /// A replacement waiting on the delay that governed when it was
+    /// filed: of the factors, or of who may recover them.
     ///
-    /// A recovery replaces what the account acts with and nothing
-    /// about who may recover it: the roles are the primary's to amend,
-    /// under the same delay, once it can act again. That is also what
-    /// keeps this record inside one leaf — a leaf holds fewer than four
-    /// rules at the argument cap.
+    /// One cell for both kinds because they never coexist — a recovery
+    /// filing retires a waiting amendment, and an amendment is refused
+    /// while a recovery waits — and one count names them, so a verdict's
+    /// serial names one record or none.
     #[record]
-    struct Pending {
+    struct Proposal {
         /// Which proposal this is, so a verdict names the one its signer
         /// saw: a proposal landed between the signing and the inclusion
-        /// of a confirmation is refused rather than enacted in its place.
-        serial: u64,
-        /// When it may be enacted without a confirmation.
-        effective_at_ms: u64,
-        /// The factors the governing record takes, at the narrowed kind
-        /// that record holds.
-        primary: PrincipalRule,
-        confirmation: PrincipalRule,
-        /// The primary a freeze displaced, where the account is frozen.
-        ///
-        /// In the proposal rather than in a cell of its own, so a frozen
-        /// account has a proposal waiting by construction: the freeze
-        /// ends when the proposal does, enacted or cancelled, and a
-        /// proposal that replaces a frozen one carries this forward, so
-        /// re-proposing never loses the rule a cancel gives back.
-        frozen: Option<RuleBytes>,
-    }
-
-    /// A replacement for who may recover the account, waiting on the
-    /// delay that governed when it was made.
-    ///
-    /// The primary's to file and the recovery role's to cancel, which is
-    /// the one asymmetry a stolen key requires: a thief evicting the
-    /// guardians is stopped by the guardians, and an owner replacing a
-    /// guardian who has gone quiet succeeds after the wait. Its own
-    /// record because it replaces different cells than a recovery does,
-    /// and a leaf holds fewer than four rules at the argument cap.
-    #[record]
-    struct Amendment {
-        /// Which proposal this is, drawn from the same count a recovery
-        /// proposal draws from, so a verdict's serial names one record
-        /// or none.
+        /// of a verdict is refused rather than answered in its place.
         serial: u64,
         /// When it may be enacted.
         effective_at_ms: u64,
-        /// What the three role cells become.
-        recovery: RuleBytes,
-        veto: RuleBytes,
-        delay_ms: u64,
+        replaces: Replacement,
     }
 
-    /// What the account keeps beyond the governing rule every address
+    /// What a proposal replaces.
+    ///
+    /// Split by what it replaces, which is also who may file it: the
+    /// factors are the recovery role's to propose, the roles are the
+    /// primary's to amend. Each arm holds fewer than four rules at the
+    /// argument cap, which is what keeps the record inside one leaf.
+    #[record]
+    enum Replacement {
+        /// The factors the governing record takes, at the narrowed kind
+        /// that record holds.
+        ///
+        /// A recovery replaces what the account acts with and nothing
+        /// about who may recover it: guardians who pass the card's rule
+        /// back leave an account colluding guardians still cannot spend
+        /// from, and the roles are the primary's to amend once it can
+        /// act again.
+        Factors {
+            primary: PrincipalRule,
+            confirmation: PrincipalRule,
+            /// The primary a freeze displaced, where the account is
+            /// frozen.
+            ///
+            /// In the proposal rather than in a cell of its own, so a
+            /// frozen account has a proposal waiting by construction:
+            /// the freeze ends when the proposal does, enacted or
+            /// cancelled, and a proposal that replaces a frozen one
+            /// carries this forward, so re-proposing never loses the
+            /// rule a cancel gives back.
+            frozen: Option<RuleBytes>,
+        },
+        /// What the three role cells become.
+        ///
+        /// The primary's to file and the recovery role's to cancel,
+        /// which is the one asymmetry a stolen key requires: a thief
+        /// evicting the guardians is stopped by the guardians, and an
+        /// owner replacing a guardian who has gone quiet succeeds after
+        /// the wait.
+        Roles {
+            recovery: RuleBytes,
+            veto: RuleBytes,
+            delay_ms: u64,
+        },
+    }
+
+    /// What the account keeps beyond the governing record every address
     /// already has: the surface that can replace it.
     ///
-    /// A recovery rule and a confirmation rule are two more of the same
-    /// thing, so they are two more cells rather than a table with a
-    /// vocabulary of its own — and each gate reads the one rule it needs
-    /// instead of every rule the account holds.
+    /// A recovery rule and a veto rule are two more of the same thing,
+    /// so they are two more cells rather than a table with a vocabulary
+    /// of its own — and each gate reads the one rule it needs instead of
+    /// every rule the account holds.
     #[state]
     struct Account {
         /// The resources this account does not want in its vault.
@@ -159,42 +170,38 @@ pub mod account {
         /// answer — a `Deposit` entry aborts the transfer at admission,
         /// before there is anything here to sweep.
         quarantine: Keyed<Vault>,
-        /// Who may propose a replacement, and who may cancel one.
+        /// Who may propose a replacement of the factors, and who may
+        /// cancel any proposal.
         ///
         /// A rule reaches the account as an argument, and an argument's
         /// bytes are capped at four kibibytes; the cell is sized to
-        /// hold any rule that can be handed to it. The record and not
-        /// the bare bytes: a byte string sits behind its own length, and
-        /// an absent rule behind a tag, so the width is the argument cap
-        /// and three bytes — sized at the cap alone, the widest rule an
+        /// hold any rule that can be handed to it. A byte string sits
+        /// behind its own length, so the width is the argument cap and
+        /// two bytes — sized at the cap alone, the widest rule an
         /// account can be handed is the one it refuses.
-        #[width(4099)]
+        #[width(4098)]
         recovery: Cell<Option<RuleBytes>>,
-        /// Who may stop a replacement before its delay runs out, giving
-        /// a frozen primary back: the holder's defence against a
-        /// recovery role in the wrong hands. Cold, and never a factor the
-        /// sign-in reads — a thief holding every everyday factor must
-        /// not hold this.
-        #[width(4099)]
+        /// Who may stop a proposal before its delay runs out, giving a
+        /// frozen primary back: the holder's defence against a recovery
+        /// role in the wrong hands. Cold, and never a factor the sign-in
+        /// reads — a thief holding every everyday factor must not hold
+        /// this.
+        #[width(4098)]
         veto: Cell<Option<RuleBytes>>,
-        /// The replacement waiting, where one is: three rules at the
-        /// argument cap, their lengths and the tag on the optional one,
-        /// and two words.
-        #[width(12311)]
-        pending: Cell<Option<Pending>>,
-        /// How long a proposal waits when nothing confirms it.
+        /// The replacement waiting, where one is: two words, a byte for
+        /// which arm, and the wider arm — three rules at the argument
+        /// cap behind their lengths, and the tag on the optional one.
+        #[width(12312)]
+        proposal: Cell<Option<Proposal>>,
+        /// How long a proposal waits before it may be enacted.
         ///
-        /// A cell rather than a constant of the account, because a
-        /// replacement replaces this too — `securify` sets the first one
-        /// and every enacted proposal sets the next.
+        /// A cell rather than a constant of the account, because an
+        /// amendment replaces this too — `securify` sets the first one
+        /// and every enacted amendment sets the next.
         delay_ms: Cell<u64>,
         /// How many proposals this account has had, which is the serial
         /// the next one takes.
         serials: Cell<u64>,
-        /// The amendment waiting, where one is: two rules at the
-        /// argument cap, their lengths, and three words.
-        #[width(8220)]
-        amendment: Cell<Option<Amendment>>,
     }
 
     impl Account {
@@ -371,13 +378,15 @@ pub mod account {
         /// factor and gains nothing over the guardians by rotating,
         /// while a holder retiring a key or replacing a worn card gets
         /// it done at once. Dropping the second factor is rotating it
-        /// to the rule anyone satisfies.
+        /// to the rule anyone satisfies. Through the door that requires
+        /// presence, so an account that has not securified is refused
+        /// rather than securified without its roles.
         #[requires(self)]
         pub fn rotate(&mut self, primary: PrincipalRule, confirmation: PrincipalRule) {
-            let mut authority = self.auth().existing();
-            authority.primary = primary.into_bytes();
-            authority.confirmation = confirmation.into_bytes();
-            self.auth().set(Some(authority));
+            self.auth().rewrite(Authority {
+                primary: primary.into_bytes(),
+                confirmation: confirmation.into_bytes(),
+            });
         }
 
         /// Change who may recover the account, after the delay.
@@ -397,28 +406,21 @@ pub mod account {
             veto: RuleBytes,
             delay_ms: u64,
         ) -> Result<(), Error> {
-            if self.pending.get().is_some() {
+            if let Some(waiting) = self.proposal.get()
+                && matches!(waiting.replaces, Replacement::Factors { .. })
+            {
                 return Err(Error::Outranked);
             }
-            let effective_at_ms = clock_ms().saturating_add(self.delay_ms.get());
-            let serial = self.serials.get().saturating_add(1);
-            self.serials.set(serial);
-            self.amendment.set(Some(Amendment {
-                serial,
-                effective_at_ms,
+            self.file(Replacement::Roles {
                 recovery,
                 veto,
                 delay_ms,
-            }));
-            Proposed {
-                serial,
-                effective_at_ms,
-            }
-            .emit();
+            });
             Ok(())
         }
 
-        /// Wait out a replacement's delay, or replace one still waiting.
+        /// File a replacement of the factors, or replace one still
+        /// waiting.
         ///
         /// The wait is the delay that governs now: a proposal cannot
         /// shorten its own takeover, because the delay is not a
@@ -426,8 +428,12 @@ pub mod account {
         #[requires(governs(recovery))]
         #[emits(Proposed)]
         pub fn propose(&mut self, primary: PrincipalRule, confirmation: PrincipalRule) {
-            let frozen = self.pending.get().and_then(|waiting| waiting.frozen);
-            self.file(primary, confirmation, frozen);
+            let frozen = self.displaced();
+            self.file(Replacement::Factors {
+                primary,
+                confirmation,
+                frozen,
+            });
         }
 
         /// Propose a replacement and strip the primary's acting power
@@ -451,36 +457,45 @@ pub mod account {
         pub fn freeze(&mut self, primary: PrincipalRule, confirmation: PrincipalRule) {
             let mut authority = self.auth().existing();
             let displaced = self
-                .pending
-                .get()
-                .and_then(|waiting| waiting.frozen)
+                .displaced()
                 .unwrap_or_else(|| authority.primary.clone());
-            self.file(primary, confirmation, Some(displaced));
+            self.file(Replacement::Factors {
+                primary,
+                confirmation,
+                frozen: Some(displaced),
+            });
             authority.primary = nobody();
-            self.auth().set(Some(authority));
+            self.auth().rewrite(authority);
         }
 
-        /// File a replacement as the one waiting, under the next serial
-        /// and the delay that governs now, carrying the primary a freeze
-        /// displaced where there is one — and retiring any amendment,
-        /// which a recovery outranks.
-        fn file(
-            &mut self,
-            primary: PrincipalRule,
-            confirmation: PrincipalRule,
-            frozen: Option<RuleBytes>,
-        ) {
+        /// The primary a waiting freeze displaced, where the account is
+        /// frozen.
+        fn displaced(&self) -> Option<RuleBytes> {
+            match self.proposal.get()?.replaces {
+                Replacement::Factors { frozen, .. } => frozen,
+                Replacement::Roles { .. } => None,
+            }
+        }
+
+        /// File `replaces` as the proposal waiting, under the next serial
+        /// and the delay that governs now — retiring whatever waited,
+        /// which is a recovery outranking an amendment or a filing
+        /// superseding its own.
+        ///
+        /// Through the door that requires the governing cell: the
+        /// recovery surface exists only once the account has securified,
+        /// so an address still governed by its own key cannot file a
+        /// record no verdict could reach.
+        fn file(&mut self, replaces: Replacement) {
+            let _ = self.auth().existing();
             let effective_at_ms = clock_ms().saturating_add(self.delay_ms.get());
             let serial = self.serials.get().saturating_add(1);
             self.serials.set(serial);
-            self.pending.set(Some(Pending {
+            self.proposal.set(Some(Proposal {
                 serial,
                 effective_at_ms,
-                primary,
-                confirmation,
-                frozen,
+                replaces,
             }));
-            self.amendment.set(None);
             Proposed {
                 serial,
                 effective_at_ms,
@@ -488,7 +503,7 @@ pub mod account {
             .emit();
         }
 
-        /// Enact the replacement `serial` names, whose delay has run out.
+        /// Enact the proposal `serial` names, whose delay has run out.
         ///
         /// Open to anyone: the record was authorized by the gate that
         /// wrote it, and the clock is the only condition left — so the
@@ -496,46 +511,56 @@ pub mod account {
         /// began, and nobody signs twice. Before the instant the
         /// proposal named this is a refusal rather than nothing, so a
         /// caller is told rather than charged for a no-op.
+        ///
+        /// Enacting the factors ends any freeze with them, the displaced
+        /// primary having just been replaced; enacting the roles touches
+        /// no factor.
         #[emits(Enacted)]
         pub fn promote(&mut self, serial: u64) -> Result<(), Error> {
-            let now = clock_ms();
-            if let Some(pending) = self.pending.get()
-                && pending.serial == serial
-            {
-                if now < pending.effective_at_ms {
-                    return Err(Error::Unmatured);
-                }
-                self.enact(pending);
-            } else if let Some(amendment) = self.amendment.get()
-                && amendment.serial == serial
-            {
-                if now < amendment.effective_at_ms {
-                    return Err(Error::Unmatured);
-                }
-                self.enact_amendment(amendment);
-            } else {
-                return Err(Error::NoSuchProposal);
+            let proposal = self.named(serial)?;
+            if clock_ms() < proposal.effective_at_ms {
+                return Err(Error::Unmatured);
             }
+            match proposal.replaces {
+                Replacement::Factors {
+                    primary,
+                    confirmation,
+                    ..
+                } => self.auth().rewrite(Authority {
+                    primary: primary.into_bytes(),
+                    confirmation: confirmation.into_bytes(),
+                }),
+                Replacement::Roles {
+                    recovery,
+                    veto,
+                    delay_ms,
+                } => {
+                    self.recovery.set(Some(recovery));
+                    self.veto.set(Some(veto));
+                    self.delay_ms.set(delay_ms);
+                }
+            }
+            self.proposal.set(None);
             Enacted { serial }.emit();
             Ok(())
         }
 
-        /// Drop the replacement `serial` names, whatever its instant,
+        /// Drop the proposal `serial` names, whatever its instant,
         /// giving back the primary a freeze displaced.
         ///
-        /// Withdrawn by whoever may propose one: a replacement is the
-        /// recovery rule's, so a compromised governing key cannot veto
-        /// its own replacement and there is no cancel war for it to win.
-        /// Cancelling one whose instant has passed is no different —
-        /// whoever wanted it enacted could have enacted it, in the same
-        /// transaction they proposed it or any since.
+        /// Withdrawn by whoever may propose a replacement: a proposal is
+        /// the recovery rule's, so a compromised governing key cannot
+        /// cancel its own replacement and there is no cancel war for it
+        /// to win. Cancelling one whose instant has passed is no
+        /// different — whoever wanted it enacted could have enacted it,
+        /// in the same transaction they proposed it or any since.
         #[requires(governs(recovery))]
         #[emits(Cancelled)]
         pub fn cancel(&mut self, serial: u64) -> Result<(), Error> {
-            self.withdraw_proposal(serial)
+            self.retract(serial)
         }
 
-        /// Stop the replacement `serial` names, whatever its instant,
+        /// Stop the proposal `serial` names, whatever its instant,
         /// giving back the primary a freeze displaced.
         ///
         /// The veto role's, and the whole of its power: it enacts
@@ -546,56 +571,34 @@ pub mod account {
         #[requires(governs(veto))]
         #[emits(Cancelled)]
         pub fn veto(&mut self, serial: u64) -> Result<(), Error> {
-            self.withdraw_proposal(serial)
+            self.retract(serial)
         }
 
-        /// Drop whatever `serial` names — a replacement, giving back what
-        /// a freeze displaced where one did, or an amendment — or refuse:
-        /// a verdict answers the proposal its signer saw and no other.
-        fn withdraw_proposal(&mut self, serial: u64) -> Result<(), Error> {
-            if let Some(pending) = self.pending.get()
-                && pending.serial == serial
+        /// Drop whatever `serial` names, giving back what a freeze
+        /// displaced where one did — or refuse: a verdict answers the
+        /// proposal its signer saw and no other.
+        fn retract(&mut self, serial: u64) -> Result<(), Error> {
+            let proposal = self.named(serial)?;
+            if let Replacement::Factors {
+                frozen: Some(primary),
+                ..
+            } = proposal.replaces
             {
-                self.pending.set(None);
-                if let Some(primary) = pending.frozen {
-                    let mut authority = self.auth().existing();
-                    authority.primary = primary;
-                    self.auth().set(Some(authority));
-                }
-            } else if let Some(amendment) = self.amendment.get()
-                && amendment.serial == serial
-            {
-                self.amendment.set(None);
-            } else {
-                return Err(Error::NoSuchProposal);
+                let mut authority = self.auth().existing();
+                authority.primary = primary;
+                self.auth().rewrite(authority);
             }
+            self.proposal.set(None);
             Cancelled { serial }.emit();
             Ok(())
         }
 
-        /// File `pending`'s factors as the governing ones and clear the
-        /// wait — and with it any freeze, whose displaced primary the
-        /// proposal has just replaced.
-        ///
-        /// A replacement is of the factors and nothing about who may
-        /// recover: guardians who pass the card's rule back leave an
-        /// account colluding guardians still cannot spend from, and the
-        /// roles are the primary's to amend once it can act again.
-        fn enact(&mut self, pending: Pending) {
-            let mut authority = self.auth().existing();
-            authority.primary = pending.primary.into_bytes();
-            authority.confirmation = pending.confirmation.into_bytes();
-            self.auth().set(Some(authority));
-            self.pending.set(None);
-        }
-
-        /// File `amendment`'s roles as the governing ones and clear the
-        /// wait.
-        fn enact_amendment(&mut self, amendment: Amendment) {
-            self.recovery.set(Some(amendment.recovery));
-            self.veto.set(Some(amendment.veto));
-            self.delay_ms.set(amendment.delay_ms);
-            self.amendment.set(None);
+        /// The proposal `serial` names, which is the one waiting or none.
+        fn named(&self, serial: u64) -> Result<Proposal, Error> {
+            self.proposal
+                .get()
+                .filter(|waiting| waiting.serial == serial)
+                .ok_or(Error::NoSuchProposal)
         }
     }
 }
