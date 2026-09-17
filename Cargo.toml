@@ -70,7 +70,7 @@ wasmtime = { version = "=48.0.2", default-features = false, features = [
     "wat",
     "winch",
 ] }
-wat = "=1.259.0"
+wat = "=1.254.0"
 
 [workspace.lints.rust]
 missing_docs = "warn"
