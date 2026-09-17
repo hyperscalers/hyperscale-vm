@@ -727,14 +727,12 @@ fn a_user_composes_across_two_accounts() {
         panic!("one intent");
     };
     assert_eq!(record.accounts().collect::<Vec<_>>(), [ALICE, BOB]);
-    // Each withdrawal presents the account it draws from.
+    // Each withdrawal presents the account it draws from and no other:
+    // its gate names one account, read whole, so the node places on
+    // that account's shard alone.
     let manifest = admitted.manifest();
-    assert!(
-        manifest.nodes[0]
-            .evidence
-            .contains(&Claim::of_subject(ALICE))
-    );
-    assert!(manifest.nodes[2].evidence.contains(&Claim::of_subject(BOB)));
+    assert_eq!(manifest.nodes[0].evidence, [Claim::of_subject(ALICE)]);
+    assert_eq!(manifest.nodes[2].evidence, [Claim::of_subject(BOB)]);
 }
 
 /// The attesting set is the builder's to declare: left alone it is the

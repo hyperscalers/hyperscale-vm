@@ -438,8 +438,8 @@ fn nested_scopes_present_together() {
     );
 }
 
-/// Evidence a call names explicitly stands in for the ambient reading;
-/// the intent's signature rides beside it as it rides every gated call.
+/// Evidence a call names explicitly stands in for the ambient reading,
+/// and a gate that names no account presents none.
 #[test]
 fn explicit_evidence_stands_in_for_the_scope() {
     let chain = world();
@@ -458,10 +458,8 @@ fn explicit_evidence_stands_in_for_the_scope() {
     let gated = graph.nodes.last().expect("the gated call is a node");
     assert_eq!(
         gated.evidence,
-        [ClaimRef::Node(1), ClaimRef::Account(OPERATOR)]
-            .into_iter()
-            .collect(),
-        "the per-call spelling and the signature are the whole of the evidence"
+        std::iter::once(ClaimRef::Node(1)).collect(),
+        "the per-call spelling is the whole of the evidence"
     );
 }
 

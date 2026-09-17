@@ -821,18 +821,12 @@ impl<'a> TypedBuilder<'a> {
     /// admission, since the leaf construction could not evaluate may be
     /// exactly the claim a scope proves. With no scope at all, the
     /// refusal is the signature's.
-    #[allow(clippy::too_many_arguments)] // one judgment, split for the line count
     fn gate_proofs(
         &mut self,
-        signature: &MethodSignature,
-        target: CallTarget,
-        record: &InstanceMeta,
-        values: &[Value],
-        known: &[bool],
+        (asked, complete): (&[Claim], bool),
         method: &str,
         scoped: &[Proof],
     ) -> Result<Vec<Proof>, TypedError> {
-        let (asked, complete) = self.gated(signature, target, record, values, known);
         // A claim the scope covers is never auto-proven: the composer
         // already answered it, and a second answer composed from the
         // signer's account would be a node that can fail on its own —
@@ -862,6 +856,57 @@ impl<'a> TypedBuilder<'a> {
             });
         }
         Ok(proven)
+    }
+
+    /// The evidence the enclosing `presenting` scopes hold, where a call
+    /// could want any: a declared gate, an entry a movement earns, or a
+    /// behaviour whose requirement the resource injects.
+    ///
+    /// Ambient evidence only adds — the builder still proves what it
+    /// can, and a call wanting nothing attaches nothing, so a scope
+    /// never makes a call compose differently than it would outside one
+    /// unless the call wanted evidence. A call the author presented
+    /// evidence at takes none: a proof they composed is one they meant.
+    fn scoped_evidence(
+        &self,
+        signature: &MethodSignature,
+        presented: &[Proof],
+        wanted: &[Claim],
+    ) -> Vec<Proof> {
+        if presented.is_empty()
+            && (signature.requires_evidence()
+                || !wanted.is_empty()
+                || signature.may_earn_authority())
+        {
+            self.scopes.iter().flatten().copied().collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The accounts a gated call presents: those its gate names, where
+    /// the gate was read whole, and every account the intent acts as
+    /// otherwise.
+    ///
+    /// A gate read only in part — a stored rule, a leaf construction
+    /// could not evaluate — may want any of them, and they cost the
+    /// graph nothing. A gate read whole wants exactly the ones it names,
+    /// and presenting the rest would place the node on every account's
+    /// shard for claims it never asks about.
+    fn gate_accounts(&self, gate: Option<&(Vec<Claim>, bool)>) -> Vec<PrincipalAddr> {
+        match gate {
+            Some((asked, true)) => self
+                .accounts()
+                .iter()
+                .filter(|account| {
+                    asked
+                        .iter()
+                        .any(|claim| claim.instance.is_none() && claim.subject == account.address())
+                })
+                .copied()
+                .collect(),
+            _ => self.accounts().to_vec(),
+        }
     }
 
     /// The claims this call proves, filed on the [`Proof`] handed back
@@ -1023,22 +1068,7 @@ impl<'a> TypedBuilder<'a> {
         // composed is one they meant, and a second beside it would be
         // the builder overruling them.
         let wanted = self.earned(signature, target, meta, &args, &values, &known);
-        // The evidence the enclosing `presenting` scopes hold, where this
-        // call could want any: a declared gate, an entry a movement
-        // earns, or a behaviour whose requirement the resource injects.
-        // Ambient evidence only adds — the builder still proves what it
-        // can, and a call wanting nothing attaches nothing, so a scope
-        // never makes a call compose differently than it would outside
-        // one unless the call wanted evidence.
-        let scoped: Vec<Proof> = if proofs.is_empty()
-            && (signature.requires_evidence()
-                || !wanted.is_empty()
-                || signature.may_earn_authority())
-        {
-            self.scopes.iter().flatten().copied().collect()
-        } else {
-            Vec::new()
-        };
+        let scoped = self.scoped_evidence(signature, proofs, &wanted);
         // What a gated call answers its gate with, where the caller
         // spelled nothing: whatever the gate names that this intent can
         // prove — the account's own claim from the signature, a held
@@ -1046,11 +1076,16 @@ impl<'a> TypedBuilder<'a> {
         // injected requirements are; only a gate read whole that
         // nothing answers refuses, and proving nothing appends nothing,
         // so the refusal leaves the graph as it was.
-        let gated: Vec<Proof> = if signature.requires_evidence() && proofs.is_empty() {
-            self.gate_proofs(signature, target, meta, &values, &known, method, &scoped)?
-        } else {
-            Vec::new()
+        let gate = signature
+            .requires_evidence()
+            .then(|| self.gated(signature, target, meta, &values, &known));
+        let gated: Vec<Proof> = match &gate {
+            Some((asked, complete)) if proofs.is_empty() => {
+                self.gate_proofs((asked, *complete), method, &scoped)?
+            }
+            _ => Vec::new(),
         };
+        let presented_accounts = self.gate_accounts(gate.as_ref());
         let earned = if proofs.is_empty() {
             wanted
                 .iter()
@@ -1097,17 +1132,13 @@ impl<'a> TypedBuilder<'a> {
                     method: method.to_owned(),
                 });
             }
-            // A gated call presents every account the intent acts as
-            // and, beside them, either what the builder resolved for
-            // the gate and what the movements earned, or the evidence
-            // the caller named. The accounts ride every one of them
-            // because they cost the graph nothing and are the claims a
-            // stored rule the composer cannot read is most likely to
-            // want, and the ones no node could prove anyway — so
-            // evidence named at the call joins them rather than
-            // standing in for them.
-            (true, []) => self
-                .accounts()
+            // A gated call presents the accounts its gate asks for and,
+            // beside them, either what the builder resolved for the
+            // gate and what the movements earned, or the evidence the
+            // caller named. The accounts are claims no node could prove
+            // anyway, so evidence named at the call joins them rather
+            // than standing in for them.
+            (true, []) => presented_accounts
                 .iter()
                 .map(|account| ClaimRef::Account(*account))
                 .chain(
@@ -1117,8 +1148,7 @@ impl<'a> TypedBuilder<'a> {
                         .map(|proof| proof.reference()),
                 )
                 .collect(),
-            (true, presented) => self
-                .accounts()
+            (true, presented) => presented_accounts
                 .iter()
                 .map(|account| ClaimRef::Account(*account))
                 .chain(presented.iter().map(|proof| proof.reference()))

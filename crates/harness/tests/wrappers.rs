@@ -301,8 +301,9 @@ fn a_guarded_call_without_a_proof_presents_the_intents_signature() {
 /// account — the present-badge node it proves, then the call citing it.
 ///
 /// Possession is the question, and only a call that reads the vault
-/// answers it. What a signature carries is an account's own claim, so
-/// it rides along and settles nothing here.
+/// answers it. What a signature carries is an account's own claim,
+/// which a gate read whole that names no account never asks for, so
+/// the call presents the badge alone.
 #[test]
 fn a_badge_gate_without_a_proof_is_answered_from_the_signers_account() {
     let gated = address("nf", vec![Value::Address(BASE.address())]);
@@ -310,10 +311,7 @@ fn a_badge_gate_without_a_proof_is_answered_from_the_signers_account() {
         b.call(gated, "operate", ())?.none()?;
         Ok(())
     });
-    assert_eq!(
-        graph.nodes[1].evidence,
-        BTreeSet::from([ClaimRef::Account(ALICE), ClaimRef::Node(0)])
-    );
+    assert_eq!(graph.nodes[1].evidence, BTreeSet::from([ClaimRef::Node(0)]));
 }
 
 /// Misplaced evidence refuses at the call site, mirroring admission: a
