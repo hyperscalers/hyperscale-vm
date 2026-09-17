@@ -54,7 +54,7 @@ use hyperscale_vm_types::{
 };
 
 use crate::admission::{
-    AdmissionError, Admitted, Asks, Injected, IntentView, Placed, flatten, interleave, resolve_tree,
+    AdmissionError, Admitted, Asks, Injected, Placed, Wired, flatten, interleave, resolve_tree,
 };
 use crate::claim::Claim;
 use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr, preorder_len};
@@ -539,15 +539,18 @@ pub fn explain_admission_tree(
         .and_then(|flat| resolve_tree(&flat))
         .ok()
         .and_then(|resolved| {
-            let views: Vec<IntentView<'_>> = intents
+            let wired: Vec<Wired<'_>> = intents
                 .iter()
-                .zip(resolved.views())
-                .map(|(intent, interface)| {
-                    IntentView::for_ordering(&intent.graph, &intent.sockets, interface)
+                .zip(resolved.resolutions())
+                .map(|(intent, resolution)| Wired {
+                    graph: &intent.graph,
+                    sockets: &intent.sockets,
+                    resolution,
                 })
                 .collect();
-            let total: usize = views.iter().map(|view| view.graph.nodes.len()).sum();
-            interleave(&views, total).ok().map(|(_, order)| order)
+            let total: usize = wired.iter().map(|view| view.graph.nodes.len()).sum();
+            let wired: Vec<&Wired<'_>> = wired.iter().collect();
+            interleave(&wired, total).ok().map(|(_, order)| order)
         });
     explain_placed(&graphs, order.as_deref(), records, refusal)
 }

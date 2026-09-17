@@ -20,40 +20,34 @@ use hyperscale_vm_types::{
 };
 
 use super::AdmissionError;
-use super::compose::{Fill, Proven};
+use super::compose::{Fill, Produced};
 use crate::claim::Claim;
-use crate::graph::{ClaimRef, EdgeRef, GiveRef, GraphNode, ValueRef};
+use crate::graph::{ClaimRef, GiveRef, GraphNode, ValueRef};
 use crate::hash::{Hash32, Hasher};
 use crate::intent::{Binding, Intent, MAX_ACCOUNTS, MAX_TREE_DEPTH, Socket};
 
-/// One member's give, followed to the node that produces it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Yielded {
-    /// The intent whose graph produces the edge.
-    pub(crate) intent: u32,
-    /// The edge, in that graph.
-    pub(crate) edge: EdgeRef,
-}
-
-/// One intent's interface as the flat checker consumes it: what fills
-/// each of its sockets, how often its own wiring passes each socket on,
-/// and where each of its members' gives comes from.
+/// One intent's wiring resolved, as the flat checker consumes it: what
+/// fills each of its sockets, how often its own wiring passes each
+/// socket on, and where each of its members' gives comes from.
+///
+/// Not the interface — that is the sockets and gives the intent
+/// declared and signed. This is what the tree put behind them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Interface {
+pub struct Resolution {
     /// One fill per declared socket.
     pub(crate) fills: Vec<Fill>,
     /// Per declared socket, how many of this intent's own wiring
     /// entries pass it on to a member. A use like any node's, counted
     /// beside them.
     pub(crate) wired_uses: Vec<u32>,
-    /// Per member, per give, the node that produces it.
-    pub(crate) member_gives: Vec<Vec<Yielded>>,
+    /// Per member, per give, the edge that produces it.
+    pub(crate) member_gives: Vec<Vec<Produced>>,
 }
 
-impl Interface {
-    /// The give a `ValueRef::Give` of this
-    /// intent names, where it names one.
-    pub(crate) fn give(&self, give: GiveRef) -> Option<Yielded> {
+impl Resolution {
+    /// The give a `ValueRef::Give` of this intent names, where it names
+    /// one.
+    pub(crate) fn give(&self, give: GiveRef) -> Option<Produced> {
         self.member_gives
             .get(usize::try_from(give.member).ok()?)?
             .get(usize::try_from(give.give).ok()?)
@@ -61,16 +55,16 @@ impl Interface {
     }
 }
 
-/// The resolved tree: one interface per intent, in tree order.
+/// The resolved tree: one resolution per intent, in tree order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedTree {
-    interfaces: Vec<Interface>,
+    resolutions: Vec<Resolution>,
 }
 
 impl ResolvedTree {
-    /// The interfaces, in tree order.
-    pub(crate) fn views(&self) -> impl Iterator<Item = &Interface> {
-        self.interfaces.iter()
+    /// The resolutions, in tree order.
+    pub(crate) fn resolutions(&self) -> impl Iterator<Item = &Resolution> {
+        self.resolutions.iter()
     }
 }
 
@@ -258,11 +252,11 @@ impl Resolver<'_> {
         // Gives first: a value socket may be filled from one, and each
         // is consumed exactly once above the intent that declares it,
         // whichever of the three ways the composer takes it.
-        let mut member_gives: Vec<Vec<Vec<Yielded>>> = Vec::with_capacity(self.intents.len());
+        let mut member_gives: Vec<Vec<Vec<Produced>>> = Vec::with_capacity(self.intents.len());
         for (at, intent) in self.intents.iter().enumerate() {
             let mut per_member = Vec::with_capacity(intent.members.len());
             for position in 0..intent.members.len() {
-                let member = self.member(at, position);
+                let member = self.structure.member(at, position);
                 let mut per_give = Vec::with_capacity(self.intents[member].gives.len());
                 for give in 0..self.intents[member].gives.len() {
                     per_give.push(self.yielded(member, give)?);
@@ -273,7 +267,7 @@ impl Resolver<'_> {
         }
         self.check_give_uses()?;
 
-        let mut interfaces = Vec::with_capacity(self.intents.len());
+        let mut resolutions = Vec::with_capacity(self.intents.len());
         for (at, intent) in self.intents.iter().enumerate() {
             let mut fills = Vec::with_capacity(intent.sockets.len());
             for socket in 0..intent.sockets.len() {
@@ -294,22 +288,17 @@ impl Resolver<'_> {
                     *count += 1;
                 }
             }
-            interfaces.push(Interface {
+            resolutions.push(Resolution {
                 fills,
                 wired_uses,
                 member_gives: member_gives[at].clone(),
             });
         }
-        Ok(ResolvedTree { interfaces })
-    }
-
-    /// The `position`-th member of `composer`, as the walk numbered it.
-    fn member(&self, composer: usize, position: usize) -> usize {
-        self.structure.member(composer, position)
+        Ok(ResolvedTree { resolutions })
     }
 
     /// Follow `give` of `intent` down to the edge that produces it.
-    fn yielded(&self, intent: usize, give: usize) -> Result<Yielded, AdmissionError> {
+    fn yielded(&self, intent: usize, give: usize) -> Result<Produced, AdmissionError> {
         let unknown = || AdmissionError::UnknownGive {
             intent: as_u32(intent),
             give: as_u32(give),
@@ -320,7 +309,7 @@ impl Resolver<'_> {
                 if producer >= self.intents[intent].graph.nodes.len() {
                     return Err(unknown());
                 }
-                Ok(Yielded {
+                Ok(Produced {
                     intent: as_u32(intent),
                     edge,
                 })
@@ -333,7 +322,7 @@ impl Resolver<'_> {
                 if member >= self.intents[intent].members.len() {
                     return Err(unknown());
                 }
-                let child = self.member(intent, member);
+                let child = self.structure.member(intent, member);
                 let inner = usize::try_from(inner).map_err(|_| unknown())?;
                 if inner >= self.intents[child].gives.len() {
                     return Err(unknown());
@@ -354,7 +343,14 @@ impl Resolver<'_> {
     fn check_give_uses(&self) -> Result<(), AdmissionError> {
         for (at, intent) in self.intents.iter().enumerate() {
             let mut uses: Vec<Vec<u32>> = (0..intent.members.len())
-                .map(|position| vec![0u32; self.intents[self.member(at, position)].gives.len()])
+                .map(|position| {
+                    vec![
+                        0u32;
+                        self.intents[self.structure.member(at, position)]
+                            .gives
+                            .len()
+                    ]
+                })
                 .collect();
             let taken = intent
                 .graph
@@ -390,7 +386,7 @@ impl Resolver<'_> {
                 // by `yielded` for a give.
             }
             for (position, counts) in uses.iter().enumerate() {
-                let member = as_u32(self.member(at, position));
+                let member = as_u32(self.structure.member(at, position));
                 for (give, count) in counts.iter().enumerate() {
                     match *count {
                         0 => {
@@ -474,8 +470,10 @@ impl Resolver<'_> {
                     return Err(unknown_binding(at));
                 }
                 Ok(Fill::Value {
-                    intent: as_u32(composer),
-                    edge,
+                    produced: Produced {
+                        intent: as_u32(composer),
+                        edge,
+                    },
                     through: Vec::new(),
                 })
             }
@@ -484,15 +482,13 @@ impl Resolver<'_> {
                 if member >= above.members.len() {
                     return Err(unknown_binding(at));
                 }
-                let child = self.member(composer, member);
+                let child = self.structure.member(composer, member);
                 let inner = usize::try_from(give.give).map_err(|_| unknown_binding(at))?;
                 if inner >= self.intents[child].gives.len() {
                     return Err(unknown_binding(at));
                 }
-                let yielded = self.yielded(child, inner)?;
                 Ok(Fill::Value {
-                    intent: yielded.intent,
-                    edge: yielded.edge,
+                    produced: self.yielded(child, inner)?,
                     through: Vec::new(),
                 })
             }
@@ -512,8 +508,7 @@ impl Resolver<'_> {
                     });
                 }
                 let Fill::Value {
-                    intent,
-                    edge,
+                    produced,
                     mut through,
                 } = self.fill(composer, passed)?
                 else {
@@ -523,11 +518,7 @@ impl Resolver<'_> {
                 // through bind beside the declaring intent's: every
                 // signer along the chain constrained the edge.
                 through.extend_from_slice(constraints);
-                Ok(Fill::Value {
-                    intent,
-                    edge,
-                    through,
-                })
+                Ok(Fill::Value { produced, through })
             }
         }
     }
@@ -551,9 +542,9 @@ impl Resolver<'_> {
                 if node >= above.graph.nodes.len() {
                     return Err(unknown_binding(at));
                 }
-                Ok(Fill::Authority {
+                Ok(Fill::Claim {
                     intent: as_u32(composer),
-                    from: Proven::Node(producer),
+                    node: producer,
                 })
             }
             ClaimRef::Account(account) => {
@@ -565,10 +556,7 @@ impl Resolver<'_> {
                     });
                 }
                 check_claim(wanted, Claim::of_subject(account.address()), at)?;
-                Ok(Fill::Authority {
-                    intent: as_u32(composer),
-                    from: Proven::Account(account),
-                })
+                Ok(Fill::Account(account))
             }
             ClaimRef::Socket(passed) => {
                 let passed = usize::try_from(passed).map_err(|_| unknown_binding(at))?;

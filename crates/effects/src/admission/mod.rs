@@ -34,8 +34,10 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use abi::{CallBinding, lower_call};
-use compose::{Fill, Proven, bind_edge, check_bindings};
-pub(crate) use compose::{IntentView, check_instance_value_depth, check_value_depth, interleave};
+use compose::{Fill, Produced, bind_edge, check_bindings};
+pub(crate) use compose::{
+    IntentView, Wired, check_instance_value_depth, check_value_depth, interleave,
+};
 pub use error::{AdmissionError, Placed};
 use hyperscale_vm_types::{
     Address, CallTarget, Effect, EffectTarget, IntentHash, Mode, Presence, ResourceAddr,
@@ -331,9 +333,10 @@ pub(crate) fn admit_intents(
     // Under `MAX_MANIFEST_NODES`: the tree's shape held it there.
     let total: usize = intents.iter().map(|view| view.graph.nodes.len()).sum();
 
-    check_bindings(intents)?;
+    let wired: Vec<&Wired<'_>> = intents.iter().map(|view| &view.wired).collect();
+    check_bindings(&wired)?;
 
-    let (flat_of, order) = interleave(intents, total)?;
+    let (flat_of, order) = interleave(&wired, total)?;
 
     let budget = EvalBudget::default();
     let mut admission = Admission {
@@ -1024,22 +1027,22 @@ impl Admission<'_> {
                 param: param_index,
             });
         }
-        let yielded = self.intents[intent_index]
-            .interface
+        let produced = self.intents[intent_index]
+            .resolution
             .give(give)
             .ok_or_else(|| AdmissionError::UnknownGive {
                 intent: Self::intent_of(intent_index),
                 give: give.give,
             })?;
         let source_intent =
-            usize::try_from(yielded.intent).map_err(|_| AdmissionError::TooManyNodes)?;
-        let producer =
-            usize::try_from(yielded.edge.producer).map_err(|_| AdmissionError::TooManyNodes)?;
-        let source = self.flat_of[source_intent][producer];
+            usize::try_from(produced.intent).map_err(|_| AdmissionError::TooManyNodes)?;
+        let local_producer =
+            usize::try_from(produced.edge.producer).map_err(|_| AdmissionError::TooManyNodes)?;
+        let source = self.flat_of[source_intent][local_producer];
         bind_edge(
             &self.outputs,
             &mut self.consumed,
-            (source, yielded.edge.output),
+            (source, produced.edge.output),
             constraints,
             param,
             at,
@@ -1089,8 +1092,11 @@ impl Admission<'_> {
                 constraints,
             },
             Fill::Value {
-                intent: source_intent,
-                edge,
+                produced:
+                    Produced {
+                        intent: source_intent,
+                        edge,
+                    },
                 through,
             },
         ) = (decl, fill)
@@ -1226,40 +1232,37 @@ impl Admission<'_> {
                     // proving node happened to prove — so a composer
                     // cannot hand an intent authority its signer never
                     // asked for.
-                    let Some((
-                        Socket::Authority(wanted),
-                        Fill::Authority {
-                            intent: filled_from,
-                            from,
-                        },
-                    )) = usize::try_from(*reference).ok().and_then(|position| {
-                        Some((intent.sockets.get(position)?, intent.fill(*reference)?))
-                    })
+                    let unknown = || AdmissionError::UnknownSocket {
+                        intent: Self::intent_of(intent_index),
+                        node: local,
+                        socket: *reference,
+                    };
+                    let Some((Socket::Authority(wanted), fill)) =
+                        usize::try_from(*reference).ok().and_then(|position| {
+                            Some((intent.sockets.get(position)?, intent.fill(*reference)?))
+                        })
                     else {
-                        return Err(AdmissionError::UnknownSocket {
-                            intent: Self::intent_of(intent_index),
-                            node: local,
-                            socket: *reference,
-                        });
+                        return Err(unknown());
                     };
                     // A node's verdict has to be in hand and has to be
                     // the claim asked for. A grant carries no node: the
                     // tree established that the granting intent acts as
                     // the account the grant named, and that account's
                     // claim stands from the start.
-                    if let Proven::Node(producer) = *from {
-                        let source = usize::try_from(*filled_from)
+                    let proving = match fill {
+                        Fill::Claim { intent, node } => Some((*intent, *node)),
+                        Fill::Account(_) => None,
+                        Fill::Value { .. } => return Err(unknown()),
+                    };
+                    if let Some((filled_from, producer)) = proving {
+                        let source = usize::try_from(filled_from)
                             .ok()
                             .and_then(|source| self.flat_of.get(source))
                             .and_then(|flat| {
                                 usize::try_from(producer).ok().and_then(|at| flat.get(at))
                             })
                             .and_then(|flat| usize::try_from(*flat).ok())
-                            .ok_or_else(|| AdmissionError::UnknownSocket {
-                                intent: Self::intent_of(intent_index),
-                                node: local,
-                                socket: *reference,
-                            })?;
+                            .ok_or_else(unknown)?;
                         // The interleave orders a node after every
                         // socket it reaches, so the proving node has
                         // been judged and its claims are in hand.

@@ -48,8 +48,8 @@ pub use hyperscale_vm_types::{MAX_INTENTS, attest};
 
 use crate::PACKAGE_SLOT_BASE;
 use crate::admission::{
-    AdmissionError, Admitted, IntentView, MAX_SOCKETS, admit_intents, check_instance_value_depth,
-    check_value_depth, flatten, resolve_tree, walk,
+    AdmissionError, Admitted, IntentView, MAX_SOCKETS, Wired, admit_intents,
+    check_instance_value_depth, check_value_depth, flatten, resolve_tree, walk,
 };
 use crate::claim::Claim;
 use crate::dsl::PresentedGrants;
@@ -1314,11 +1314,13 @@ pub fn admit_tree(
     let views: Vec<IntentView<'_>> = intents
         .iter()
         .zip(&records)
-        .zip(resolved.views())
-        .map(|((intent, record), interface)| IntentView {
-            graph: &intent.graph,
-            sockets: &intent.sockets,
-            interface,
+        .zip(resolved.resolutions())
+        .map(|((intent, record), resolution)| IntentView {
+            wired: Wired {
+                graph: &intent.graph,
+                sockets: &intent.sockets,
+                resolution,
+            },
             accounts: &intent.accounts,
             attested_by: &intent.attested_by,
             identity: record.intent,

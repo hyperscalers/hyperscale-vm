@@ -8,12 +8,13 @@
 //! and the bounds an envelope's own inputs have to clear before any of
 //! it runs.
 
+use std::ops::Deref;
+
 use hyperscale_vm_types::{IntentHash, PrincipalAddr, ResourceAddr};
 
-use super::tree::Interface;
+use super::tree::Resolution;
 use super::{AdmissionError, MAX_SOCKETS};
 use crate::graph::{Constraint, EdgeRef, GraphArg, ManifestGraph};
-use crate::hash::Hash32;
 use crate::instance::InstanceMeta;
 use crate::intent::Socket;
 use crate::manifest::{Bounds, NodeInput};
@@ -173,74 +174,72 @@ fn check_constraints(
 /// leaf presents with no sockets at all.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fill {
-    /// The `output`-th edge of node `producer` inside `intent`.
+    /// A value edge, with the constraints of every socket it passed
+    /// through on its way here, each signed by the intent that declared
+    /// it. Bound beside the consuming socket's own.
     Value {
-        /// The producing intent, by its position in the tree.
-        intent: u32,
-        /// The produced edge within that intent's graph.
-        edge: EdgeRef,
-        /// The constraints of every socket the edge passed through on
-        /// its way here, each signed by the intent that declared it.
-        /// Bound beside the consuming socket's own.
+        /// The edge, and the intent whose node produces it.
+        produced: Produced,
+        /// The pass-through constraints.
         through: Vec<Constraint>,
     },
-    /// A claim `intent` stands behind: proved by one of its nodes, or
-    /// granted from an account it acts as.
-    Authority {
-        /// The supplying intent, numbered as above.
+    /// The claim node `node` of `intent` proves.
+    Claim {
+        /// The proving intent, by its position in the tree.
         intent: u32,
-        /// What in it stands behind the claim.
-        from: Proven,
+        /// The proving node, in that intent's graph.
+        node: u32,
     },
-}
-
-/// What inside the supplying intent stands behind a filled authority
-/// socket.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Proven {
-    /// The claim node `producer` of that intent proves.
-    Node(u32),
-    /// An account that intent acts as, granted by the signer who signed
-    /// it: the account's shard attested the keys, so the claim stands
-    /// before any node runs.
+    /// An account the granting intent acts as, granted by the signer
+    /// who signed it: the account's shard attests the keys, so the
+    /// claim stands before any node runs and the socket it fills waits
+    /// on nothing.
     Account(PrincipalAddr),
 }
 
-impl Fill {
-    /// The intent this fill sources from.
-    pub(crate) const fn intent(&self) -> u32 {
-        match self {
-            Self::Value { intent, .. } | Self::Authority { intent, .. } => *intent,
-        }
-    }
+/// One produced value edge, located in the tree: the intent whose
+/// graph produces it, and the edge in that graph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Produced {
+    /// The producing intent, by its position in the tree.
+    pub(crate) intent: u32,
+    /// The produced edge within that intent's graph.
+    pub(crate) edge: EdgeRef,
+}
 
-    /// The node within it, where the fill names one.
-    ///
-    /// A grant names none: an account's authority stands before any node
-    /// runs, so the socket it fills waits on nothing and the interleave
-    /// has no edge to draw.
-    pub(crate) const fn producer(&self) -> Option<u32> {
+impl Fill {
+    /// The node this fill waits on, as the intent and the node in it —
+    /// nothing for a grant, whose claim stands before any node runs.
+    pub(crate) const fn waits_on(&self) -> Option<(u32, u32)> {
         match self {
-            Self::Value { edge, .. } => Some(edge.producer),
-            Self::Authority {
-                from: Proven::Node(producer),
-                ..
-            } => Some(*producer),
-            Self::Authority {
-                from: Proven::Account(_),
-                ..
-            } => None,
+            Self::Value { produced, .. } => Some((produced.intent, produced.edge.producer)),
+            Self::Claim { intent, node } => Some((*intent, *node)),
+            Self::Account(_) => None,
         }
     }
 }
 
-/// One intent as the shared admission checker consumes it.
-pub struct IntentView<'a> {
+/// One intent as the interleave and the fill checks read it: its graph,
+/// its sockets, and what the tree resolved behind them.
+pub struct Wired<'a> {
     pub(crate) graph: &'a ManifestGraph,
     pub(crate) sockets: &'a [Socket],
     /// What fills this intent's sockets, and where its members' gives
     /// come from, resolved by the tree.
-    pub(crate) interface: &'a Interface,
+    pub(crate) resolution: &'a Resolution,
+}
+
+impl<'a> Wired<'a> {
+    /// The fill of `socket`, where the intent declares one.
+    pub(crate) fn fill(&self, socket: u32) -> Option<&'a Fill> {
+        self.resolution.fills.get(usize::try_from(socket).ok()?)
+    }
+}
+
+/// One intent as the shared admission checker consumes it: the wired
+/// intent, and what admission adds to it.
+pub struct IntentView<'a> {
+    pub(crate) wired: Wired<'a>,
     /// The accounts this intent acts as: the owners of its nullifiers,
     /// the owners of the `auth` cells its sign-ins are judged against,
     /// and the subjects its signature resolves to.
@@ -268,33 +267,11 @@ pub struct IntentView<'a> {
     pub(crate) expiry_ms: u64,
 }
 
-impl<'a> IntentView<'a> {
-    /// A view for ordering alone: the interleave and the fill checks
-    /// read the graph, the sockets and the interface, and nothing else.
-    ///
-    /// The accounts and the identity are what admission adds, and a
-    /// view built here reaches neither — which is why they are stated
-    /// once, here, rather than as a placeholder at each call site that
-    /// would read as a fact about the intent.
-    pub(crate) const fn for_ordering(
-        graph: &'a ManifestGraph,
-        sockets: &'a [Socket],
-        interface: &'a Interface,
-    ) -> Self {
-        Self {
-            graph,
-            sockets,
-            interface,
-            accounts: &[],
-            attested_by: &[],
-            identity: IntentHash(Hash32([0; 32])),
-            expiry_ms: 0,
-        }
-    }
+impl<'a> Deref for IntentView<'a> {
+    type Target = Wired<'a>;
 
-    /// The fill of `socket`, where the intent declares one.
-    pub(crate) fn fill(&self, socket: u32) -> Option<&'a Fill> {
-        self.interface.fills.get(usize::try_from(socket).ok()?)
+    fn deref(&self) -> &Self::Target {
+        &self.wired
     }
 }
 
@@ -302,7 +279,7 @@ impl<'a> IntentView<'a> {
 /// socket, every fill naming a real source, every socket consumed by
 /// exactly one node argument or pass-through where it carries value and
 /// by at least one where it carries authority.
-pub(super) fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), AdmissionError> {
+pub(super) fn check_bindings(intents: &[&Wired<'_>]) -> Result<(), AdmissionError> {
     for (index, intent) in intents.iter().enumerate() {
         if intent.sockets.len() > MAX_SOCKETS {
             return Err(AdmissionError::TooManySockets {
@@ -310,7 +287,7 @@ pub(super) fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), Admission
             });
         }
         let intent_index = u32::try_from(index).expect("intents are bounded by MAX_INTENTS");
-        let fills = &intent.interface.fills;
+        let fills = &intent.resolution.fills;
         if fills.len() != intent.sockets.len() {
             return Err(AdmissionError::BindingArity {
                 intent: intent_index,
@@ -324,15 +301,15 @@ pub(super) fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), Admission
                 intent: intent_index,
                 socket,
             };
-            let Some(source) = usize::try_from(fill.intent())
-                .ok()
-                .and_then(|source| intents.get(source))
-            else {
-                return Err(unknown());
-            };
             // A fill naming a node is bounded by that intent's graph; a
             // grant names none, and what bounded it was the tree.
-            if let Some(producer) = fill.producer() {
+            if let Some((source, producer)) = fill.waits_on() {
+                let Some(source) = usize::try_from(source)
+                    .ok()
+                    .and_then(|source| intents.get(source))
+                else {
+                    return Err(unknown());
+                };
                 let producer = usize::try_from(producer).unwrap_or(usize::MAX);
                 if producer >= source.graph.nodes.len() {
                     return Err(unknown());
@@ -347,7 +324,7 @@ pub(super) fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), Admission
             let agreed = matches!(
                 (declared, fill),
                 (Socket::Value { .. }, Fill::Value { .. })
-                    | (Socket::Authority(_), Fill::Authority { .. })
+                    | (Socket::Authority(_), Fill::Claim { .. } | Fill::Account(_))
             );
             if !agreed {
                 return Err(AdmissionError::SocketKindMismatch {
@@ -359,7 +336,7 @@ pub(super) fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), Admission
                     },
                     offered: match fill {
                         Fill::Value { .. } => "an edge",
-                        Fill::Authority { .. } => "a proof",
+                        Fill::Claim { .. } | Fill::Account(_) => "a proof",
                     },
                 });
             }
@@ -375,7 +352,7 @@ pub(super) fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), Admission
                 }
             }
         }
-        for (count, wired) in uses.iter_mut().zip(&intent.interface.wired_uses) {
+        for (count, wired) in uses.iter_mut().zip(&intent.resolution.wired_uses) {
             *count += wired;
         }
         for (position, count) in uses.iter().enumerate() {
@@ -411,7 +388,7 @@ pub(super) fn check_bindings(intents: &[IntentView<'_>]) -> Result<(), Admission
 /// emission order.
 #[allow(clippy::type_complexity)] // the two halves of one interleave
 pub fn interleave(
-    intents: &[IntentView<'_>],
+    intents: &[&Wired<'_>],
     total: usize,
 ) -> Result<(Vec<Vec<u32>>, Vec<(usize, usize)>), AdmissionError> {
     let mut cursor = vec![0usize; intents.len()];
@@ -440,13 +417,10 @@ pub fn interleave(
             // runs, so the socket it fills waits on nothing.
             let waits_on = node
                 .sockets()
-                .filter_map(|socket| {
-                    let fill = intent.fill(socket)?;
-                    Some((fill.intent(), fill.producer()?))
-                })
+                .filter_map(|socket| intent.fill(socket)?.waits_on())
                 .chain(node.gives().filter_map(|give| {
-                    let yielded = intent.interface.give(give)?;
-                    Some((yielded.intent, yielded.edge.producer))
+                    let produced = intent.resolution.give(give)?;
+                    Some((produced.intent, produced.edge.producer))
                 }));
             for (source, producer) in waits_on {
                 let source = usize::try_from(source).unwrap_or(usize::MAX);
