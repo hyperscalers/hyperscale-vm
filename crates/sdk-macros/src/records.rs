@@ -92,7 +92,11 @@ pub fn emit_closure(items: &[syn::Item]) -> BTreeSet<String> {
         }
         named.insert(
             declared.ident.to_string(),
-            declared.fields().flat_map(|f| type_names(&f.ty)).collect(),
+            declared
+                .fields()
+                .iter()
+                .flat_map(|f| type_names(&f.ty))
+                .collect(),
         );
     }
     let mut reached = BTreeSet::new();
@@ -176,11 +180,11 @@ impl<'a> Declared<'a> {
     }
 
     /// Every field the wire carries: a struct's own, or each variant's.
-    fn fields(&self) -> Box<dyn Iterator<Item = &'a syn::Field> + 'a> {
+    fn fields(&self) -> Vec<&'a syn::Field> {
         match self.item {
-            syn::Item::Struct(it) => Box::new(it.fields.iter()),
-            syn::Item::Enum(it) => Box::new(it.variants.iter().flat_map(|v| v.fields.iter())),
-            _ => Box::new(std::iter::empty()),
+            syn::Item::Struct(it) => it.fields.iter().collect(),
+            syn::Item::Enum(it) => it.variants.iter().flat_map(|v| v.fields.iter()).collect(),
+            _ => Vec::new(),
         }
     }
 }
@@ -203,7 +207,7 @@ pub fn encode_declared(items: &mut [syn::Item]) -> (Vec<syn::Item>, Vec<syn::Ide
         // A `#[resource]` struct with fields is an instance's data
         // schema, and its cell is read and written as the record it is.
         // A bare mark declares no fields and encodes nothing.
-        let instance = declared.marked("resource") && declared.fields().next().is_some();
+        let instance = declared.marked("resource") && !declared.fields().is_empty();
         let ident = declared.ident.clone();
         let (attrs, vis): (&mut Vec<syn::Attribute>, &mut syn::Visibility) = match item {
             syn::Item::Struct(it) => (&mut it.attrs, &mut it.vis),
