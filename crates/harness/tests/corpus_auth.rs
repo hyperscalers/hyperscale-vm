@@ -10,7 +10,7 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_fixtures::nf;
 use hyperscale_vm_harness::driver::{amount_of, cells, vault};
 use hyperscale_vm_kernel::{MemoryStore, Substates};
-use hyperscale_vm_sdk::Declines;
+use hyperscale_vm_sdk::{Declines, nobody};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     EffectTarget, Outcome, Presence, PrincipalAddr, TxHash, UnmetCondition, encode_amount,
@@ -255,6 +255,130 @@ fn a_second_factor_is_required_beside_the_primary() {
     assert_eq!(amount_of(&end, vault(BOB, RES_X)), 0);
 }
 
+/// The whole of a card, end to end: an account that securifies with a
+/// second factor opens only to the phone and the card together, and
+/// rotating either factor takes both — the sign-in is what admits the
+/// rotation, and the sign-in is the conjunction.
+#[test]
+fn a_card_is_required_from_securify_on_and_takes_both_to_rotate() {
+    let world = world();
+    let mut store = sealed_store();
+    store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
+    let tx = |tree: &IntentTree| TxHash(tree.hash(&TestHasher).0);
+    let signed_in = |outcome: &Outcome| {
+        *outcome
+            == Outcome::ConditionUnmet {
+                condition: UnmetCondition::SignedIn {
+                    account: ALICE.address(),
+                },
+            }
+    };
+
+    // Alice's own key is the phone; the maker's is the card.
+    let securify = graph(|b| {
+        account::securify(
+            b,
+            ALICE,
+            governing_rule(ALICE),
+            governing_rule(MAKER),
+            stored_rule(BOB),
+            nobody(),
+            DAY_MS,
+        )
+    });
+    let (results, store) = run_both(&world, &store, &[(&securify, TxHash(Hash32([0xF0; 32])))]);
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+
+    let mut phone = acting_as(&[ALICE], transfer_graph());
+    phone.root.attested_by = vec![ALICE];
+    let (outcome, _) = run_both_tree(&world, &store, &phone).expect("admissible");
+    assert!(
+        signed_in(&outcome.receipts[&tx(&phone)].outcome),
+        "the phone alone is not the account"
+    );
+    let mut both = acting_as(&[ALICE], transfer_graph());
+    both.root.attested_by = vec![ALICE, MAKER];
+    let (outcome, end) = run_both_tree(&world, &store, &both).expect("admissible");
+    assert!(matches!(
+        outcome.receipts[&tx(&both)].outcome,
+        Outcome::Completed { .. }
+    ));
+    assert_eq!(amount_of(&end, vault(BOB, RES_X)), 100);
+
+    // Dropping the card takes the card: the phone alone is refused at
+    // the sign-in, and both together rewrite the record at once.
+    let rotate = graph(|b| account::rotate(b, ALICE, governing_rule(ALICE), no_factor()));
+    let mut alone = acting_as(&[ALICE], rotate.clone());
+    alone.root.attested_by = vec![ALICE];
+    let (outcome, _) = run_both_tree(&world, &store, &alone).expect("admissible");
+    assert!(
+        signed_in(&outcome.receipts[&tx(&alone)].outcome),
+        "rotating a factor takes every factor"
+    );
+    let mut together = acting_as(&[ALICE], rotate);
+    together.root.attested_by = vec![ALICE, MAKER];
+    let (outcome, store) = run_both_tree(&world, &store, &together).expect("admissible");
+    assert!(matches!(
+        outcome.receipts[&tx(&together)].outcome,
+        Outcome::Completed { .. }
+    ));
+    assert_acts(&world, &store, ALICE, env().clock_ms, true, 0xF1);
+}
+
+/// A guardian who passes the card's rule back leaves an account the new
+/// primary cannot spend from alone: what colluding guardians get is a
+/// new primary, and the card is still the holder's.
+#[test]
+fn a_recovery_that_keeps_the_card_leaves_the_card_in_the_way() {
+    let world = world();
+    let mut store = recovered_store();
+    store.write(
+        auth(ALICE),
+        Authority {
+            primary: stored_rule(ALICE),
+            confirmation: stored_rule(MAKER),
+        }
+        .in_cell(),
+    );
+    let t0 = env().clock_ms;
+    let tx = |tree: &IntentTree| TxHash(tree.hash(&TestHasher).0);
+
+    let keeping = graph_signed(BOB, |b| {
+        account::propose(b, ALICE, governing_rule(BOB), governing_rule(MAKER))
+    });
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&keeping, TxHash(Hash32([0xF2; 32])))],
+        Some(BOB),
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+    let at = t0 + DAY_MS;
+    let (results, store) = run_both_at(
+        &world,
+        &store,
+        &[(&promote_by(BOB), TxHash(Hash32([0xF3; 32])))],
+        Some(BOB),
+        at,
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+
+    // Bob is the primary now, and Bob alone is still not the account.
+    assert_acts(&world, &store, BOB, at, false, 0xF4);
+    let mut both = acting_as(&[ALICE], transfer_graph());
+    both.root.attested_by = vec![BOB, MAKER];
+    let (outcome, end) = run_both_tree(&world, &store, &both).expect("admissible");
+    assert!(
+        matches!(
+            outcome.receipts[&tx(&both)].outcome,
+            Outcome::Completed { .. }
+        ),
+        "the new primary and the card together are; got {:?}",
+        outcome.receipts[&tx(&both)].outcome
+    );
+    assert_eq!(amount_of(&end, vault(BOB, RES_X)), 100);
+}
+
 /// Sign in and hand the account to Bob's rule, uniformly.
 fn securify_graph(rule: &StoredRule) -> ManifestGraph {
     graph(|b| account::securify_uniform(b, ALICE, rule, DAY_MS))
@@ -492,14 +616,14 @@ fn a_signature_opens_only_the_account_its_intent_acts_as() {
 }
 
 /// Seed `owner`'s authority as the account writes it: the rule that
-/// governs, the one that may replace it, the one that may enact a
-/// replacement early, and the delay a replacement waits.
+/// governs, the one that may replace it, the one that may veto a
+/// replacement, and the delay a replacement waits.
 fn seed_authority(
     store: &mut MemoryStore,
     owner: PrincipalAddr,
     governing: &RuleBytes,
     replaces: &RuleBytes,
-    enacts: &RuleBytes,
+    vetoes: &RuleBytes,
     delay_ms: u64,
 ) {
     store.write(
@@ -507,7 +631,7 @@ fn seed_authority(
         Authority::primary_only(governing.clone()).in_cell(),
     );
     store.write(own_cell(owner, 2), replaces.in_cell());
-    store.write(own_cell(owner, 3), enacts.in_cell());
+    store.write(own_cell(owner, 3), vetoes.in_cell());
     store.write(own_cell(owner, 5), delay_ms.to_le_bytes().to_vec());
 }
 
@@ -525,6 +649,7 @@ fn seed_pending(
         serial,
         effective_at_ms: at_ms,
         primary: PrincipalRule(rule.0.clone()),
+        confirmation: no_factor(),
         frozen: frozen.cloned(),
     };
     store.write(own_cell(owner, 4), account::encode_pending(&pending));
@@ -539,9 +664,8 @@ fn frozen() -> Vec<u8> {
 }
 
 /// The split setup every recovery test starts from: Alice governs, Bob
-/// may replace her, the maker may enact a replacement early, and the
-/// corpus delay separates a replacement from the instant it may be
-/// enacted without one.
+/// may replace her, the maker may veto a replacement, and the corpus
+/// delay separates a replacement from the instant it may be enacted.
 ///
 /// Three cells rather than a table behind one, because a rule in a cell
 /// is a rule in a cell — and each gate reads the one it needs.
@@ -566,14 +690,16 @@ fn cancel_by(signer: PrincipalAddr) -> ManifestGraph {
     graph_signed(signer, |b| account::cancel(b, ALICE, FIRST))
 }
 
-fn confirm_by(signer: PrincipalAddr) -> ManifestGraph {
-    graph_signed(signer, |b| account::confirm(b, ALICE, FIRST))
+fn veto_by(signer: PrincipalAddr) -> ManifestGraph {
+    graph_signed(signer, |b| account::veto(b, ALICE, FIRST))
 }
 
 /// Alice's recovery freezes her and proposes Bob in one call, composed
 /// by `signer`.
 fn freeze_by(signer: PrincipalAddr) -> ManifestGraph {
-    graph_signed(signer, |b| account::freeze(b, ALICE, governing_rule(BOB)))
+    graph_signed(signer, |b| {
+        account::freeze(b, ALICE, governing_rule(BOB), no_factor())
+    })
 }
 
 fn cancel_graph() -> ManifestGraph {
@@ -800,19 +926,19 @@ fn recovery_withdraws_its_own_unmatured_proposal() {
     assert_acts(&world, &store, ALICE, long_after, true, 0x6A);
     assert_acts(&world, &store, BOB, long_after, false, 0x6B);
 
-    // With nothing pending, a confirmation names a proposal that is not
-    // there: refused rather than a clean no-op, so the confirmer is told
-    // that what they saw was withdrawn before their verdict landed.
+    // With nothing pending, a veto names a proposal that is not there:
+    // refused rather than a clean no-op, so the vetoer is told that what
+    // they saw was withdrawn before their verdict landed.
     let (results, after) = run_both_signed(
         &world,
         &store,
-        &[(&confirm_by(MAKER), TxHash(Hash32([0x6C; 32])))],
+        &[(&veto_by(MAKER), TxHash(Hash32([0x6C; 32])))],
         Some(MAKER),
     );
     assert_eq!(
         results,
         vec![TxResult::Declined(account::Error::NoSuchProposal.code())],
-        "nothing pending is nothing to confirm"
+        "nothing pending is nothing to veto"
     );
     assert_acts(&world, &after, ALICE, long_after, true, 0x6D);
 }
@@ -1004,9 +1130,9 @@ fn a_cancelled_freeze_gives_the_primary_back() {
 }
 
 /// A hostile recovery under an effectively infinite delay matures
-/// nothing on its own: the proposal waits forever, and enacting it is
-/// the confirmation role's deliberate co-signature — the dial an owner
-/// sets against the factor it trusts least.
+/// nothing on its own: the proposal waits forever, the old primary acts
+/// throughout, and the veto is what ends it — the dial an owner sets
+/// against the factor it trusts least.
 #[test]
 fn an_infinite_delay_keeps_a_hostile_recovery_waiting() {
     let world = world();
@@ -1036,26 +1162,37 @@ fn an_infinite_delay_keeps_a_hostile_recovery_waiting() {
     assert_acts(&world, &store, ALICE, far, true, 0x98);
     assert_acts(&world, &store, BOB, far, false, 0x99);
 
-    // Enacting it takes the confirmation role's own signature.
+    // The veto ends it, and nothing about the account has moved.
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&confirm_by(MAKER), TxHash(Hash32([0x9A; 32])))],
+        &[(&veto_by(MAKER), TxHash(Hash32([0x9A; 32])))],
         Some(MAKER),
     );
-    assert!(matches!(&results[0], TxResult::Completed(_)));
-    assert_acts(&world, &store, BOB, far, true, 0x9B);
-    assert_acts(&world, &store, ALICE, far, false, 0x9C);
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("veto must complete; got {:?}", results[0]);
+    };
+    assert_eq!(
+        receipt.delta.cells.get(&own_cell(ALICE, 4)),
+        Some(&Some(Vec::new())),
+        "a veto drops the proposal"
+    );
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        None,
+        "and reaches no governing rule that was not frozen"
+    );
+    assert_acts(&world, &store, ALICE, far, true, 0x9B);
+    assert_acts(&world, &store, BOB, far, false, 0x9C);
 }
 
 /// A hostile freeze under an effectively infinite delay waits on a
 /// verdict rather than maturing: nobody acts however far out, the
 /// proposal the freeze rides never reaches its instant, securify's door
-/// stays shut, and the confirmation role's co-signature is what ends it
-/// — by enacting the replacement, which under this delay is the only
-/// way one lands. The funds are locked, not stolen, until that verdict.
+/// stays shut, and the veto is what ends it — giving the displaced
+/// primary back, so the funds were locked and never stolen.
 #[test]
-fn a_frozen_account_under_an_infinite_delay_waits_on_a_verdict() {
+fn a_vetoed_freeze_gives_the_primary_back() {
     let world = world();
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
@@ -1128,23 +1265,32 @@ fn a_frozen_account_under_an_infinite_delay_waits_on_a_verdict() {
     );
     assert_eq!(amount_of(&store, vault(ALICE, RES_X)), 150);
 
-    // The confirmation role's verdict is what ends it.
+    // The veto is what ends it: the displaced primary comes back.
     let (results, store) = run_both_at(
         &world,
         &store,
-        &[(&confirm_by(MAKER), TxHash(Hash32([0xB7; 32])))],
+        &[(&veto_by(MAKER), TxHash(Hash32([0xB7; 32])))],
         Some(MAKER),
         far,
     );
-    assert!(matches!(&results[0], TxResult::Completed(_)));
-    assert_acts(&world, &store, BOB, far, true, 0xB8);
-    assert_acts(&world, &store, ALICE, far, false, 0xB9);
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!("veto must complete; got {:?}", results[0]);
+    };
+    assert_eq!(
+        receipt.delta.cells.get(&auth(ALICE)),
+        Some(&Some(governing(ALICE))),
+        "a veto gives back what the freeze displaced"
+    );
+    assert_acts(&world, &store, ALICE, far, true, 0xB8);
+    assert_acts(&world, &store, BOB, far, false, 0xB9);
+    assert_eq!(amount_of(&store, vault(ALICE, RES_X)), 150);
 }
 
-/// Confirmation enacts a proposal early: the new roles govern from the
-/// confirm, a day before the instant would have arrived on its own.
+/// A veto ends a proposal: the recovery role cannot veto its own, and
+/// the veto role enacts nothing — after it the account is exactly as
+/// it was before the proposal.
 #[test]
-fn confirmation_enacts_a_proposal_early() {
+fn a_veto_ends_a_proposal_and_enacts_nothing() {
     let world = world();
     let store = recovered_store();
     let t0 = env().clock_ms;
@@ -1157,11 +1303,11 @@ fn confirmation_enacts_a_proposal_early() {
     );
     assert!(matches!(&results[0], TxResult::Completed(_)));
 
-    // The recovery key cannot confirm its own proposal.
+    // The recovery key cannot veto its own proposal.
     let (results, _) = run_both_signed(
         &world,
         &store,
-        &[(&confirm_by(BOB), TxHash(Hash32([0x6E; 32])))],
+        &[(&veto_by(BOB), TxHash(Hash32([0x6E; 32])))],
         Some(BOB),
     );
     assert_eq!(
@@ -1169,33 +1315,75 @@ fn confirmation_enacts_a_proposal_early() {
         vec![TxResult::Refused(Outcome::ConditionUnmet {
             condition: UnmetCondition::Satisfies { node: 0 },
         })],
-        "recovery is not confirmation"
+        "recovery is not veto"
     );
 
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&confirm_by(MAKER), TxHash(Hash32([0x6F; 32])))],
+        &[(&veto_by(MAKER), TxHash(Hash32([0x6F; 32])))],
         Some(MAKER),
     );
     let TxResult::Completed(receipt) = &results[0] else {
-        panic!("confirm must complete; got {:?}", results[0]);
+        panic!("veto must complete; got {:?}", results[0]);
     };
     assert_eq!(
+        receipt.delta.cells.get(&own_cell(ALICE, 4)),
+        Some(&Some(Vec::new())),
+        "a veto drops the proposal"
+    );
+    assert_eq!(
         receipt.delta.cells.get(&auth(ALICE)),
-        Some(&Some(governing(BOB))),
-        "confirm promotes the proposal whole"
+        None,
+        "and enacts nothing"
     );
 
-    // Bob governs now — a day early — and Alice is retired now.
-    assert_acts(&world, &store, BOB, t0, true, 0x70);
-    assert_acts(&world, &store, ALICE, t0, false, 0x71);
+    // Past the instant the proposal named, Alice still governs and Bob
+    // still does not.
+    assert_acts(&world, &store, ALICE, t0 + DAY_MS, true, 0x70);
+    assert_acts(&world, &store, BOB, t0 + DAY_MS, false, 0x71);
 }
 
-/// A verdict names the proposal its signer saw. A confirmation signed
-/// against the first proposal and included after a second replaced it
-/// is refused rather than enacting the second in its place — and the
-/// second is enacted by the verdict that names it.
+/// Nobody can veto where the account names no veto: the rule nobody
+/// satisfies is what an account without an arbiter stores, and the
+/// recovery role then wins every contest after the delay.
+#[test]
+fn an_account_without_a_veto_admits_no_veto() {
+    let world = world();
+    let mut store = sealed_store();
+    store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
+    let securify = securify_graph(&StoredRule::claim(Claim::of_subject(BOB)));
+    let (results, store) = run_both(&world, &store, &[(&securify, TxHash(Hash32([0xE0; 32])))]);
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+    let (results, store) = run_both_signed(
+        &world,
+        &store,
+        &[(&propose_by(BOB), TxHash(Hash32([0xE1; 32])))],
+        Some(BOB),
+    );
+    assert!(matches!(&results[0], TxResult::Completed(_)));
+
+    for (who, tag) in [(BOB, 0xE2), (MAKER, 0xE3)] {
+        let (results, _) = run_both_signed(
+            &world,
+            &store,
+            &[(&veto_by(who), TxHash(Hash32([tag; 32])))],
+            Some(who),
+        );
+        assert_eq!(
+            results,
+            vec![TxResult::Refused(Outcome::ConditionUnmet {
+                condition: UnmetCondition::Satisfies { node: 0 },
+            })],
+            "the rule nobody satisfies admits nobody"
+        );
+    }
+}
+
+/// A verdict names the proposal its signer saw. A veto signed against
+/// the first proposal and included after a second replaced it is refused
+/// rather than answering the second in its place — and the second is
+/// ended by the verdict that names it.
 #[test]
 fn a_verdict_names_the_proposal_its_signer_saw() {
     let world = world();
@@ -1210,9 +1398,11 @@ fn a_verdict_names_the_proposal_its_signer_saw() {
     );
     assert!(matches!(&results[0], TxResult::Completed(_)));
 
-    // Bob replaces his proposal with the maker's rules before the
-    // maker's confirmation of the first is included.
-    let replace = graph_signed(BOB, |b| account::propose(b, ALICE, governing_rule(MAKER)));
+    // Bob replaces his proposal with the maker's rule before the
+    // maker's veto of the first is included.
+    let replace = graph_signed(BOB, |b| {
+        account::propose(b, ALICE, governing_rule(MAKER), no_factor())
+    });
     let (results, store) = run_both_signed(
         &world,
         &store,
@@ -1221,37 +1411,41 @@ fn a_verdict_names_the_proposal_its_signer_saw() {
     );
     assert!(matches!(&results[0], TxResult::Completed(_)));
 
-    // The confirmation the maker signed names the first, and enacts
-    // nothing: Alice still governs and the maker does not.
+    // The veto the maker signed names the first, and answers nothing:
+    // the second still waits.
     let (results, store) = run_both_signed(
         &world,
         &store,
-        &[(&confirm_by(MAKER), TxHash(Hash32([0xD2; 32])))],
+        &[(&veto_by(MAKER), TxHash(Hash32([0xD2; 32])))],
         Some(MAKER),
     );
     assert_eq!(
         results,
         vec![TxResult::Declined(account::Error::NoSuchProposal.code())],
-        "a verdict on a superseded proposal enacts nothing"
+        "a verdict on a superseded proposal answers nothing"
     );
-    assert_acts(&world, &store, ALICE, t0, true, 0xD3);
-    assert_acts(&world, &store, MAKER, t0, false, 0xD4);
 
-    // Naming the second enacts the second.
-    let second = graph_signed(MAKER, |b| account::confirm(b, ALICE, FIRST + 1));
+    // Naming the second ends the second.
+    let second = graph_signed(MAKER, |b| account::veto(b, ALICE, FIRST + 1));
     let (results, store) = run_both_signed(
         &world,
         &store,
         &[(&second, TxHash(Hash32([0xD5; 32])))],
         Some(MAKER),
     );
-    assert!(
-        matches!(&results[0], TxResult::Completed(_)),
-        "the verdict naming the proposal waiting enacts it; got {:?}",
-        results[0]
+    let TxResult::Completed(receipt) = &results[0] else {
+        panic!(
+            "the verdict naming the proposal waiting ends it; got {:?}",
+            results[0]
+        );
+    };
+    assert_eq!(
+        receipt.delta.cells.get(&own_cell(ALICE, 4)),
+        Some(&Some(Vec::new())),
+        "no replacement waits"
     );
-    assert_acts(&world, &store, MAKER, t0, true, 0xD6);
-    assert_acts(&world, &store, ALICE, t0, false, 0xD7);
+    assert_acts(&world, &store, ALICE, t0 + DAY_MS, true, 0xD6);
+    assert_acts(&world, &store, MAKER, t0 + DAY_MS, false, 0xD7);
 }
 
 /// A second propose replaces an unmatured proposal — its timer restarts
@@ -1273,7 +1467,9 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
 
     // Replace it half a day later: one proposal, the fresh instant.
     let later = t0 + DAY_MS / 2;
-    let replace = graph_signed(BOB, |b| account::propose(b, ALICE, governing_rule(MAKER)));
+    let replace = graph_signed(BOB, |b| {
+        account::propose(b, ALICE, governing_rule(MAKER), no_factor())
+    });
     let (results, _) = run_both_at(
         &world,
         &store,
@@ -1307,7 +1503,7 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
     // account nobody has written to.
     let mut virtual_store = sealed_store();
     virtual_store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
-    let own_propose = graph(|b| account::propose(b, ALICE, governing_rule(BOB)));
+    let own_propose = graph(|b| account::propose(b, ALICE, governing_rule(BOB), no_factor()));
     let (results, _) = run_both_signed(
         &world,
         &virtual_store,

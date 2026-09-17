@@ -28,7 +28,7 @@ pub mod account {
         Bucket, Cell, Ids, Keyed, NfBucket, PrincipalRule, Quantity, RuleBytes, Vault, clock_ms,
         destroy, destroy_nf,
     };
-    use hyperscale_vm_sdk::{Address, Authority, ResourceAddr, anybody, nobody};
+    use hyperscale_vm_sdk::{Address, Authority, ResourceAddr, nobody};
 
     /// Funds left the account.
     #[event]
@@ -68,9 +68,10 @@ pub mod account {
         serial: u64,
         /// When it may be enacted without a confirmation.
         effective_at_ms: u64,
-        /// The primary the governing record takes, at the narrowed kind
+        /// The factors the governing record takes, at the narrowed kind
         /// that record holds.
         primary: PrincipalRule,
+        confirmation: PrincipalRule,
         /// The primary a freeze displaced, where the account is frozen.
         ///
         /// In the proposal rather than in a cell of its own, so a frozen
@@ -119,13 +120,17 @@ pub mod account {
         /// account can be handed is the one it refuses.
         #[width(4099)]
         recovery: Cell<Option<RuleBytes>>,
-        /// Who may enact one before its delay runs out.
+        /// Who may stop a replacement before its delay runs out, giving
+        /// a frozen primary back: the holder's defence against a
+        /// recovery role in the wrong hands. Cold, and never a factor the
+        /// sign-in reads — a thief holding every everyday factor must
+        /// not hold this.
         #[width(4099)]
-        confirmation: Cell<Option<RuleBytes>>,
-        /// The replacement waiting, where one is: two rules at the
+        veto: Cell<Option<RuleBytes>>,
+        /// The replacement waiting, where one is: three rules at the
         /// argument cap, their lengths and the tag on the optional one,
         /// and two words.
-        #[width(8213)]
+        #[width(12311)]
         pending: Cell<Option<Pending>>,
         /// How long a proposal waits when nothing confirms it.
         ///
@@ -279,8 +284,8 @@ pub mod account {
         #[proves(badge[id])]
         pub fn present_instance(&self, badge: Address, id: u64) {}
 
-        /// Store the three rules that govern from here on, and the delay
-        /// the first replacement of them waits.
+        /// Store the factors and the roles that govern from here on, and
+        /// the delay a replacement waits.
         ///
         /// The governing cell being absent is this body's own refusal,
         /// judged against committed state before it runs — and it is what
@@ -291,17 +296,34 @@ pub mod account {
         pub fn securify(
             &mut self,
             primary: PrincipalRule,
+            confirmation: PrincipalRule,
             recovery: RuleBytes,
-            confirmation: RuleBytes,
+            veto: RuleBytes,
             delay_ms: u64,
         ) {
             self.auth().create(Authority {
                 primary: primary.into_bytes(),
-                confirmation: anybody(),
+                confirmation: confirmation.into_bytes(),
             });
             self.recovery.set(Some(recovery));
-            self.confirmation.set(Some(confirmation));
+            self.veto.set(Some(veto));
             self.delay_ms.set(delay_ms);
+        }
+
+        /// Replace either factor now.
+        ///
+        /// No delay, because the intent passed the sign-in over both
+        /// factors: whoever can call this already holds every everyday
+        /// factor and gains nothing over the guardians by rotating,
+        /// while a holder retiring a key or replacing a worn card gets
+        /// it done at once. Dropping the second factor is rotating it
+        /// to the rule anyone satisfies.
+        #[requires(self)]
+        pub fn rotate(&mut self, primary: PrincipalRule, confirmation: PrincipalRule) {
+            let mut authority = self.auth().existing();
+            authority.primary = primary.into_bytes();
+            authority.confirmation = confirmation.into_bytes();
+            self.auth().set(Some(authority));
         }
 
         /// Wait out a replacement's delay, or replace one still waiting.
@@ -310,9 +332,9 @@ pub mod account {
         /// shorten its own takeover, because the delay is not a
         /// proposal's to name.
         #[requires(governs(recovery))]
-        pub fn propose(&mut self, primary: PrincipalRule) {
+        pub fn propose(&mut self, primary: PrincipalRule, confirmation: PrincipalRule) {
             let frozen = self.pending.get().and_then(|waiting| waiting.frozen);
-            self.file(primary, frozen);
+            self.file(primary, confirmation, frozen);
         }
 
         /// Propose a replacement and strip the primary's acting power
@@ -332,14 +354,14 @@ pub mod account {
         /// is what the address's own key still governs, so removing the
         /// rule would hand the account back to the key being frozen out.
         #[requires(governs(recovery))]
-        pub fn freeze(&mut self, primary: PrincipalRule) {
+        pub fn freeze(&mut self, primary: PrincipalRule, confirmation: PrincipalRule) {
             let mut authority = self.auth().existing();
             let displaced = self
                 .pending
                 .get()
                 .and_then(|waiting| waiting.frozen)
                 .unwrap_or_else(|| authority.primary.clone());
-            self.file(primary, Some(displaced));
+            self.file(primary, confirmation, Some(displaced));
             authority.primary = nobody();
             self.auth().set(Some(authority));
         }
@@ -347,7 +369,12 @@ pub mod account {
         /// File a replacement as the one waiting, under the next serial
         /// and the delay that governs now, carrying the primary a freeze
         /// displaced where there is one.
-        fn file(&mut self, primary: PrincipalRule, frozen: Option<RuleBytes>) {
+        fn file(
+            &mut self,
+            primary: PrincipalRule,
+            confirmation: PrincipalRule,
+            frozen: Option<RuleBytes>,
+        ) {
             let effective_at_ms = clock_ms().saturating_add(self.delay_ms.get());
             let serial = self.serials.get().saturating_add(1);
             self.serials.set(serial);
@@ -355,6 +382,7 @@ pub mod account {
                 serial,
                 effective_at_ms,
                 primary,
+                confirmation,
                 frozen,
             }));
         }
@@ -387,6 +415,25 @@ pub mod account {
         /// transaction they proposed it or any since.
         #[requires(governs(recovery))]
         pub fn cancel(&mut self, serial: u64) -> Result<(), Error> {
+            self.withdraw_proposal(serial)
+        }
+
+        /// Stop the replacement `serial` names, whatever its instant,
+        /// giving back the primary a freeze displaced.
+        ///
+        /// The veto role's, and the whole of its power: it enacts
+        /// nothing and proposes nothing, so a veto key found by a
+        /// stranger can only ever say no. What it is for is a recovery
+        /// role in the wrong hands — the freeze it lands is undone by
+        /// this, and the account is where it was.
+        #[requires(governs(veto))]
+        pub fn veto(&mut self, serial: u64) -> Result<(), Error> {
+            self.withdraw_proposal(serial)
+        }
+
+        /// Drop the replacement `serial` names and give back what a
+        /// freeze displaced, where one did.
+        fn withdraw_proposal(&mut self, serial: u64) -> Result<(), Error> {
             let pending = self.proposal(serial)?;
             self.pending.set(None);
             if let Some(primary) = pending.frozen {
@@ -394,14 +441,6 @@ pub mod account {
                 authority.primary = primary;
                 self.auth().set(Some(authority));
             }
-            Ok(())
-        }
-
-        /// Enact the replacement `serial` names now, matured or not.
-        #[requires(governs(confirmation))]
-        pub fn confirm(&mut self, serial: u64) -> Result<(), Error> {
-            let pending = self.proposal(serial)?;
-            self.enact(pending);
             Ok(())
         }
 
@@ -418,16 +457,18 @@ pub mod account {
             Ok(pending)
         }
 
-        /// File `pending`'s primary as the governing one and clear the
+        /// File `pending`'s factors as the governing ones and clear the
         /// wait — and with it any freeze, whose displaced primary the
         /// proposal has just replaced.
         ///
-        /// The second factor stands: a replacement is of the primary,
-        /// and what colluding guardians get is a new primary rather
-        /// than the account.
+        /// A replacement is of the factors and nothing about who may
+        /// recover: guardians who pass the card's rule back leave an
+        /// account colluding guardians still cannot spend from, and the
+        /// roles are the primary's to amend once it can act again.
         fn enact(&mut self, pending: Pending) {
             let mut authority = self.auth().existing();
             authority.primary = pending.primary.into_bytes();
+            authority.confirmation = pending.confirmation.into_bytes();
             self.auth().set(Some(authority));
             self.pending.set(None);
         }

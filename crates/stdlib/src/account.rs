@@ -14,7 +14,7 @@
 //! [`PrincipalAddr`]: hyperscale_vm_types::PrincipalAddr
 
 use hyperscale_hbor::to_vec;
-use hyperscale_vm_effects::{PackageMetadata, PrincipalRule, RuleBytes, StoredRule};
+use hyperscale_vm_effects::{PackageMetadata, PrincipalRule, RuleBytes, StoredRule, always, never};
 use hyperscale_vm_manifest_builder::{BuildError, TypedBuilder, TypedError};
 use hyperscale_vm_types::PrincipalAddr;
 
@@ -66,8 +66,14 @@ pub fn metadata() -> PackageMetadata {
     package::account::blueprint().metadata()
 }
 
-/// Store one rule as all three: the rule that governs, the one that may
-/// replace it, and the one that may enact a replacement early.
+/// Store one rule as the primary and as the recovery role, with no
+/// second factor and no veto.
+///
+/// The simplest securified account: one party acts and the same party
+/// may replace what acts, after the delay. With nobody able to veto, a
+/// recovery role in the wrong hands takes the account once the delay
+/// runs out; a threshold among guardians or a named veto is what
+/// `securify` itself takes for an account that wants better.
 ///
 /// # Errors
 ///
@@ -83,7 +89,17 @@ pub fn securify_uniform(
 ) -> Result<(), TypedError> {
     let sealed = RuleBytes::try_from(rule).map_err(|_| BuildError::RuleArgTooDeep)?;
     let governing = PrincipalRule::try_from(rule).map_err(|_| BuildError::RuleArgTooDeep)?;
-    securify(b, who, governing, sealed.clone(), sealed, recovery_delay_ms)
+    let no_factor = PrincipalRule::try_from(&always()).map_err(|_| BuildError::RuleArgTooDeep)?;
+    let nobody = RuleBytes::try_from(&never()).map_err(|_| BuildError::RuleArgTooDeep)?;
+    securify(
+        b,
+        who,
+        governing,
+        no_factor,
+        sealed,
+        nobody,
+        recovery_delay_ms,
+    )
 }
 
 #[cfg(test)]

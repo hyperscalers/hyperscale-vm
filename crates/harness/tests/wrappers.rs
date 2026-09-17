@@ -157,9 +157,9 @@ fn the_account_wrappers_match_their_signatures() {
         let stored = StoredRule::claim(Claim::of_subject(BOB));
         let governing =
             PrincipalRule::try_from(&stored).expect("a rule over principal claims encodes");
-        account::propose(b, ALICE, governing)?;
+        account::propose(b, ALICE, governing.clone(), governing)?;
         account::cancel(b, ALICE, 1)?;
-        account::confirm(b, ALICE, 1)
+        account::veto(b, ALICE, 1)
     });
     assert_eq!(graph.nodes.len(), 6);
 }
@@ -189,7 +189,15 @@ fn a_degenerate_rule_is_refused_where_it_is_written() {
     let governing = PrincipalRule::try_from(&stored).expect("a rule over principal claims encodes");
     let broken = RuleBytes::try_from(&degenerate).expect("a degenerate rule still encodes");
     assert!(matches!(
-        account::securify(&mut b, ALICE, governing, broken.clone(), broken, 86_400_000),
+        account::securify(
+            &mut b,
+            ALICE,
+            governing.clone(),
+            governing,
+            broken.clone(),
+            broken,
+            86_400_000
+        ),
         Err(TypedError::ParamKind {
             expected: "rule",
             ..
@@ -229,6 +237,7 @@ fn the_governing_cell_takes_a_rule_over_principals_alone() {
     account::securify(
         &mut b,
         ALICE,
+        governing.clone(),
         governing,
         recovery.clone(),
         recovery,

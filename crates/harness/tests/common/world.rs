@@ -9,7 +9,7 @@ use hyperscale_vm_effects::{
     AdmissionError, Admitted, Authority, Claim, Hash32, Hasher, InstanceMeta, Intent, IntentHeader,
     IntentTree, LegShape, ManifestGraph, PACKAGE_SLOT_BASE, PackageHash, PrefixShardResolver,
     PrincipalRule, Records, RuleBytes, ShardId, ShardResolver, SlotId, Star, StoredRule,
-    TestHasher, Value, admit_tree, child_key, collection_id, holdings_collection, legs_of,
+    TestHasher, Value, admit_tree, always, child_key, collection_id, holdings_collection, legs_of,
     nullifier_expiry_ms, nullifier_key, package_slot, per_shard, star_at,
 };
 use hyperscale_vm_fixtures::{amm, book, lottery, nf, registry, security, shares};
@@ -183,9 +183,9 @@ pub fn auth(owner: impl Into<Address>) -> SubstateKey {
 }
 
 /// One of the account's own cells, by its offset in the package band:
-/// 2 the rule that may replace the governing one, 3 the rule that may
-/// enact a replacement early, 4 the replacement waiting, 5 the delay,
-/// 6 how many proposals there have been.
+/// 2 the rule that may replace the factors, 3 the rule that may veto a
+/// replacement, 4 the replacement waiting, 5 the delay, 6 how many
+/// proposals there have been.
 pub fn own_cell(owner: impl Into<Address>, offset: u16) -> SubstateKey {
     child_key(&TestHasher, owner, SlotId(PACKAGE_SLOT_BASE + offset), &[])
 }
@@ -207,6 +207,12 @@ pub fn governing(identity: PrincipalAddr) -> Vec<u8> {
 pub fn governing_rule(identity: PrincipalAddr) -> PrincipalRule {
     PrincipalRule::try_from(&StoredRule::claim(Claim::of_subject(identity)))
         .expect("a rule within the vocabulary caps")
+}
+
+/// No second factor: the confirmation anyone satisfies, at the kind the
+/// governing record takes.
+pub fn no_factor() -> PrincipalRule {
+    PrincipalRule::try_from(&always()).expect("the open threshold encodes")
 }
 
 pub fn world() -> Records {
@@ -1149,7 +1155,9 @@ pub fn propose_graph() -> ManifestGraph {
 /// Alice's recovery proposes Bob, composed by `signer`: the recovery
 /// role's own sign-in precedes the proposal for anyone but Alice.
 pub fn propose_by(signer: PrincipalAddr) -> ManifestGraph {
-    graph_signed(signer, |b| account::propose(b, ALICE, governing_rule(BOB)))
+    graph_signed(signer, |b| {
+        account::propose(b, ALICE, governing_rule(BOB), no_factor())
+    })
 }
 
 pub fn swap_graph(min_out: u128) -> ManifestGraph {

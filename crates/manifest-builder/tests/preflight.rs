@@ -601,7 +601,7 @@ fn a_stored_rule_on_another_account_is_reported_unread() {
     let bob = StoredRule::claim(Claim::of_subject(BOB));
     let governing = PrincipalRule::try_from(&bob).expect("a rule over principal claims encodes");
     let graph = TypedBuilder::compose(&chain, &TestHasher, BOB, |b| {
-        account::freeze(b, ALICE, governing)?;
+        account::freeze(b, ALICE, governing.clone(), governing)?;
         Ok(())
     })
     .unwrap();

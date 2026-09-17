@@ -3,8 +3,8 @@ state
      16  refused — a leaf per key, holding [u8; 1], at most 1 bytes
      17  quarantine — a leaf per key, holding u128, at most 16 bytes
      18  recovery — one leaf, holding [u8], at most 4099 bytes
-     19  confirmation — one leaf, holding [u8], at most 4099 bytes
-     20  pending — one leaf, holding pending, at most 8213 bytes
+     19  veto — one leaf, holding [u8], at most 4099 bytes
+     20  pending — one leaf, holding pending, at most 12311 bytes
      21  delay_ms — one leaf, holding u64, at most 8 bytes
      22  serials — one leaf, holding u64, at most 8 bytes
 events
@@ -15,7 +15,7 @@ errors
       1  unmatured
 types
   deposited = { amount: u128 }
-  pending = { serial: u64, effective_at_ms: u64, primary: [u8], frozen: [u8]? }
+  pending = { serial: u64, effective_at_ms: u64, primary: [u8], confirmation: [u8], frozen: [u8]? }
   withdrawn = { amount: u128 }
 
 accept(resource-address) — infallible
@@ -41,15 +41,6 @@ cancel(u64) — fallible
       4  write self.auth
   exports  handle for clause 2, handle for clause 4, arg0
 
-confirm(u64) — fallible
-  declares
-      0  read self.confirmation
-      1  requires 1 of (the rule stored at self.confirmation, 2 of (self.confirmation is absent, claim self))
-      2  write self.pending
-      3  requires self.auth is present
-      4  write self.auth
-  exports  handle for clause 2, handle for clause 4, arg0
-
 deposit(bucket) — total
   emits    deposited — at most 54 bytes
   declares
@@ -65,7 +56,7 @@ deposit-nf(nf-bucket) — infallible
            clause 0's bounds — footprint
   exports  handle for clause 0, edge arg0
 
-freeze(principal-rule) — infallible
+freeze(principal-rule, principal-rule) — infallible
   declares
       0  read self.recovery
       1  requires 1 of (the rule stored at self.recovery, 2 of (self.recovery is absent, claim self))
@@ -74,7 +65,7 @@ freeze(principal-rule) — infallible
       4  write self.pending
       5  read self.delay_ms
       6  write self.serials
-  exports  handles for clauses 3–6, arg0
+  exports  handles for clauses 3–6, arg0, arg1
 
 present-badge(address) — infallible
   declares
@@ -97,14 +88,14 @@ promote(u64) — fallible
       2  write self.auth
   exports  handle for clause 0, handle for clause 2, arg0
 
-propose(principal-rule) — infallible
+propose(principal-rule, principal-rule) — infallible
   declares
       0  read self.recovery
       1  requires 1 of (the rule stored at self.recovery, 2 of (self.recovery is absent, claim self))
       2  write self.pending
       3  read self.delay_ms
       4  write self.serials
-  exports  handles for clauses 2–4, arg0
+  exports  handles for clauses 2–4, arg0, arg1
 
 refuse(resource-address) — infallible
   declares
@@ -112,15 +103,22 @@ refuse(resource-address) — infallible
       1  write self.refused[arg0]
   exports  handle for clause 1
 
-securify(principal-rule, rule, rule, u64) — infallible
+rotate(principal-rule, principal-rule) — infallible
+  declares
+      0  requires claim self
+      1  requires self.auth is present
+      2  write self.auth
+  exports  handle for clause 2, arg0, arg1
+
+securify(principal-rule, principal-rule, rule, rule, u64) — infallible
   declares
       0  requires claim self
       1  requires self.auth is absent
       2  write self.auth
       3  write self.recovery
-      4  write self.confirmation
+      4  write self.veto
       5  write self.delay_ms
-  exports  handles for clauses 2–5, arg0, arg1, arg2, arg3
+  exports  handles for clauses 2–5, arg0, arg1, arg2, arg3, arg4
 
 sweep(resource-address, u128) — infallible
   declares
@@ -128,6 +126,15 @@ sweep(resource-address, u128) — infallible
       1  reserve arg1 self.quarantine[arg0]
   yields   edge 0 carrying arg0
   exports  handle for clause 1
+
+veto(u64) — fallible
+  declares
+      0  read self.veto
+      1  requires 1 of (the rule stored at self.veto, 2 of (self.veto is absent, claim self))
+      2  write self.pending
+      3  requires self.auth is present
+      4  write self.auth
+  exports  handle for clause 2, handle for clause 4, arg0
 
 withdraw(resource-address, u128) — infallible
   emits    withdrawn — at most 54 bytes

@@ -80,14 +80,14 @@ fn the_corpus_costs_what_it_costs() {
         (
             "transfer",
             spent(&funded(), transfer_graph(), ALICE),
-            66_230,
+            66_222,
         ),
         (
             "recovery proposal",
             spent(&funded(), propose_graph(), ALICE),
-            73_627,
+            75_379,
         ),
-        ("swap", spent(&stocked(), swap_graph(1), ALICE), 135_702),
+        ("swap", spent(&stocked(), swap_graph(1), ALICE), 135_694),
     ];
 
     for (name, nodes, pinned) in &priced {
