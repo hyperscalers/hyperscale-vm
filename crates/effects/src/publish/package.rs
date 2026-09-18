@@ -11,7 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_hbor::ShapeFault;
 use hyperscale_vm_types::{
-    EVENT_FRAME_BYTES, MAX_ERROR_CODES, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_TYPES, MAX_SLOT_WIDTH,
+    EVENT_FRAME_BYTES, MAX_ERROR_CODES, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES,
+    MAX_EVENT_TYPES, MAX_SLOT_WIDTH,
 };
 
 use super::bounds::{PlacedBounds, check_signature_bounds};
@@ -57,6 +58,35 @@ pub enum MetadataError {
         declared: u32,
         /// What its events derive to.
         derived: usize,
+    },
+    /// An event whose own payload is wider than one emit may carry.
+    ///
+    /// The kernel traps `EventPayloadTooLarge` on a payload past the cap,
+    /// and the per-method sum beside this one does not catch it: a method
+    /// emitting one such event is inside the transaction budget and traps
+    /// on its first emit. So the package is refused rather than published
+    /// and bricked.
+    #[error(
+        "event {name} encodes to {bound} bytes, past the {MAX_EVENT_PAYLOAD_BYTES} one emit may carry"
+    )]
+    EventPayloadTooWide {
+        /// The event past the cap.
+        name: String,
+        /// What its shape measures.
+        bound: usize,
+    },
+    /// A declared type wider than any leaf may hold.
+    ///
+    /// Every declared type is a leaf's record or an event's payload, and
+    /// the kernel traps `CellValueTooLarge` on a write past the slot's
+    /// width. A package whose own record cannot fit one is a package that
+    /// traps on the call that stores it.
+    #[error("type {name:?} encodes to {bound} bytes, past the {MAX_SLOT_WIDTH} a leaf may hold")]
+    TypeTooWide {
+        /// The type past the cap.
+        name: String,
+        /// What its shape measures.
+        bound: usize,
     },
     /// An error table longer than the index a declined code can carry.
     #[error("error table names {0} codes, past the {MAX_ERROR_CODES} a declined code can reach")]
@@ -260,9 +290,19 @@ fn check_event_bounds(metadata: &PackageMetadata) -> Result<(), MetadataError> {
                     .ok_or_else(|| MetadataError::EventWithoutShape {
                         name: event.clone(),
                     })?;
+            // One payload against the cap the kernel traps on, beside the
+            // per-method sum below: an event inside the transaction
+            // budget can still be one no emit may carry.
+            let bound = metadata.types.most(shape);
+            if bound > MAX_EVENT_PAYLOAD_BYTES {
+                return Err(MetadataError::EventPayloadTooWide {
+                    name: event.clone(),
+                    bound,
+                });
+            }
             derived = derived
                 .saturating_add(EVENT_FRAME_BYTES)
-                .saturating_add(metadata.types.most(shape));
+                .saturating_add(bound);
         }
         if derived > MAX_EVENT_BYTES_PER_TX {
             return Err(MetadataError::EventBytesTooHigh(derived));
@@ -479,14 +519,29 @@ fn numbered(target: &TargetExpr) -> Option<Numbered> {
     })
 }
 
-/// Every reserved name meaning what the protocol says it means.
+/// Every declared type inside a leaf, and every reserved name meaning
+/// what the protocol says it means.
 ///
-/// What makes `address` a fact — a package may declare any type it likes
-/// and may not declare one under the protocol's name for something else.
-/// That every declared shape is readable needs no check here: a table
-/// that exists was measured node by node as it was built or decoded.
+/// The first is the width check for the records no slot row states: an
+/// instance's data cell and every record reached through one. A leaf is
+/// what a declared type is stored in, and the kernel traps on a write
+/// past the slot's width — so a package whose own record cannot fit a
+/// leaf is one that traps on the call that stores it.
+///
+/// The second is what makes `address` a fact — a package may declare any
+/// type it likes and may not declare one under the protocol's name for
+/// something else. That every declared shape is readable needs no check
+/// here: a table that exists was measured node by node as it was built
+/// or decoded.
 fn check_types(metadata: &PackageMetadata) -> Result<(), MetadataError> {
     for (name, id) in metadata.types.names() {
+        let bound = metadata.types.most(id);
+        if bound > MAX_SLOT_WIDTH as usize {
+            return Err(MetadataError::TypeTooWide {
+                name: name.to_owned(),
+                bound,
+            });
+        }
         if reserved_shape(name).is_some_and(|reserved| !metadata.types.matches(id, reserved)) {
             return Err(MetadataError::ReservedType {
                 name: name.to_owned(),
@@ -498,7 +553,9 @@ fn check_types(metadata: &PackageMetadata) -> Result<(), MetadataError> {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_hbor::{Capped, NodeId, ShapeFault, ShapeNode, ShapeTable, TypeShape};
+    use hyperscale_hbor::{
+        Capped, NodeId, ShapeFault, ShapeField, ShapeNode, ShapeTable, TypeShape,
+    };
     use hyperscale_vm_types::Moves;
 
     use super::super::fixtures::{a_resource, one_clause, own_interval, own_point};
@@ -797,6 +854,74 @@ mod tests {
         assert_eq!(
             check_metadata(&package(cell(None), entries(Some(a_resource())))),
             Ok(())
+        );
+    }
+
+    /// Every leaf a package writes is one the kernel traps on past its
+    /// own cap, and two of them have no slot row to state a width: an
+    /// event's payload, and the record an instance's data cell holds. So
+    /// the gate measures the shape and compares it here.
+    #[test]
+    fn a_leaf_past_the_cap_the_kernel_traps_on_is_refused() {
+        // A byte string sits behind its own length, so a run at the cap
+        // measures two bytes past it.
+        let run = |cap| {
+            let mut types = ShapeTable::new();
+            let byte = types.push(TypeShape::U8).unwrap();
+            let run = types.push(TypeShape::Seq { cap, element: byte }).unwrap();
+            (types, run)
+        };
+
+        let payload = |cap| {
+            let (mut types, run) = run(cap);
+            let shape = types
+                .push(TypeShape::Struct(vec![ShapeField {
+                    name: "note".into(),
+                    shape: run,
+                }]))
+                .unwrap();
+            types
+                .push(TypeShape::Named {
+                    name: "noted".into(),
+                    shape,
+                })
+                .unwrap();
+            PackageMetadata {
+                events: vec!["noted".into()],
+                methods: emitting(frame_bytes() + u32::try_from(types.most(shape)).unwrap()),
+                types,
+                ..PackageMetadata::default()
+            }
+        };
+        let payload_cap = u32::try_from(MAX_EVENT_PAYLOAD_BYTES).expect("a cap inside u32");
+        assert_eq!(check_metadata(&payload(payload_cap - 2)), Ok(()));
+        assert_eq!(
+            check_metadata(&payload(payload_cap - 1)),
+            Err(MetadataError::EventPayloadTooWide {
+                name: "noted".into(),
+                bound: MAX_EVENT_PAYLOAD_BYTES + 1,
+            })
+        );
+
+        // A record no event emits still lands in a leaf, and the leaf is
+        // what bounds it.
+        let record = |cap| {
+            let (mut types, run) = run(cap);
+            types
+                .push(TypeShape::Named {
+                    name: "entry".into(),
+                    shape: run,
+                })
+                .unwrap();
+            declaring(types)
+        };
+        assert_eq!(check_metadata(&record(MAX_SLOT_WIDTH - 2)), Ok(()));
+        assert_eq!(
+            check_metadata(&record(MAX_SLOT_WIDTH - 1)),
+            Err(MetadataError::TypeTooWide {
+                name: "entry".into(),
+                bound: MAX_SLOT_WIDTH as usize + 1,
+            })
         );
     }
 

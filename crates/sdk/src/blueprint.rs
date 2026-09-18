@@ -9,12 +9,12 @@
 use std::collections::BTreeMap;
 
 use hyperscale_hbor::node::{max_depth, max_encoded_len};
-use hyperscale_hbor::{Capped, HborShape, NodeId, ShapeNode, ShapeTable};
+use hyperscale_hbor::{Capped, HborBound, HborShape, NodeId, ShapeNode, ShapeTable};
 use hyperscale_vm_effects::{
     Expr, MAX_EFFECTS_PER_SIGNATURE, MAX_EVENT_TYPES_PER_METHOD, MAX_ISSUANCES_PER_SIGNATURE,
     MethodSignature, PackageMetadata, ParamType, SlotId, SlotKind, SlotShape,
 };
-use hyperscale_vm_types::EVENT_FRAME_BYTES;
+use hyperscale_vm_types::{EVENT_FRAME_BYTES, MAX_EVENT_PAYLOAD_BYTES, MAX_SLOT_WIDTH};
 
 use crate::state::LeafShape;
 use crate::trace::Trace;
@@ -270,6 +270,22 @@ impl Builder {
     /// spelling beside it, so the table entry and the shape it indexes
     /// cannot disagree about what the event is called.
     ///
+    /// An event wider than one emit may carry is refused where it is
+    /// declared, because the kernel traps on the payload and the trap is
+    /// reachable from published code:
+    ///
+    /// ```compile_fail
+    /// use hyperscale_vm_sdk::Blueprint;
+    /// use hyperscale_vm_sdk::hbor::{Bytes, Hbor, HborShape};
+    ///
+    /// #[derive(Hbor, HborShape)]
+    /// struct Wide {
+    ///     note: Bytes<4096>,
+    /// }
+    ///
+    /// let _ = Blueprint::builder().event::<Wide>();
+    /// ```
+    ///
     /// # Panics
     ///
     /// If `T` describes as anything but a declared type. An event is a
@@ -277,6 +293,11 @@ impl Builder {
     /// contents would leave the table naming a shape nobody declared.
     #[must_use]
     pub fn event<T: HborShape>(mut self) -> Self {
+        // The cap the kernel traps on, met at the declaration instead:
+        // an event past it is a package that publishes and then traps on
+        // every emit. The publish gate derives the same figure from the
+        // published shape and refuses it there.
+        const { assert!(<T as HborBound>::MAX_ENCODED_LEN <= MAX_EVENT_PAYLOAD_BYTES) }
         let ShapeNode::Named { name, .. } = T::NODE else {
             panic!("an event is a type the package declares, and describes as one");
         };
@@ -308,6 +329,7 @@ impl Builder {
     /// If the leaf is wider than the width field can carry, which no
     /// type the codec admits reaches.
     fn leaf<T: LeafShape>(&mut self) -> (NodeId, u32) {
+        const { assert!(max_encoded_len(T::LEAF) <= MAX_SLOT_WIDTH as usize) }
         let element = self.declared(T::LEAF);
         let width = u32::try_from(self.blueprint.types.most(element))
             .expect("a leaf narrower than the wire's width field");
@@ -381,8 +403,27 @@ impl Builder {
     /// a number — so this adds the shape and nothing else. What names it
     /// is the type's own name, which is also the mark's material for an
     /// instance schema.
+    ///
+    /// A record no leaf could hold is refused where it is declared:
+    ///
+    /// ```compile_fail
+    /// use hyperscale_vm_sdk::Blueprint;
+    /// use hyperscale_vm_sdk::hbor::{Bytes, Hbor, HborShape};
+    ///
+    /// #[derive(Hbor, HborShape)]
+    /// struct Wide {
+    ///     note: Bytes<16384>,
+    /// }
+    ///
+    /// let _ = Blueprint::builder().declares::<Wide>();
+    /// ```
     #[must_use]
     pub fn declares<T: HborShape>(mut self) -> Self {
+        // What a declared type is stored in is a leaf, whatever the slot,
+        // and the kernel traps on a write past the slot's width. An
+        // instance's data cell is the one with no slot row of its own, so
+        // this is where it meets the cap.
+        const { assert!(<T as HborBound>::MAX_ENCODED_LEN <= MAX_SLOT_WIDTH as usize) }
         self.declared(T::NODE);
         self
     }
