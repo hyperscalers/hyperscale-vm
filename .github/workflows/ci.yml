@@ -77,6 +77,24 @@ jobs:
           RUSTUP_TOOLCHAIN: nightly-2026-06-08
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+  blobs:
+    name: Committed Blobs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The guest build is reproducible within one environment and not
+      # across them: the toolchain's function order is per host OS, and
+      # cargo salts each crate's symbol hashes with the absolute path it
+      # builds from, so a checkout elsewhere emits the same code in a
+      # different order. A runner cannot judge the committed bytes by
+      # rebuilding them where it happens to stand, which is why this asks
+      # the canonical builder instead — the same container and the same
+      # mount a regeneration uses, so what checks the bytes is what makes
+      # them. Uncached by design: a warm target is a way to compare
+      # against a build nobody performed.
+      - name: Blob Parity
+        run: scripts/regenerate-stdlib.sh --check
+
   test:
     name: Test Suite
     runs-on: ubuntu-latest

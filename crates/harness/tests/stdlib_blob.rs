@@ -6,10 +6,14 @@
 //! validation, then a withdraw+deposit transfer with a pinned balance
 //! guard, and a lottery round settling on the transaction's draw — each
 //! on the blessed engine and the reference interpreter, receipts and
-//! fuel byte-identical. A separate digest test — Linux-only, since
-//! Linux is the canonical builder of the committed bytes — proves those
-//! bytes are what the sources build, which is what makes the sources
-//! trustworthy as documentation of the blobs.
+//! fuel byte-identical.
+//!
+//! That the committed bytes are what the sources build is not decided
+//! here: the guest build is reproducible only within the canonical
+//! builder, so `scripts/regenerate-stdlib.sh --check` judges it there
+//! and CI runs that. What this lane keeps is the part every machine can
+//! answer — that the blobs run, and that the canonical check covers
+//! every one the workspace commits.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
@@ -21,8 +25,6 @@ use hyperscale_vm_effects::{
 use hyperscale_vm_embed::{GuestArg, Invoked};
 use hyperscale_vm_fixtures::{LOTTERY_MODULE, SHIPPED as FIXTURES, lottery};
 use hyperscale_vm_harness::dual::DualGuest;
-#[cfg(target_os = "linux")]
-use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_harness::fixtures::repo_root;
 use hyperscale_vm_kernel::{
     Capability, DOMAIN_SEALED_DRAW, EnvInputs, Interval, KernelSession, MemoryStore, OverlayStore,
@@ -366,11 +368,12 @@ fn shipped() -> Vec<(&'static str, &'static [u8])> {
     PROTOCOL.iter().chain(FIXTURES).copied().collect()
 }
 
-/// The gate below covers every blob the workspace commits.
+/// The canonical check covers every blob the workspace commits.
 ///
-/// Outside the platform gate, so that the one thing this file can get
-/// wrong on any machine — which blobs it covers — is checked on every
-/// machine rather than only where the comparison itself can run.
+/// It reads the same two lists, so a blob committed into either
+/// directory and left off them is one nothing rebuilds and nothing
+/// compares. That is checkable on any machine even though the
+/// comparison itself is not, so it is checked here.
 #[test]
 fn the_digest_gate_covers_every_committed_blob() {
     let covered: std::collections::BTreeSet<_> = shipped().into_iter().map(|(n, _)| n).collect();
@@ -384,86 +387,6 @@ fn the_digest_gate_covers_every_committed_blob() {
             assert!(covered.contains(package), "{directory}/{name} is not gated");
         }
     }
-}
-
-/// The committed blobs are what their sources build on the canonical
-/// builder platform — every one of them, read off the lists the crates
-/// shipping them keep, so a blob cannot be committed and left ungated.
-///
-/// The blob is the protocol artifact and the source is the thing people
-/// edit; without this equality an edited guest passes every behavioural
-/// test — those run the committed bytes — while the committed bytes
-/// quietly stop being what the repository says they are. The guest build
-/// is reproducible per platform (pinned toolchain, `immediate-abort`
-/// panics, no host paths in the artifact) but not across platforms:
-/// toolchains emit the same code in different function order per host
-/// OS. Linux owns the bytes — `scripts/regenerate-stdlib.sh` produces
-/// them in a pinned container — so the equality check runs only where the
-/// canonical builder lives.
-#[test]
-#[cfg(target_os = "linux")]
-fn the_committed_blobs_are_what_their_sources_build() -> Result<()> {
-    for (name, committed) in shipped() {
-        let built = build_guest(name)?;
-        assert!(
-            built == committed,
-            "{name}: the committed blob ({} bytes) is not what the source builds \
-             ({} bytes) — if the change is deliberate, run \
-             scripts/regenerate-stdlib.sh and commit the result\n{}",
-            committed.len(),
-            built.len(),
-            diff_report(committed, &built),
-        );
-    }
-    Ok(())
-}
-
-/// Hex context around the first differing byte ranges, so a mismatch on
-/// a machine whose artifact we cannot fetch (CI) still shows what its
-/// build produced where it diverges.
-#[cfg(target_os = "linux")]
-fn diff_report(committed: &[u8], built: &[u8]) -> String {
-    use std::fmt::Write;
-    const MAX_RANGES: usize = 8;
-    const CONTEXT: usize = 8;
-    let n = committed.len().min(built.len());
-    let mut out = String::new();
-    let mut i = 0;
-    let mut shown = 0;
-    while i < n && shown < MAX_RANGES {
-        if committed[i] == built[i] {
-            i += 1;
-            continue;
-        }
-        let start = i;
-        while i < n && committed[i] != built[i] {
-            i += 1;
-        }
-        let lo = start.saturating_sub(CONTEXT);
-        let hi = (i + CONTEXT).min(n);
-        let hex = |b: &[u8]| {
-            b.iter().fold(String::new(), |mut s, x| {
-                let _ = write!(s, "{x:02x}");
-                s
-            })
-        };
-        let _ = writeln!(
-            out,
-            "  diff at {start}..{i}:\n    committed[{lo}..{hi}] = {}\n    built    [{lo}..{hi}] = {}",
-            hex(&committed[lo..hi]),
-            hex(&built[lo..hi]),
-        );
-        shown += 1;
-    }
-    if committed.len() != built.len() {
-        let _ = writeln!(
-            out,
-            "  lengths differ: committed {} vs built {}",
-            committed.len(),
-            built.len(),
-        );
-    }
-    out
 }
 
 /// The lottery instance the round below settles.
