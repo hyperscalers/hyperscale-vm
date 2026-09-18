@@ -1,9 +1,10 @@
 //! Length-capped reads, and the byte-sequence fast path.
 //!
-//! These are what the derive emits for a `#[hbor(max = N)]` field and for a
+//! What [`Capped`](crate::Capped), [`Bytes`](crate::Bytes) and
+//! [`Text`](crate::Text) read through, and what the derive emits for a
 //! `Vec<u8>` field. They are ordinary public functions: a hand-written impl
-//! that wants a cap uses the same code the derive does, so the two cannot
-//! disagree about where the check happens.
+//! that wants a cap uses the same code the capped types do, so the two
+//! cannot disagree about where the check happens.
 //!
 //! Every cap here is checked against the claimed length *before* the
 //! collection is built. That is a protocol bound layered over the wire-level
@@ -13,8 +14,8 @@
 //! bound is an accepted value's footprint, which exceeds its encoding by a
 //! per-type constant the wire never sees.
 //!
-//! Each function is called through [`Decoder::descend`], by the derive or by
-//! hand, and every variable-length body charges one further level for its
+//! Each function is called through [`Decoder::descend`], by a capped type or
+//! by hand, and every variable-length body charges one further level for its
 //! elements, present or not — so a capped field, an uncapped field, and
 //! either spelling of a byte sequence all charge the same nesting depth.
 
