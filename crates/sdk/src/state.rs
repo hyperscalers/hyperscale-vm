@@ -237,27 +237,17 @@ impl<K, V, const N: usize> Table<K, V, N> {
 /// element's own business — zero for a number, nothing stored for a
 /// record.
 ///
-/// A supertrait of [`Cellular`] rather than a companion to it, so a
-/// value the vocabulary carries cannot be one a consumer has no way to
-/// read. The value elements — a vault, a holder's instances — implement
-/// it without being `Cellular`, because what their leaves hold is the
-/// kernel's rather than a body's to read and write.
+/// Every declared element states one, so a leaf a package writes is a
+/// leaf a consumer can read and the gate can price. The value elements —
+/// a vault, a holder's instances — state theirs without being
+/// [`Cellular`], because what their leaves hold is the kernel's rather
+/// than a body's to read and write; and bytes crossing as an argument
+/// are `Cellular` without being a leaf, because what frames them is the
+/// boundary rather than a slot.
 pub trait LeafShape {
-    /// What one leaf holds.
-    const LEAF: LeafContent;
-}
-
-/// What one leaf holds, as the type holding it states.
-///
-/// A value's leaf is its shape, which the declaration publishes under
-/// the package's types; a byte leaf holds its own bytes, delimited by
-/// the substate and by nothing inside it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LeafContent {
-    /// One canonical encoding of this shape.
-    Value(&'static ShapeNode),
-    /// The leaf's own bytes, and no encoding around them.
-    Bytes,
+    /// The shape one leaf holds, which is also the width the slot is
+    /// declared at.
+    const LEAF: &'static ShapeNode;
 }
 
 /// A value a declared cell or entry can hold.
@@ -266,7 +256,10 @@ pub enum LeafContent {
 /// of which Rust values it will carry them as. Closed on purpose — a
 /// contract that could name any encoding would put an author's choice
 /// where a protocol representation belongs.
-pub trait Cellular: LeafShape + Sized {
+///
+/// Not every one of these is a leaf. Bytes reach a body as an argument
+/// the boundary framed, and what a slot holds is [`LeafShape`]'s to say.
+pub trait Cellular: Sized {
     /// Read the value from a substate. An absent substate reads empty,
     /// which every implementation takes as its zero.
     fn from_cell(cell: &[u8]) -> Self;
@@ -359,7 +352,7 @@ impl Record for u64 {
 }
 
 impl LeafShape for u128 {
-    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::U128);
+    const LEAF: &'static ShapeNode = &ShapeNode::U128;
 }
 
 /// How a rule crosses as an argument: the bytes themselves, since a
@@ -438,7 +431,7 @@ impl Cellular for u128 {
 }
 
 impl LeafShape for OrderKey {
-    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::U128);
+    const LEAF: &'static ShapeNode = &ShapeNode::U128;
 }
 
 /// The same sixteen little-endian bytes the packed integer is, because a
@@ -455,7 +448,7 @@ impl Cellular for OrderKey {
 }
 
 impl LeafShape for Quantity {
-    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::U128);
+    const LEAF: &'static ShapeNode = &ShapeNode::U128;
 }
 
 impl Cellular for Quantity {
@@ -472,7 +465,7 @@ impl Cellular for Quantity {
 }
 
 impl<A, B> LeafShape for Fixed<A, B> {
-    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::ByteArray(32));
+    const LEAF: &'static ShapeNode = &ShapeNode::ByteArray(32);
 }
 
 impl<A, B> Cellular for Fixed<A, B> {
@@ -511,7 +504,7 @@ impl<A, B> Cellular for Fixed<A, B> {
 }
 
 impl<A, B> LeafShape for SignedFixed<A, B> {
-    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::ByteArray(32));
+    const LEAF: &'static ShapeNode = &ShapeNode::ByteArray(32);
 }
 
 /// The same thirty-two little-endian bytes an unsigned rate has, read as
@@ -533,7 +526,7 @@ impl<A, B> Cellular for SignedFixed<A, B> {
 }
 
 impl LeafShape for UnitFixed {
-    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::U128);
+    const LEAF: &'static ShapeNode = &ShapeNode::U128;
 }
 
 impl Cellular for UnitFixed {
@@ -571,7 +564,7 @@ impl Cellular for UnitFixed {
 }
 
 impl LeafShape for u64 {
-    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::U64);
+    const LEAF: &'static ShapeNode = &ShapeNode::U64;
 }
 
 impl Cellular for u64 {
@@ -591,7 +584,7 @@ impl Cellular for u64 {
 }
 
 impl LeafShape for bool {
-    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::ByteArray(1));
+    const LEAF: &'static ShapeNode = &ShapeNode::ByteArray(1);
 }
 
 /// One byte, and only ever one of two.
@@ -632,7 +625,7 @@ impl Cellular for bool {
 }
 
 impl LeafShape for Address {
-    const LEAF: LeafContent = LeafContent::Value(<Self as HborShape>::NODE);
+    const LEAF: &'static ShapeNode = <Self as HborShape>::NODE;
 }
 
 impl Cellular for Address {
@@ -662,7 +655,7 @@ impl Cellular for Address {
 /// unit collection holds no value, so the instance operations live on
 /// [`NfVault`] and not here.
 impl LeafShape for () {
-    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::Tuple(&[]));
+    const LEAF: &'static ShapeNode = &ShapeNode::Tuple(&[]);
 }
 
 impl Cellular for () {
@@ -673,14 +666,8 @@ impl Cellular for () {
     fn from_cell(_: &[u8]) -> Self {}
 }
 
-/// Bytes a caller supplied or a package stored, which the substate frames
-/// and nothing inside frames again.
-impl LeafShape for Vec<u8> {
-    const LEAF: LeafContent = LeafContent::Bytes;
-}
-
 impl<const N: usize> LeafShape for [u8; N] {
-    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::ByteArray(N));
+    const LEAF: &'static ShapeNode = &ShapeNode::ByteArray(N);
 }
 
 /// Exact-width bytes: the width is the type's, so a parameter spelled
@@ -767,7 +754,7 @@ impl Word {
 }
 
 impl LeafShape for Word {
-    const LEAF: LeafContent = LeafContent::Value(<[u8; WORD_BYTES] as HborShape>::NODE);
+    const LEAF: &'static ShapeNode = <[u8; WORD_BYTES] as HborShape>::NODE;
 }
 
 impl Cellular for Word {
@@ -1777,7 +1764,7 @@ impl Record for ResourceRecord {
 impl LeafShape for NfVault {
     // An instance's id is the entry's own order key, so the entry
     // holds nothing.
-    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::Tuple(&[]));
+    const LEAF: &'static ShapeNode = &ShapeNode::Tuple(&[]);
 }
 
 impl Cellular for NfVault {
@@ -1794,41 +1781,41 @@ impl Cellular for NfVault {
 /// leaf every `Cellular` reads as its zero, so there is no discriminant
 /// byte in the cell for a shape to name.
 impl<T: LeafShape> LeafShape for Option<T> {
-    const LEAF: LeafContent = T::LEAF;
+    const LEAF: &'static ShapeNode = T::LEAF;
 }
 
 /// A seal's leaf: the epoch the kernel recorded, and nothing a package
 /// wrote. Not a [`Record`], so it states its own leaf rather than
 /// reaching one through an encoding it does not have.
 impl LeafShape for Seal {
-    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::U64);
+    const LEAF: &'static ShapeNode = &ShapeNode::U64;
 }
 
 /// A record's leaf is the record's own encoding.
 impl LeafShape for RuleBytes {
-    const LEAF: LeafContent = LeafContent::Value(<Self as HborShape>::NODE);
+    const LEAF: &'static ShapeNode = <Self as HborShape>::NODE;
 }
 
 /// Likewise the governing record.
 impl LeafShape for Authority {
-    const LEAF: LeafContent = LeafContent::Value(<Self as HborShape>::NODE);
+    const LEAF: &'static ShapeNode = <Self as HborShape>::NODE;
 }
 
 /// The same bytes, so the same leaf. Stated because [`Cellular`] asks
 /// for it and a parameter crosses through that; a cell holding a rule is
 /// declared [`RuleBytes`], which is what the gate grammar reads.
 impl LeafShape for PrincipalRule {
-    const LEAF: LeafContent = LeafContent::Value(<Self as HborShape>::NODE);
+    const LEAF: &'static ShapeNode = <Self as HborShape>::NODE;
 }
 
 impl LeafShape for ResourceRecord {
-    const LEAF: LeafContent = LeafContent::Value(<Self as HborShape>::NODE);
+    const LEAF: &'static ShapeNode = <Self as HborShape>::NODE;
 }
 
 /// A vault leaf holds the kernel's own amount, which is why nothing here
 /// writes one: the balance moves through an edge and never through a set.
 impl LeafShape for Vault {
-    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::U128);
+    const LEAF: &'static ShapeNode = &ShapeNode::U128;
 }
 
 #[allow(clippy::inline_always)] // the accessor is one import behind a dispatch its call site fixes
@@ -2652,9 +2639,7 @@ impl From<u128> for OrderKey {
 mod tests {
     use hyperscale_hbor::ShapeNode;
 
-    use super::{
-        Cellular, Fixed, LeafContent, LeafShape, OrderKey, Quantity, SignedFixed, UnitFixed, Wide,
-    };
+    use super::{Cellular, Fixed, LeafShape, OrderKey, Quantity, SignedFixed, UnitFixed, Wide};
 
     /// A dimension, for the rates that need two of them.
     struct Up;
@@ -2691,10 +2676,7 @@ mod tests {
         let written = UnitFixed::bps(30).expect("thirty basis points");
         assert_eq!(UnitFixed::from_cell(&written.to_cell()), written);
         assert_eq!(written.to_cell().len(), 16);
-        assert!(matches!(
-            UnitFixed::LEAF,
-            LeafContent::Value(ShapeNode::U128)
-        ));
+        assert!(matches!(UnitFixed::LEAF, ShapeNode::U128));
 
         for width in [1, 15, 17, 32] {
             let cell = vec![0u8; width];

@@ -350,10 +350,8 @@ pub fn encode_declared(
             ));
             records.push(syn::parse_quote!(
                 impl ::hyperscale_vm_sdk::state::LeafShape for #ident {
-                    const LEAF: ::hyperscale_vm_sdk::state::LeafContent =
-                        ::hyperscale_vm_sdk::state::LeafContent::Value(
-                            <Self as ::hyperscale_vm_sdk::hbor::HborShape>::NODE,
-                        );
+                    const LEAF: &'static ::hyperscale_vm_sdk::hbor::ShapeNode =
+                        <Self as ::hyperscale_vm_sdk::hbor::HborShape>::NODE;
                 }
             ));
             stored_types.push(ident);

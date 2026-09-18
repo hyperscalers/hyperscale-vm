@@ -173,25 +173,17 @@ pub mod account {
         /// Who may propose a replacement of the factors, and who may
         /// cancel any proposal.
         ///
-        /// A rule reaches the account as an argument, and an argument's
-        /// bytes are capped at four kibibytes; the cell is sized to
-        /// hold any rule that can be handed to it. A byte string sits
-        /// behind its own length, so the width is the argument cap and
-        /// two bytes — sized at the cap alone, the widest rule an
-        /// account can be handed is the one it refuses.
-        #[width(4098)]
+        /// A rule reaches the account as an argument, so the cell holds
+        /// any rule that can be handed to it: the width is the argument
+        /// cap its type states and the length a byte string sits behind.
         recovery: Cell<Option<RuleBytes>>,
         /// Who may stop a proposal before its delay runs out, giving a
         /// frozen primary back: the holder's defence against a recovery
         /// role in the wrong hands. Cold, and never a factor the sign-in
         /// reads — a thief holding every everyday factor must not hold
         /// this.
-        #[width(4098)]
         veto: Cell<Option<RuleBytes>>,
-        /// The replacement waiting, where one is: two words, a byte for
-        /// which arm, and the wider arm — three rules at the argument
-        /// cap behind their lengths, and the tag on the optional one.
-        #[width(12312)]
+        /// The replacement waiting, where one is.
         proposal: Cell<Option<Proposal>>,
         /// How long a proposal waits before it may be enacted.
         ///

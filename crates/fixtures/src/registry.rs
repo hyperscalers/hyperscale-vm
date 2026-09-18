@@ -8,7 +8,7 @@
 use hyperscale_hbor::{Capped, TypeShape};
 use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::{
-    AbiParam, Expr, LeafForm, MethodSignature, PackageMetadata, ParamType, SlotId, SlotKind,
+    AbiParam, Expr, MethodSignature, PackageMetadata, ParamType, SlotId, SlotKind,
     SlotRef, SlotShape, Totality, Value, package_slot,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
@@ -59,7 +59,7 @@ pub fn metadata() -> PackageMetadata {
         SlotShape {
             name: "names".to_owned(),
             kind: SlotKind::Unordered,
-            element: LeafForm::Value(amount),
+            element: amount,
             width: 16,
             denomination: None,
         },

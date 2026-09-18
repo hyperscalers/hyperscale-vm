@@ -11,13 +11,12 @@ use std::collections::BTreeMap;
 use hyperscale_hbor::node::{max_depth, max_encoded_len};
 use hyperscale_hbor::{Capped, HborShape, NodeId, ShapeNode, ShapeTable};
 use hyperscale_vm_effects::{
-    Expr, LeafForm, MAX_EFFECTS_PER_SIGNATURE, MAX_EVENT_TYPES_PER_METHOD,
-    MAX_ISSUANCES_PER_SIGNATURE, MethodSignature, PackageMetadata, ParamType, SlotId, SlotKind,
-    SlotShape,
+    Expr, MAX_EFFECTS_PER_SIGNATURE, MAX_EVENT_TYPES_PER_METHOD, MAX_ISSUANCES_PER_SIGNATURE,
+    MethodSignature, PackageMetadata, ParamType, SlotId, SlotKind, SlotShape,
 };
 use hyperscale_vm_types::EVENT_FRAME_BYTES;
 
-use crate::state::{LeafContent, LeafShape};
+use crate::state::LeafShape;
 use crate::trace::Trace;
 
 /// One method: what routing reads, plus what the guest bridge needs.
@@ -297,48 +296,22 @@ impl Builder {
         self
     }
 
-    /// The most bytes one leaf of `element` may hold: what its shape
-    /// derives, or what the field declared for a leaf holding its own
-    /// bytes.
+    /// Declare `T`'s leaf shape into the package's types, and answer
+    /// where it sits with the width it measures.
     ///
-    /// Zero where neither answers, which the publish gate refuses: a
-    /// slot whose leaves nothing bounds is not one a declaration can
-    /// price.
+    /// The width is the shape's rather than a second figure beside it:
+    /// what a leaf may hold is what its element's encoding can occupy,
+    /// and the publish gate derives it again from the published table.
     ///
     /// # Panics
     ///
-    /// If a width is declared beside a shape that derives a different
-    /// one: two statements of one figure, and the derive is the one that
-    /// cannot drift.
-    fn width_of(&self, name: &str, element: &LeafForm, declared: Option<u32>) -> u32 {
-        let derived = match element {
-            LeafForm::Bytes => None,
-            LeafForm::Value(shape) => Some(
-                u32::try_from(self.blueprint.types.most(*shape))
-                    .expect("a leaf narrower than the wire's width field"),
-            ),
-        };
-        match (derived, declared) {
-            (Some(derived), Some(declared)) => {
-                assert_eq!(
-                    derived, declared,
-                    "slot {name} declares {declared} bytes and its shape derives {derived}"
-                );
-                derived
-            }
-            (Some(derived), None) => derived,
-            (None, Some(declared)) => declared,
-            (None, None) => 0,
-        }
-    }
-
-    /// What `T`'s leaves hold, as the metadata states it: a value's
-    /// shape declared into the package's types, or the leaf's own bytes.
-    fn element<T: LeafShape>(&mut self) -> LeafForm {
-        match T::LEAF {
-            LeafContent::Value(node) => LeafForm::Value(self.declared(node)),
-            LeafContent::Bytes => LeafForm::Bytes,
-        }
+    /// If the leaf is wider than the width field can carry, which no
+    /// type the codec admits reaches.
+    fn leaf<T: LeafShape>(&mut self) -> (NodeId, u32) {
+        let element = self.declared(T::LEAF);
+        let width = u32::try_from(self.blueprint.types.most(element))
+            .expect("a leaf narrower than the wire's width field");
+        (element, width)
     }
 
     /// Declare the slot `name` sits at, what `T` its leaves hold, and
@@ -350,18 +323,10 @@ impl Builder {
     ///
     /// # Panics
     ///
-    /// If two fields claim one slot, or a width is declared beside a
-    /// shape that derives a different one.
+    /// If two fields claim one slot.
     #[must_use]
-    pub fn slot<T: LeafShape>(
-        mut self,
-        slot: u16,
-        name: &str,
-        kind: SlotKind,
-        width: Option<u32>,
-    ) -> Self {
-        let element = self.element::<T>();
-        let width = self.width_of(name, &element, width);
+    pub fn slot<T: LeafShape>(mut self, slot: u16, name: &str, kind: SlotKind) -> Self {
+        let (element, width) = self.leaf::<T>();
         let declared = SlotShape {
             name: name.to_owned(),
             kind,
@@ -395,10 +360,8 @@ impl Builder {
         name: &str,
         kind: SlotKind,
         config: u32,
-        width: Option<u32>,
     ) -> Self {
-        let element = self.element::<T>();
-        let width = self.width_of(name, &element, width);
+        let (element, width) = self.leaf::<T>();
         let declared = SlotShape {
             name: name.to_owned(),
             kind,

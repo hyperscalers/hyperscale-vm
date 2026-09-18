@@ -540,8 +540,8 @@ fn method_name(method: &syn::ImplItemFn) -> String {
 /// The macro's own attributes, which are read and then removed so what it
 /// emits is ordinary Rust.
 const OWN: &[&str] = &[
-    "slot", "holds", "width", "state", "config", "event", "error", "record", "resource",
-    "requires", "proves", "total",
+    "slot", "holds", "state", "config", "event", "error", "record", "resource", "requires",
+    "proves", "total",
 ];
 
 /// The attributes that name a gate, whose method may have no body of
@@ -828,7 +828,7 @@ fn check_reserved_locals(items: &[syn::Item], state_name: &syn::Ident) -> syn::R
 /// has.
 const ON_A_STRUCT: &[&str] = &["state", "config", "event", "resource"];
 const ON_A_METHOD: &[&str] = &["proves", "total"];
-const ON_A_STATE_FIELD: &[&str] = &["slot", "holds", "width"];
+const ON_A_STATE_FIELD: &[&str] = &["slot", "holds"];
 
 fn marker_kinds_on_struct(
     item: &syn::ItemStruct,
@@ -905,7 +905,7 @@ fn marker_kinds_on_enum(item: &syn::ItemEnum) -> syn::Result<()> {
     }
     if let Some((attr, name)) = own_attr(
         &item.attrs,
-        &["requires", "proves", "total", "slot", "holds", "width"],
+        &["requires", "proves", "total", "slot", "holds"],
     ) {
         return Err(syn::Error::new_spanned(
             attr,

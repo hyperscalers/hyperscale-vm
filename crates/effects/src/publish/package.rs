@@ -17,7 +17,7 @@ use hyperscale_vm_types::{
 use super::bounds::{PlacedBounds, check_signature_bounds};
 use crate::dsl::{Clause, TargetExpr, slot_of};
 use crate::instance::MAX_CONFIG_FIELDS;
-use crate::metadata::{LeafForm, PackageMetadata, reserved_shape};
+use crate::metadata::{PackageMetadata, reserved_shape};
 use crate::types::SlotId;
 use crate::{KERNEL_SLOT_BASE, PACKAGE_SLOT_BASE};
 
@@ -73,13 +73,6 @@ pub enum MetadataError {
         /// What is past its bound, and where in the signature.
         #[source]
         source: PlacedBounds,
-    },
-    /// A slot declaring no width, so nothing bounds the bytes a leaf
-    /// under it may hold.
-    #[error("slot {slot:?} declares no width")]
-    SlotWidthUndeclared {
-        /// The slot without one.
-        slot: SlotId,
     },
     /// A slot wider than a leaf may be.
     #[error("slot {slot:?} declares {width} bytes, past the {MAX_SLOT_WIDTH} a leaf may hold")]
@@ -313,35 +306,22 @@ fn check_table_agreement(metadata: &PackageMetadata) -> Result<(), MetadataError
                 width: declared.width,
             });
         }
-        let derived = match &declared.element {
-            LeafForm::Bytes => None,
-            LeafForm::Value(shape) => {
-                if metadata.types.get(*shape).is_none() {
-                    return Err(MetadataError::Slot {
-                        slot: *slot,
-                        source: ShapeFault::Unresolved(*shape),
-                    });
-                }
-                Some(u32::try_from(metadata.types.most(*shape)).unwrap_or(u32::MAX))
-            }
-        };
+        if metadata.types.get(declared.element).is_none() {
+            return Err(MetadataError::Slot {
+                slot: *slot,
+                source: ShapeFault::Unresolved(declared.element),
+            });
+        }
         // A shape derives its width, which may be nothing at all for a
-        // leaf whose entry is its own key; the declared figure has to be
-        // that one, or a body could write past what the type holds. A
-        // leaf holding its own bytes has to declare one, and zero is no
-        // declaration.
-        match derived {
-            Some(derived) if derived != declared.width => {
-                return Err(MetadataError::SlotWidthDisagrees {
-                    slot: *slot,
-                    width: declared.width,
-                    derived,
-                });
-            }
-            None if declared.width == 0 => {
-                return Err(MetadataError::SlotWidthUndeclared { slot: *slot });
-            }
-            _ => {}
+        // leaf whose entry is its own key; the stated figure has to be
+        // that one, or a body could write past what the type holds.
+        let derived = u32::try_from(metadata.types.most(declared.element)).unwrap_or(u32::MAX);
+        if derived != declared.width {
+            return Err(MetadataError::SlotWidthDisagrees {
+                slot: *slot,
+                width: declared.width,
+                derived,
+            });
         }
     }
     check_slot_contents(metadata)
@@ -524,7 +504,7 @@ mod tests {
     use super::super::fixtures::{a_resource, one_clause, own_interval, own_point};
     use super::*;
     use crate::dsl::ModeExpr;
-    use crate::metadata::{LeafForm, PackageMetadata, SlotKind, SlotShape, reserved_shape};
+    use crate::metadata::{PackageMetadata, SlotKind, SlotShape, reserved_shape};
     use crate::signature::MethodSignature;
     use crate::types::SlotId;
     use crate::vocabulary::VAULT;
@@ -643,29 +623,21 @@ mod tests {
             ..PackageMetadata::default()
         };
         assert_eq!(
-            check_metadata(&holding(ShapeTable::new(), LeafForm::Value(NodeId(3)))),
+            check_metadata(&holding(ShapeTable::new(), NodeId(3))),
             Err(MetadataError::Slot {
                 slot: SlotId(17),
                 source: ShapeFault::Unresolved(NodeId(3)),
             })
         );
         let (types, word) = holding_shape(TypeShape::U64);
-        assert_eq!(
-            check_metadata(&holding(types, LeafForm::Value(word))),
-            Ok(())
-        );
-        // Bytes name no type, so there is nothing for them to reach.
-        assert_eq!(
-            check_metadata(&holding(ShapeTable::new(), LeafForm::Bytes)),
-            Ok(())
-        );
+        assert_eq!(check_metadata(&holding(types, word)), Ok(()));
     }
 
     /// A slot's width is what turns a declared entry cap into a byte
-    /// count, so a slot holding its own bytes that states none is
-    /// refused; a shape derives its own, including a leaf that holds
-    /// nothing, and a declaration that disagrees with the derivation is
-    /// one of two figures wrong; and no leaf is wider than a leaf may be.
+    /// count, and it is the one its element's shape measures: a figure
+    /// beside it that disagrees is one of the two wrong, a leaf whose
+    /// entry is its own key measures nothing, and no leaf is wider than
+    /// a leaf may be.
     #[test]
     fn a_slot_is_held_to_one_width() {
         let mut types = ShapeTable::new();
@@ -695,12 +667,7 @@ mod tests {
         };
         let slot = SlotId(17);
         assert_eq!(
-            check_metadata(&holding(LeafForm::Bytes, 0)),
-            Err(MetadataError::SlotWidthUndeclared { slot })
-        );
-        assert_eq!(check_metadata(&holding(LeafForm::Bytes, 64)), Ok(()));
-        assert_eq!(
-            check_metadata(&holding(LeafForm::Bytes, MAX_SLOT_WIDTH + 1)),
+            check_metadata(&holding(bytes, MAX_SLOT_WIDTH + 1)),
             Err(MetadataError::SlotWidthTooWide {
                 slot,
                 width: MAX_SLOT_WIDTH + 1,
@@ -709,24 +676,24 @@ mod tests {
         // A run derives its width from its cap: sixty-three bytes behind
         // one byte of length.
         assert_eq!(
-            check_metadata(&holding(LeafForm::Value(bytes), 0)),
+            check_metadata(&holding(bytes, 0)),
             Err(MetadataError::SlotWidthDisagrees {
                 slot,
                 width: 0,
                 derived: 64,
             })
         );
-        assert_eq!(check_metadata(&holding(LeafForm::Value(bytes), 64)), Ok(()));
+        assert_eq!(check_metadata(&holding(bytes, 64)), Ok(()));
         assert_eq!(
-            check_metadata(&holding(LeafForm::Value(word), 9)),
+            check_metadata(&holding(word, 9)),
             Err(MetadataError::SlotWidthDisagrees {
                 slot,
                 width: 9,
                 derived: 8,
             })
         );
-        assert_eq!(check_metadata(&holding(LeafForm::Value(word), 8)), Ok(()));
-        assert_eq!(check_metadata(&holding(LeafForm::Value(unit), 0)), Ok(()));
+        assert_eq!(check_metadata(&holding(word, 8)), Ok(()));
+        assert_eq!(check_metadata(&holding(unit, 0)), Ok(()));
     }
 
     /// The state table is what a package declares, and the protocol's
@@ -742,7 +709,7 @@ mod tests {
                 SlotShape {
                     name: "held".into(),
                     kind: SlotKind::Cell,
-                    element: LeafForm::Value(word),
+                    element: word,
                     width: 8,
                     denomination: None,
                 },

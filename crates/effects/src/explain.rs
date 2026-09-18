@@ -63,7 +63,7 @@ use crate::graph::{GraphArg, GraphNode, ManifestGraph, ValueRef};
 use crate::hash::Hasher;
 use crate::intent::IntentTree;
 use crate::manifest::JudgedLeaf;
-use crate::metadata::{LeafForm, PACKAGE_SLOT, PackageMetadata, SlotKind, SlotShape};
+use crate::metadata::{PACKAGE_SLOT, PackageMetadata, SlotKind, SlotShape};
 use crate::records::ChainRecords;
 use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind, ResourceMeta};
 use crate::rule::{
@@ -969,7 +969,7 @@ impl<'a> Names<'a> {
                     "  {:>5}  {name} — {}, {}, at most {width} bytes{holding}",
                     slot.0,
                     slot_kind(*kind),
-                    leaf_form(&self.metadata.types, element)
+                    leaf_holds(&self.metadata.types, *element)
                 );
             }
         }
@@ -1951,16 +1951,13 @@ fn value_text(value: &Value) -> String {
 }
 
 /// What one leaf of a slot holds.
-fn leaf_form(types: &ShapeTable, form: &LeafForm) -> String {
-    match form {
-        // An instance family's entry: the id is the entry's own order
-        // key, so the leaf has nothing left to hold.
-        LeafForm::Value(shape) if matches!(types.get(*shape), Some(TypeShape::Tuple(parts)) if parts.is_empty()) => {
-            "holding nothing".to_owned()
-        }
-        LeafForm::Value(shape) => format!("holding {}", shape_of(types, *shape)),
-        LeafForm::Bytes => "holding its own bytes".to_owned(),
+fn leaf_holds(types: &ShapeTable, shape: NodeId) -> String {
+    // An instance family's entry: the id is the entry's own order key, so
+    // the leaf has nothing left to hold.
+    if matches!(types.get(shape), Some(TypeShape::Tuple(parts)) if parts.is_empty()) {
+        return "holding nothing".to_owned();
     }
+    format!("holding {}", shape_of(types, shape))
 }
 
 /// A type, in the vocabulary the encoding admits.
@@ -2103,7 +2100,7 @@ mod tests {
 
     use super::{SlotRef, explain, explain_method, joined};
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr, self_child};
-    use crate::metadata::{LeafForm, PackageMetadata, SlotKind, SlotShape};
+    use crate::metadata::{PackageMetadata, SlotKind, SlotShape};
     use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
     use crate::rule::{GrantRuleExpr, GrantSubject, Rule, RuleLeaf};
     use crate::signature::{AbiParam, MethodSignature, ParamType, Totality};
@@ -2273,7 +2270,7 @@ mod tests {
             SlotShape {
                 name: "entries".to_owned(),
                 kind: SlotKind::Ordered,
-                element: LeafForm::Value(amount),
+                element: amount,
                 width: 16,
                 denomination: None,
             },

@@ -4,20 +4,23 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 use std::sync::Arc;
 
-use hyperscale_hbor::{DecodeError, Hbor, HborShape, NodeId, ShapeNode, ShapeTable, ShapeValue};
+use hyperscale_hbor::{
+    DecodeError, Hbor, HborBound, HborShape, NodeId, ShapeNode, ShapeTable, ShapeValue,
+};
 use hyperscale_vm_types::{
     AMOUNT_CELL_BYTES, Address, CallTarget, ComponentAddr, Event, MAX_SLOT_WIDTH, NativeAddr,
     PackageAddr, PrincipalAddr, ResourceAddr, SubstateKey,
 };
 
 use crate::KERNEL_SLOT_BASE;
+use crate::auth::Authority;
 use crate::dsl::Expr;
 use crate::hash::{Hash32, Hasher};
 use crate::publish::{
     CheckedMetadata, CheckedSignature, MetadataError, SignatureError, check_signature, seals,
 };
 use crate::signature::MethodSignature;
-use crate::types::{MAX_VALUE_BYTES, SlotId, child_key, package_address};
+use crate::types::{SlotId, child_key, package_address};
 
 /// A published package's identity: the hash of its artifact, which covers
 /// the metadata section, so metadata is immutable with the package.
@@ -119,26 +122,6 @@ pub enum SlotKind {
     Unordered,
 }
 
-/// What one leaf holds.
-///
-/// A leaf is empty or exactly one of these: absence is no bytes at all,
-/// and what an empty leaf means is the element's own business — zero for
-/// a number, nothing stored for a record.
-#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
-pub enum LeafForm {
-    /// One canonical encoding of the shape at this node of the package's
-    /// [`types`](PackageMetadata::types).
-    Value(NodeId),
-    /// The leaf's own bytes, delimited by the leaf and by nothing inside
-    /// it.
-    ///
-    /// What a byte parameter and a stored rule both reach a cell as. The
-    /// encoding's own byte string carries a length, and these do not:
-    /// the substate is the frame, so the bytes inside it need no second
-    /// one.
-    Bytes,
-}
-
 /// One declared state slot: what it is called, what shape of state it
 /// is, and what its leaves hold.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
@@ -147,14 +130,18 @@ pub struct SlotShape {
     pub name: String,
     /// What shape of state the slot holds.
     pub kind: SlotKind,
-    /// What one leaf holds.
-    pub element: LeafForm,
-    /// The most bytes one leaf under the slot may hold.
+    /// The shape one leaf holds, at its node of the package's
+    /// [`types`](PackageMetadata::types).
     ///
-    /// Derived from the element's shape, or declared beside the field
-    /// for a leaf holding its own bytes; zero is no width at all, which
-    /// the publish gate refuses. Held to [`MAX_SLOT_WIDTH`], and what
-    /// turns a declared entry cap into a declared byte count.
+    /// A leaf is empty or exactly one canonical encoding of it: absence
+    /// is no bytes at all, and what an empty leaf means is the element's
+    /// own business — zero for a number, nothing stored for a record.
+    pub element: NodeId,
+    /// The most bytes one leaf under the slot may hold, which is what the
+    /// element's own shape measures.
+    ///
+    /// Held to [`MAX_SLOT_WIDTH`], and what turns a declared entry cap
+    /// into a declared byte count.
     pub width: u32,
     /// The resource a declared vault holds, where the field's
     /// `#[holds(..)]` states one — the same expression the field's
@@ -204,7 +191,7 @@ impl SlotWidths {
 /// configuration leaf and an instance's data are records whose shapes
 /// belong to the package that wrote them, so they are bounded at the cap
 /// here, as is every slot outside the band.
-const fn protocol_width(slot: SlotId) -> u32 {
+fn protocol_width(slot: SlotId) -> u32 {
     use crate::cells::{
         COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, ESCROW_CLAIM_SLOT, ESCROW_RECORD_SLOT,
         MARKER_CELL_BYTES, NULLIFIER_SLOT,
@@ -215,7 +202,7 @@ const fn protocol_width(slot: SlotId) -> u32 {
         NF_VAULT => 0,
         HALT => 1,
         RESOURCE => 2,
-        AUTH => AUTHORITY_WIDTH,
+        AUTH => authority_width(),
         NULLIFIER_SLOT | ESCROW_CLAIM_SLOT | COMMITTED_TX_SLOT => MARKER_CELL_BYTES,
         ESCROW_RECORD_SLOT => CROSSING_CELL_BYTES,
         _ => MAX_SLOT_WIDTH,
@@ -226,27 +213,23 @@ const fn protocol_width(slot: SlotId) -> u32 {
 const AMOUNT_WIDTH: u32 = 16;
 const _: () = assert!(AMOUNT_WIDTH as usize == AMOUNT_CELL_BYTES);
 
-/// The length a byte string at [`MAX_VALUE_BYTES`] encodes behind
-/// itself: two bytes of varint, the cap being past the one-byte range
-/// and inside the two.
-const VALUE_LENGTH_BYTES: usize = 2;
-
-/// A stored rule's width: the widest byte argument a rule can arrive as,
-/// and the length its cell writes in front of it.
+/// The governing cell's width: the record of two rules, as its own type
+/// measures it.
 ///
-/// The cell holds the rule's record and not its bare argument bytes — a
-/// byte string encodes behind its own length — so a width at the
-/// argument cap is two bytes short of the widest rule that cap admits,
-/// and the widest rule anyone can hand an account is the one it refuses.
-/// Held to the encoding by `a_rule_at_the_argument_cap_fits_its_cell`.
-const RULE_WIDTH: u32 = 4098;
-const _: () = assert!(RULE_WIDTH as usize == MAX_VALUE_BYTES + VALUE_LENGTH_BYTES);
-
-/// The governing cell's width: two rules at the cap. The record holding
-/// them is its two fields and nothing around them, which
-/// `an_authority_at_the_argument_cap_fits_its_cell` holds the encoding
-/// to.
-const AUTHORITY_WIDTH: u32 = 2 * RULE_WIDTH;
+/// The cell holds each rule's record rather than its bare argument bytes
+/// — a byte string encodes behind its own length — so this is wider than
+/// two argument caps, and the widest pair of rules anyone can hand an
+/// account is the pair it refuses. Held to the encoding by
+/// `an_authority_at_the_argument_cap_fits_its_cell`.
+///
+/// # Panics
+///
+/// Never: the record is two byte strings at the argument cap, orders
+/// under what the width field carries.
+fn authority_width() -> u32 {
+    u32::try_from(<Authority as HborBound>::MAX_ENCODED_LEN)
+        .expect("the governing record is narrower than the width field")
+}
 
 impl PackageMetadata {
     /// The width of every slot this package declares.
@@ -384,7 +367,7 @@ impl PackageMetadata {
         slot: SlotId,
         leaf: &[u8],
     ) -> Option<Result<Option<ShapeValue>, DecodeError>> {
-        Some(self.read_form(&self.state.get(&slot)?.element, leaf))
+        Some(self.read_value(self.state.get(&slot)?.element, leaf))
     }
 
     /// Read an instance's data cell against the shape its mark declares.
@@ -407,17 +390,6 @@ impl PackageMetadata {
     ) -> Option<Result<Option<ShapeValue>, DecodeError>> {
         let name = core::str::from_utf8(mark).ok()?;
         Some(self.read_value(self.types.named(name)?, cell))
-    }
-
-    /// One leaf, read against the form it holds.
-    fn read_form(&self, form: &LeafForm, leaf: &[u8]) -> Result<Option<ShapeValue>, DecodeError> {
-        match form {
-            LeafForm::Value(shape) => self.read_value(*shape, leaf),
-            // The substate frames these, so what it holds is the whole of
-            // them and an empty one is no bytes at all.
-            LeafForm::Bytes if leaf.is_empty() => Ok(None),
-            LeafForm::Bytes => Ok(Some(ShapeValue::ByteArray(leaf.to_vec()))),
-        }
     }
 
     /// One leaf's bytes, read against the shape declared for them.
@@ -558,25 +530,25 @@ mod tests {
     use hyperscale_hbor::Bytes;
 
     use super::*;
-    use crate::auth::{Authority, RuleBytes};
+    use crate::auth::RuleBytes;
+    use crate::types::MAX_VALUE_BYTES;
     use crate::vocabulary::AUTH;
 
     /// A rule cell is wide enough for the widest rule anyone can hand
     /// it, which is the only width worth stating.
     ///
-    /// [`RULE_WIDTH`] is arithmetic over the argument cap and the length
-    /// a byte string encodes behind itself, and nothing in the type
-    /// system ties that arithmetic to what HBOR writes — so it is tied
-    /// here, the way the proposal's byte budget is. A rule at the cap
-    /// that does not fit is an account whose owner cannot replace its
-    /// own gate.
+    /// The width the type derives is arithmetic over the argument cap and
+    /// the length a byte string encodes behind itself, and what ties that
+    /// arithmetic to the bytes HBOR writes is the encoding itself — so it
+    /// is tied here. A rule at the cap that does not fit is an account
+    /// whose owner cannot replace its own gate.
     #[test]
     fn a_rule_at_the_argument_cap_fits_its_cell() {
         let widest =
             RuleBytes(Bytes::new(vec![0xAB; MAX_VALUE_BYTES]).expect("at the cap")).in_cell();
         assert_eq!(
             widest.len(),
-            RULE_WIDTH as usize,
+            <RuleBytes as HborBound>::MAX_ENCODED_LEN,
             "the width is the encoding, not the argument it carries"
         );
     }
@@ -593,12 +565,12 @@ mod tests {
         .in_cell();
         assert_eq!(
             authority.len(),
-            AUTHORITY_WIDTH as usize,
+            <Authority as HborBound>::MAX_ENCODED_LEN,
             "the width is the encoding, not the arguments it carries"
         );
         assert_eq!(
             protocol_width(AUTH),
-            AUTHORITY_WIDTH,
+            authority_width(),
             "and the auth cell is priced and bounded at it"
         );
     }

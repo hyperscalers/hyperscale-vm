@@ -96,8 +96,8 @@ pub use intent::{
 pub use invoke::{CallArg, EdgeBound, IssuanceGrant, NodeCall, distinct_ids};
 pub use manifest::{Bounds, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
-    DeclaredPackages, LeafForm, MetadataCache, PACKAGE_SLOT, PackageHash, PackageMetadata,
-    PublishRefusal, SlotKind, SlotShape, SlotWidths, package_hash, package_key, reserved_shape,
+    DeclaredPackages, MetadataCache, PACKAGE_SLOT, PackageHash, PackageMetadata, PublishRefusal,
+    SlotKind, SlotShape, SlotWidths, package_hash, package_key, reserved_shape,
 };
 pub use publish::{
     AbiError, CheckedMetadata, CheckedSignature, DeclarationError, MetadataError, PlacedBounds,

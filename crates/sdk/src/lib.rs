@@ -224,7 +224,7 @@ pub trait DeclinesAs: Sized {
 }
 
 pub use hyperscale_vm_effects::{
-    Authority, GrantRuleExpr, GrantSubject, GrantedBehaviour, GrantsExpr, Issued, LeafForm,
+    Authority, GrantRuleExpr, GrantSubject, GrantedBehaviour, GrantsExpr, Issued,
     MAX_FOREACH_ELEMENTS, ParamType, PrincipalRule, ResourceKind, RuleBytes, SlotId, SlotKind,
     encode_metadata,
 };
