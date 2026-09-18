@@ -281,12 +281,6 @@ fn field_markers(field: &syn::Field) -> syn::Result<(Option<u16>, Option<syn::Ex
             denomination = Some(attr.parse_args::<syn::Expr>()?);
             holds_attr = Some(attr);
         }
-        if attr.path().is_ident("denomination") {
-            return Err(syn::Error::new(
-                attr.span(),
-                "what a vault holds is stated as `#[holds(..)]` — same grammar, the authoring name",
-            ));
-        }
     }
     Ok((pinned, denomination, width))
 }

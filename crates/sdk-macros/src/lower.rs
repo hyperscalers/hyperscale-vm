@@ -1509,7 +1509,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Resolve a field's `#[denomination(..)]` to the term the router
+    /// Resolve a field's `#[holds(..)]` to the term the router
     /// evaluates.
     ///
     /// Two forms, because two things can name a resource before any
