@@ -1,0 +1,5 @@
+error: `Épuisé` is published as it is written, and 'É' is not a character an identifier is made of
+  --> tests/refusals/unspellable_error.rs:11:9
+   |
+11 |         Épuisé,
+   |         ^^^^^^

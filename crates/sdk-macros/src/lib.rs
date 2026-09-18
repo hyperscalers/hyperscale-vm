@@ -250,7 +250,7 @@ use crate::lower::{Field, Lowerer, Yields};
 use crate::records::{encode_declared, event_emitters};
 use crate::resource::{Resource, grant_registrations, resource_marks, resources};
 use crate::role::Role;
-use crate::state::{accessors, distinct_band, parse_state, state_struct, state_table};
+use crate::state::{accessors, distinct_band, parse_state, published, state_struct, state_table};
 
 /// Derive a contract's package from its module: the declaration routing
 /// reads, and the module that executes it.
@@ -353,7 +353,7 @@ fn refused(mut module: syn::ItemMod, role: Role, error: &syn::Error) -> TokenStr
         role,
         None,
     )));
-    let config_fields = config_slots(items, config_name.as_ref());
+    let config_fields = config_slots(items, config_name.as_ref()).unwrap_or_default();
     let names: Vec<String> = config_fields.iter().map(|(name, _)| name.clone()).collect();
     if let Ok(resources) = resources(items, &names) {
         extras.extend(resource_marks(&resources, role));
@@ -537,8 +537,8 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
 /// a declared type. A rendering between the two would be a second
 /// spelling to keep in step, and one that folded case would let two
 /// items reach one name.
-fn method_name(method: &syn::ImplItemFn) -> String {
-    method.sig.ident.to_string()
+fn method_name(method: &syn::ImplItemFn) -> syn::Result<String> {
+    published(&method.sig.ident)
 }
 
 /// The macro's own attributes, which are read and then removed so what it
@@ -959,9 +959,12 @@ fn marker_kinds_on_impl(block: &syn::ItemImpl) -> syn::Result<()> {
 /// The configuration struct's fields in declaration order — which is what
 /// fixes each one's config slot index, and what a guest reading one gets
 /// handed.
-fn config_slots(items: &[syn::Item], config_name: Option<&syn::Ident>) -> Vec<(String, syn::Type)> {
+fn config_slots(
+    items: &[syn::Item],
+    config_name: Option<&syn::Ident>,
+) -> syn::Result<Vec<(String, syn::Type)>> {
     let Some(config_name) = config_name else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     items
         .iter()
@@ -971,10 +974,8 @@ fn config_slots(items: &[syn::Item], config_name: Option<&syn::Ident>) -> Vec<(S
         })
         .flatten()
         .filter_map(|field| {
-            field
-                .ident
-                .as_ref()
-                .map(|name| (name.to_string(), field.ty.clone()))
+            let name = field.ident.as_ref()?;
+            Some(published(name).map(|name| (name, field.ty.clone())))
         })
         .collect()
 }
@@ -1249,7 +1250,7 @@ fn lower_method(
     serves: client::Serves,
     seal: Option<Range<usize>>,
 ) -> syn::Result<Lowered> {
-    let published = method_name(method);
+    let published = method_name(method)?;
     let mut params = Vec::new();
     let mut idents = Vec::new();
     let mut kinds = Vec::new();
@@ -2304,7 +2305,7 @@ fn expand(
     check_vocabulary_shadows(items)?;
     check_reserved_locals(items, &state_name)?;
     records::refuse_uncapped(items)?;
-    let config_fields = config_slots(items, config_name.as_ref());
+    let config_fields = config_slots(items, config_name.as_ref())?;
     check_config_width(config_name.as_ref(), config_fields.len())?;
     let events = event_names(items)?;
     let errors = error_names(items)?;
@@ -2386,6 +2387,11 @@ fn expand(
     // Before the markers are stripped: `encode_declared` reads them, and
     // what it pushes has to survive the strip that follows.
     let (records, stored_types) = encode_declared(items, &length_free);
+    // A declared type publishes under its own identifier, which is what
+    // a consumer resolves its shape by.
+    for ident in &stored_types {
+        published(ident)?;
+    }
     let stored_table = stored_types
         .iter()
         .map(|ident| quote!(.declares::<#ident>()));

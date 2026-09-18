@@ -1,0 +1,5 @@
+error: `président` is published as it is written, and 'é' is not a character an identifier is made of
+  --> tests/refusals/unspellable_config.rs:13:9
+   |
+13 |         président: Address,
+   |         ^^^^^^^^^

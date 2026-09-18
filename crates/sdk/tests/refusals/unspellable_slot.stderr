@@ -1,0 +1,5 @@
+error: `frais_élevés` is published as it is written, and 'é' is not a character an identifier is made of
+  --> tests/refusals/unspellable_slot.rs:11:9
+   |
+11 |         frais_élevés: Cell<Quantity>,
+   |         ^^^^^^^^^^^^

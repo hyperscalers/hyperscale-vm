@@ -16,6 +16,7 @@
 
 use std::collections::BTreeMap;
 
+use hyperscale_hbor::admissible;
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 use hyperscale_vm_effects::{PACKAGE_SLOT_BASE, SlotId};
 use proc_macro2::TokenStream as TokenStream2;
@@ -25,6 +26,31 @@ use syn::spanned::Spanned as _;
 use crate::client::Serves;
 use crate::lower::{Field, FieldKind};
 use crate::{is_named, pascal};
+
+/// `ident`'s text, where the protocol could spell it as a name.
+///
+/// Every published name is the identifier that declared it, and Rust
+/// admits identifiers the protocol does not: a non-ASCII one, or one
+/// past the bytes a name may occupy. Both would travel — the identifier
+/// is the wasm export name and the table entry — so a reader would be
+/// shown whatever the characters arranged. The decoder holds a name
+/// arriving from the wire to the same characters; this is the tier that
+/// says which word to change, on the word itself.
+///
+/// # Errors
+///
+/// [`syn::Error`] on the identifier's own span, naming what is wrong
+/// with it.
+pub fn published(ident: &syn::Ident) -> syn::Result<String> {
+    let name = ident.to_string();
+    match admissible(&name) {
+        Ok(()) => Ok(name),
+        Err(why) => Err(syn::Error::new(
+            ident.span(),
+            format!("`{name}` is published as it is written, and {why}"),
+        )),
+    }
+}
 
 /// The names one declared band spells, refused where two of them
 /// collide.
@@ -42,7 +68,7 @@ pub fn distinct_band<'a>(
 ) -> syn::Result<Vec<String>> {
     let mut names: Vec<String> = Vec::new();
     for ident in declared {
-        let name = ident.to_string();
+        let name = published(ident)?;
         if names.contains(&name) {
             return Err(syn::Error::new(
                 ident.span(),
@@ -156,11 +182,12 @@ fn duplicate_attr(second: &syn::Attribute, first: &syn::Attribute, name: &str) -
 
 /// The state field's slot and shape, read off its declaration.
 pub fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)> {
-    let name = field
-        .ident
-        .as_ref()
-        .ok_or_else(|| syn::Error::new(field.span(), "a state field must be named"))?
-        .to_string();
+    let name = published(
+        field
+            .ident
+            .as_ref()
+            .ok_or_else(|| syn::Error::new(field.span(), "a state field must be named"))?,
+    )?;
 
     let (pinned, denomination) = field_markers(field)?;
     // A slot an author does not pin is the next of the package's own, in

@@ -575,6 +575,31 @@ fn the_vocabulary_closes_the_key_positions() {
     refuse.compile_fail("tests/refusals/string_key.rs");
 }
 
+/// A published name is the identifier that declared it, so an
+/// identifier the protocol could not spell is refused where it is
+/// written.
+///
+/// Rust admits a non-ASCII identifier and configures no lint against
+/// one. The name travels — it is the wasm export name and the table
+/// entry a consumer resolves by — so without this a package could
+/// publish a method whose name carries bidi overrides and every
+/// rendering of it would show a human whatever the overrides arranged.
+/// The decoder holds a name arriving from the wire to the same
+/// characters; this is the tier that says which word to change.
+#[test]
+fn the_macro_refuses_a_name_the_protocol_could_not_spell() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/unspellable_method.rs");
+    refuse.compile_fail("tests/refusals/unspellable_record.rs");
+    refuse.compile_fail("tests/refusals/unspellable_slot.rs");
+    refuse.compile_fail("tests/refusals/unspellable_config.rs");
+    // The bands a consumer resolves by position and renders by name —
+    // the events, the error codes, the resource marks — are held where
+    // the band is read, which is one place for all three.
+    refuse.compile_fail("tests/refusals/unspellable_event.rs");
+    refuse.compile_fail("tests/refusals/unspellable_error.rs");
+}
+
 /// A vocabulary name is not shadowable.
 ///
 /// The macro matches types by their last path segment — parameter

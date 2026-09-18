@@ -1,0 +1,18 @@
+error: `Réglé` is published as it is written, and 'é' is not a character an identifier is made of
+  --> tests/refusals/unspellable_event.rs:11:12
+   |
+11 |     struct Réglé {
+   |            ^^^^^
+
+error[E0599]: no method named `emit` found for struct `Réglé` in the current scope
+  --> tests/refusals/unspellable_event.rs:23:35
+   |
+ 6 | #[blueprint]
+   | ------------ method `emit` not found for this struct
+...
+23 |             Réglé { amount: fee }.emit();
+   |                                   ^^^^ method not found in `Réglé`
+   |
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following trait defines an item `emit`, perhaps you need to implement it:
+           candidate #1: `hyperscale_vm_embed::host::KernelHost`
