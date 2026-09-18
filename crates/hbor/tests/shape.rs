@@ -9,8 +9,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_hbor::{
-    Capped, DecodeError, Hbor, HborBound, HborShape, LengthFree, Name, ShapeField, ShapeTable,
-    ShapeValue, ShapeVariant, Text, TypeShape, to_vec,
+    Capped, DecodeError, Hbor, HborBound, HborShape, LengthFree, Name, NodeId, ShapeFault,
+    ShapeField, ShapeTable, ShapeValue, ShapeVariant, Text, TypeShape, from_slice, to_vec,
 };
 
 #[derive(Debug, PartialEq, Eq, Hbor, HborShape)]
@@ -281,5 +281,58 @@ fn a_capped_run_is_priced_and_bounded_at_its_cap() {
     assert_eq!(
         table.read(root, &five),
         Err(DecodeError::BoundExceeded { max: 4, actual: 5 })
+    );
+}
+
+/// A chain of names, which a reader walks and the encoding spends
+/// nothing on.
+fn named_chain(links: u32) -> Result<(ShapeTable, NodeId), ShapeFault> {
+    let mut table = ShapeTable::new();
+    let mut id = table.push(TypeShape::U8)?;
+    for link in 0..links {
+        id = table.push(TypeShape::Named {
+            name: Name::new(format!("n{link}")).expect("a name"),
+            shape: id,
+        })?;
+    }
+    Ok((table, id))
+}
+
+/// What bounds a walk over a shape is how tall the shape stands, not how
+/// deep its values nest: a name and a discriminant are levels of the
+/// tree that the encoding spends nothing on, so a table refused only on
+/// the second figure would admit a chain no reader could follow.
+#[test]
+fn a_shape_taller_than_a_reader_walks_is_refused_where_it_joins() {
+    let (table, root) = named_chain(180).expect("a chain a reader walks");
+    assert_eq!(table.depth(root), 0, "no name is a level on the wire");
+    assert_eq!(table.read(root, &[7]), Ok(ShapeValue::U8(7)));
+
+    assert_eq!(named_chain(400).map(|_| ()), Err(ShapeFault::TooTall));
+}
+
+/// And the refusal is the decoder's too, where a table arrives from a
+/// peer rather than from a type.
+#[test]
+fn a_table_taller_than_a_reader_walks_is_refused_at_decode() {
+    let (table, _) = named_chain(180).expect("a chain a reader walks");
+    let bytes = to_vec(&table).expect("a table encodes");
+    assert_eq!(from_slice::<ShapeTable>(&bytes), Ok(table));
+
+    // A longer chain than a table would hold, spelled straight onto the
+    // wire so nothing measures it before the decoder does.
+    let mut nodes = vec![TypeShape::U8];
+    for link in 0..400u32 {
+        nodes.push(TypeShape::Named {
+            name: Name::new(format!("m{link}")).expect("a name"),
+            shape: NodeId(u32::try_from(nodes.len() - 1).expect("a short table")),
+        });
+    }
+    let bytes = to_vec(&nodes).expect("the nodes encode");
+    assert_eq!(
+        from_slice::<ShapeTable>(&bytes),
+        Err(DecodeError::FailedValidation(
+            "shape stands past the levels a reader of one walks"
+        ))
     );
 }

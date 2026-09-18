@@ -40,6 +40,16 @@ use crate::{
     DEFAULT_MAX_DEPTH, Hbor, HborBound, HborDecode, HborEncode, HborWidth, bounded, varint,
 };
 
+/// The levels of a shape's own tree that a reader of one walks.
+///
+/// [`DEFAULT_MAX_DEPTH`] bounds the levels a *value* nests, and that is
+/// not what bounds a walk over the shape: a name and a discriminant are
+/// nodes the encoding spends no level on, so a shape stands taller than
+/// its values nest. Between two levels a decoder follows there is at
+/// most one of each, so a shape a decoder follows stands at most three
+/// times as tall, and one more for the name over its root.
+const MAX_SHAPE_HEIGHT: usize = 3 * DEFAULT_MAX_DEPTH + 1;
+
 /// A node's place in a [`ShapeTable`]: its index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 #[hbor(crate = crate, transparent)]
@@ -223,6 +233,15 @@ pub enum ShapeFault {
     /// admits, and is refused for that reason and no other.
     #[error("shape nests past the {DEFAULT_MAX_DEPTH} levels a decoder follows")]
     TooDeep,
+    /// A shape standing taller than a reader of one walks.
+    ///
+    /// A name and a discriminant are levels of the tree that the encoding
+    /// spends nothing on, so a shape can stand taller than the values it
+    /// describes nest — and what walks a shape recurses over the tree
+    /// rather than over the encoding. Refused so a shape a consumer
+    /// holds is one a consumer can read.
+    #[error("shape stands past the {MAX_SHAPE_HEIGHT} levels a reader of one walks")]
+    TooTall,
     /// A sequence, set, or map over an element that occupies no bytes.
     ///
     /// A length is then a count no input pays for, so a claimed one
@@ -276,6 +295,7 @@ impl ShapeFault {
             Self::Unresolved(_) => "shape references a node the table does not hold before it",
             Self::Duplicate(_) => "shape table repeats a node",
             Self::TooDeep => "shape nests past the levels a decoder follows",
+            Self::TooTall => "shape stands past the levels a reader of one walks",
             Self::ZeroWidth => "shape runs over an element that carries no bytes",
             Self::AmbiguousName(_) => "shape names two members of one type alike",
             Self::AmbiguousDiscriminant(_) => "shape selects two variants by one discriminant",
@@ -300,8 +320,9 @@ fn distinct<'s>(names: impl Iterator<Item = &'s str>) -> Result<(), ShapeFault> 
     Ok(())
 }
 
-/// What one node measures: the levels a value of it nests, and the
-/// fewest and the most bytes one can occupy.
+/// What one node measures: the levels a value of it nests, the levels
+/// the node itself stands, and the fewest and the most bytes one value
+/// can occupy.
 ///
 /// Every sum is saturating: a shape is data, so it may claim widths that
 /// add past what an address space holds, and a wrapped sum would
@@ -312,6 +333,10 @@ struct Measure {
     /// The levels a value of the node nests, as the encoder charges
     /// them. A name costs none: it is not on the wire.
     depth: usize,
+    /// The levels the node itself stands over its leaves, which is what
+    /// a walk over the shape recurses through. Every node costs one,
+    /// the ones the encoding spends nothing on included.
+    height: usize,
     /// The fewest bytes any value of the node occupies.
     least: usize,
     /// The most bytes any value of the node occupies.
@@ -323,6 +348,7 @@ impl Measure {
     const fn leaf(width: usize) -> Self {
         Self {
             depth: 0,
+            height: 1,
             least: width,
             most: width,
         }
@@ -337,25 +363,29 @@ impl Measure {
         let cap = cap as usize;
         Ok(Self {
             depth: element.depth + 1,
+            height: element.height + 1,
             least: 1,
             most: varint::encoded_len(cap).saturating_add(cap.saturating_mul(element.most)),
         })
     }
 
     /// A composite's children, walked one level down: their widths sum,
-    /// and the level is spent only where there is a child to spend it
-    /// on.
+    /// and the decoder's level is spent only where there is a child to
+    /// spend it on.
     fn under(children: impl Iterator<Item = Self>) -> Self {
         let mut deepest = None::<usize>;
+        let mut tallest = 0usize;
         let mut least = 0usize;
         let mut most = 0usize;
         for child in children {
             deepest = Some(deepest.map_or(child.depth, |seen| seen.max(child.depth)));
+            tallest = tallest.max(child.height);
             least = least.saturating_add(child.least);
             most = most.saturating_add(child.most);
         }
         Self {
             depth: deepest.map_or(0, |depth| depth + 1),
+            height: tallest + 1,
             least,
             most,
         }
@@ -522,6 +552,7 @@ impl ShapeTable {
                 let cap = *cap as usize;
                 Measure {
                     depth: 0,
+                    height: 1,
                     least: 1,
                     most: varint::encoded_len(cap).saturating_add(cap),
                 }
@@ -535,6 +566,7 @@ impl ShapeTable {
                 let value = self.held(*value)?;
                 let pair = Measure {
                     depth: key.depth.max(value.depth),
+                    height: key.height.max(value.height),
                     least: key.least.saturating_add(value.least),
                     most: key.most.saturating_add(value.most),
                 };
@@ -546,6 +578,7 @@ impl ShapeTable {
                 let held = self.held(*held)?;
                 Measure {
                     depth: held.depth + 1,
+                    height: held.height + 1,
                     least: 1,
                     most: held.most.saturating_add(1),
                 }
@@ -572,6 +605,7 @@ impl ShapeTable {
                 distinct(variants.iter().map(|variant| variant.name.as_str()))?;
                 let mut selected = BTreeSet::new();
                 let mut deepest = 0usize;
+                let mut tallest = 0usize;
                 let mut lightest = None::<usize>;
                 let mut widest = 0usize;
                 for variant in variants {
@@ -580,20 +614,29 @@ impl ShapeTable {
                     }
                     let content = self.held(variant.content)?;
                     deepest = deepest.max(content.depth);
+                    tallest = tallest.max(content.height);
                     lightest = Some(lightest.map_or(content.least, |seen| seen.min(content.least)));
                     widest = widest.max(content.most);
                 }
                 Measure {
                     depth: deepest,
+                    height: tallest + 1,
                     least: lightest.unwrap_or(0).saturating_add(1),
                     most: widest.saturating_add(1),
                 }
             }
+            // A name is not a level on the wire, so it measures as what
+            // it names — but it is a level of the tree, which is what a
+            // reader of the shape walks.
             TypeShape::Named { name, shape } => {
                 if self.named(name).is_some() {
                     return Err(ShapeFault::NameTaken(name.to_string()));
                 }
-                self.held(*shape)?
+                let held = self.held(*shape)?;
+                Measure {
+                    height: held.height + 1,
+                    ..held
+                }
             }
         })
     }
@@ -603,9 +646,10 @@ impl ShapeTable {
     /// Measured as it joins, off children the table holds — so every
     /// reference resolves downward, no run is over an element carrying
     /// no bytes, no name covers two members and no discriminant two
-    /// variants, and nothing nests past what a decoder follows. A node
-    /// equal to one already held is that node, found rather than added:
-    /// a subtree is written once.
+    /// variants, nothing nests past what a decoder follows, and nothing
+    /// stands past what a reader of a shape walks. A node equal to one
+    /// already held is that node, found rather than added: a subtree is
+    /// written once.
     ///
     /// # Errors
     ///
@@ -617,6 +661,9 @@ impl ShapeTable {
         let measure = self.measure(&node)?;
         if measure.depth > DEFAULT_MAX_DEPTH {
             return Err(ShapeFault::TooDeep);
+        }
+        if measure.height > MAX_SHAPE_HEIGHT {
+            return Err(ShapeFault::TooTall);
         }
         let id = NodeId::at(self.nodes.len());
         self.nodes.push(node);
@@ -847,9 +894,12 @@ impl ShapeTable {
     /// re-encodes one canonicalizes it first.
     ///
     /// Nesting is bounded by the table: every node joined it measured,
-    /// and none nests past what a decoder follows, so this walk recurses
-    /// exactly as deep as the shape and no deeper however many elements
-    /// a value holds.
+    /// and none stands past the levels a reader of a shape walks, so
+    /// this recurses as far as the shape stands and no further however
+    /// many elements a value holds. The levels a *value* nests are the
+    /// smaller figure and not the one that bounds this — a name and a
+    /// discriminant are levels here that the encoding spends nothing
+    /// on.
     ///
     /// # Errors
     ///
