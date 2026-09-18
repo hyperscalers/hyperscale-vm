@@ -196,7 +196,7 @@ pub fn derived_shape(
         // any of those.
         Term::Arg(_) | Term::Config(_) | Term::Lookup { .. } => {
             match term_type(term, params, config) {
-                Some(ty) => named(&ty)?,
+                Some(ty) => named(&uncapped(&ty))?,
                 None => Shape::Scalar,
             }
         }
@@ -241,7 +241,7 @@ pub fn derived_shape(
 /// The one resolution both the shape walk and the narrowing walk ask
 /// for: a parameter's own type, a configured field's, the value type of
 /// a table such a field holds, or a component of any of those.
-fn term_type(
+pub fn term_type(
     term: &Term,
     params: &[(String, syn::Type)],
     config: &[(String, syn::Type)],
@@ -253,6 +253,42 @@ fn term_type(
         Term::Field(inner, index) => tuple_field(&term_type(inner, params, config)?, *index),
         _ => None,
     }
+}
+
+/// The collection a cap holds, where `ty` is a capped one.
+///
+/// What crosses the boundary is the elements, and how many of them there
+/// may be was settled where the configuration was written — so a body
+/// reads the collection and the cap stays on the declaration.
+fn uncapped(ty: &syn::Type) -> syn::Type {
+    let syn::Type::Path(path) = ty else {
+        return ty.clone();
+    };
+    let Some(segment) = path.path.segments.last().filter(|s| s.ident == "Capped") else {
+        return ty.clone();
+    };
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return ty.clone();
+    };
+    match args.args.first() {
+        Some(syn::GenericArgument::Type(held)) => held.clone(),
+        _ => ty.clone(),
+    }
+}
+
+/// Whether `ty` is a collection that states how many elements it holds.
+///
+/// Read syntactically, as every type reading here is: a cap behind an
+/// alias is one the macro cannot see, and a loop over it is priced at
+/// the evaluator's ceiling rather than at a figure guessed from a name.
+pub fn states_its_rows(ty: &syn::Type) -> bool {
+    let syn::Type::Path(path) = ty else {
+        return false;
+    };
+    path.path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "Capped" || segment.ident == "Table")
 }
 
 /// The `index`-th component of a tuple type, where `ty` is one.

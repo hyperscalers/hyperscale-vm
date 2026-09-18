@@ -19,7 +19,7 @@ use hyperscale_vm_fixtures::grammar;
 use hyperscale_vm_harness::fixtures::repo_root;
 use hyperscale_vm_kernel::Receipt;
 use hyperscale_vm_kernel::modes::decode_amount;
-use hyperscale_vm_sdk::hbor::{from_slice, to_vec};
+use hyperscale_vm_sdk::hbor::{Capped, from_slice, to_vec};
 use hyperscale_vm_sdk::state::{Table, UnitFixed};
 use hyperscale_vm_testing::{
     Chain, Code, Package, PrincipalAddr, Refused, ResourceAddr, account, principal, resource,
@@ -47,12 +47,12 @@ fn amm() -> Package {
 /// parties a `for-each` writes a clause each for.
 fn terms() -> grammar::Terms {
     grammar::Terms {
-        tiers: Table::new(vec![(1, 10), (2, 20)]),
+        tiers: Table::from_rows([(1, 10), (2, 20)]),
         fallback: 7,
-        sides: vec![principal(0x51).into(), principal(0x52).into()],
-        windows: vec![1, 2],
-        assets: vec![X, Y],
-        marks: Vec::new(),
+        sides: Capped::from_array([principal(0x51).into(), principal(0x52).into()]),
+        windows: Capped::from_array([1, 2]),
+        assets: Capped::from_array([X, Y]),
+        marks: Capped::empty(),
     }
 }
 
@@ -808,12 +808,12 @@ fn a_configured_sequence_crosses_as_its_numbers_in_both_lanes() {
         let empty = chain.instantiate::<grammar::Grammar>(
             ALICE,
             grammar::Terms {
-                tiers: Table::new(vec![(1, 10)]),
+                tiers: Table::from_rows([(1, 10)]),
                 fallback: 7,
-                sides: Vec::new(),
-                windows: Vec::new(),
-                assets: Vec::new(),
-                marks: Vec::new(),
+                sides: Capped::empty(),
+                windows: Capped::empty(),
+                assets: Capped::empty(),
+                marks: Capped::empty(),
             },
         );
         chain
@@ -867,7 +867,7 @@ fn a_run_over_holdings_moves_instances_in_both_lanes() {
         let custodian = chain.instantiate::<grammar::Grammar>(
             ALICE,
             grammar::Terms {
-                marks: marks.clone(),
+                marks: Capped::new(marks.clone()).expect("two marks fit the schedule"),
                 ..terms()
             },
         );
@@ -966,23 +966,23 @@ fn a_run_covers_a_list_of_one_and_a_list_of_none_in_both_lanes() {
         let sole = chain.instantiate::<grammar::Grammar>(
             ALICE,
             grammar::Terms {
-                tiers: Table::new(vec![(1, 10)]),
+                tiers: Table::from_rows([(1, 10)]),
                 fallback: 7,
-                sides: vec![principal(0x51).into()],
-                windows: vec![1],
-                assets: vec![X],
-                marks: Vec::new(),
+                sides: Capped::from_array([principal(0x51).into()]),
+                windows: Capped::from_array([1]),
+                assets: Capped::from_array([X]),
+                marks: Capped::empty(),
             },
         );
         let none = chain.instantiate::<grammar::Grammar>(
             ALICE,
             grammar::Terms {
-                tiers: Table::new(vec![(1, 10)]),
+                tiers: Table::from_rows([(1, 10)]),
                 fallback: 7,
-                sides: Vec::new(),
-                windows: Vec::new(),
-                assets: Vec::new(),
-                marks: Vec::new(),
+                sides: Capped::empty(),
+                windows: Capped::empty(),
+                assets: Capped::empty(),
+                marks: Capped::empty(),
             },
         );
         chain

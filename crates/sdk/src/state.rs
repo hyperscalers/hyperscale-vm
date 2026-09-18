@@ -49,7 +49,7 @@
 //! clause follows from calling one.
 
 use hyperscale_hbor::{
-    Bytes, DEFAULT_MAX_DEPTH, Hbor, HborDecode, HborEncode, HborShape, ShapeNode,
+    Bytes, Capped, DEFAULT_MAX_DEPTH, Hbor, HborDecode, HborEncode, HborShape, Overflow, ShapeNode,
     from_slice_with_depth, to_vec_with_depth,
 };
 /// The record a resource's cell holds, in the shape a client reads.
@@ -139,6 +139,21 @@ const OFF_HOST: &str = "the lowering answers this from the declaration — reach
                         body was called directly rather than through the walk that materializes \
                         its capabilities";
 
+/// How many elements a configured collection can hold.
+///
+/// What a `for-each` over one is priced at. The list a loop maps over is
+/// creation-fixed, so the cap its type states is the width the loop
+/// expands to — where the evaluator's own ceiling is what bounds a list
+/// whose length only a transaction knows.
+pub trait Rows {
+    /// The most elements a value of this type holds.
+    const CAP: usize;
+}
+
+impl<T, const N: usize> Rows for Capped<Vec<T>, N> {
+    const CAP: usize = N;
+}
+
 /// A lookup table a package holds in its configuration.
 ///
 /// The kernel's form is a list of `(key, value)` pairs, and the DSL walks
@@ -151,17 +166,34 @@ const OFF_HOST: &str = "the lowering answers this from the declaration — reach
 /// pairs are carried because whoever *creates* the instance writes them
 /// down — a table is one configuration slot, and the value in that slot
 /// is these rows.
+///
+/// `N` is what a `for-each` over the table is priced at, held where every
+/// other cap is: at construction.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Table<K, V>(Vec<(K, V)>);
+pub struct Table<K, V, const N: usize>(Capped<Vec<(K, V)>, N>);
 
-impl<K, V> Table<K, V> {
-    /// The table holding `rows`.
+impl<K, V, const N: usize> Rows for Table<K, V, N> {
+    const CAP: usize = N;
+}
+
+impl<K, V, const N: usize> Table<K, V, N> {
+    /// The table holding `rows`, where they fit the cap.
     ///
     /// First match wins, as the walk reads it, so a key written twice
     /// takes the earlier row.
+    ///
+    /// # Errors
+    ///
+    /// [`Overflow`] past `N` rows.
+    pub fn new(rows: Vec<(K, V)>) -> Result<Self, Overflow> {
+        Capped::new(rows).map(Self)
+    }
+
+    /// A table written out, whose row count the compiler holds under the
+    /// cap.
     #[must_use]
-    pub const fn new(rows: Vec<(K, V)>) -> Self {
-        Self(rows)
+    pub fn from_rows<const M: usize>(rows: [(K, V); M]) -> Self {
+        Self(Capped::from_array(rows))
     }
 
     /// The rows, in the order a lookup walks them.
@@ -173,7 +205,7 @@ impl<K, V> Table<K, V> {
     /// The rows, owned — what the creation path encodes into the slot.
     #[must_use]
     pub fn into_rows(self) -> Vec<(K, V)> {
-        self.0
+        self.0.into_inner()
     }
 
     /// The value at `key`.

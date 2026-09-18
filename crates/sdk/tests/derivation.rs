@@ -938,7 +938,7 @@ mod selection {
     struct Pair {
         left: ResourceAddr,
         right: ResourceAddr,
-        routes: Table<Address, ResourceAddr>,
+        routes: Table<Address, ResourceAddr, 4>,
         fallback: ResourceAddr,
     }
 

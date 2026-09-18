@@ -233,6 +233,11 @@ pub enum Node {
     ForEach {
         /// The collection mapped over.
         list: Term,
+        /// The type stating how many elements it holds, where the
+        /// collection is one the vocabulary caps. Absent for a list whose
+        /// length only a transaction knows, which prices at the
+        /// evaluator's ceiling.
+        width: Option<Box<syn::Type>>,
         /// The nesting depth this binder introduces.
         depth: usize,
         /// The clauses inside.
@@ -4354,8 +4359,12 @@ impl<'a> Lowerer<'a> {
         self.locals.pop();
         let body = self.scopes.pop().unwrap_or_default();
 
+        let width = crate::bind::term_type(&list_term, self.params, self.declared.config_fields)
+            .filter(crate::bind::states_its_rows)
+            .map(Box::new);
         self.push_node(Node::ForEach {
             list: list_term,
+            width,
             depth,
             body,
         });
@@ -4433,7 +4442,10 @@ impl<'a> Lowerer<'a> {
         self.binders.pop();
         let inner = self.scopes.pop().unwrap_or_default();
         self.push_node(Node::ForEach {
+            // How many instances an edge carries is the transaction's,
+            // so the ceiling is what bounds the expansion.
             list: Term::IdsOf(Box::new(edge)),
+            width: None,
             depth,
             body: inner,
         });

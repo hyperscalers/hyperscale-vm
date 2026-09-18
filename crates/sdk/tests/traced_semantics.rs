@@ -83,6 +83,10 @@ fn evaluated(signature: &MethodSignature, args: &[Value], config: &[Value]) -> D
         .expect("the traced signature evaluates")
 }
 
+/// The most resources a basket's configuration names, which is what a
+/// walk over them expands to.
+const HOLDINGS: usize = 8;
+
 /// A basket whose `rebalance` touches one vault per configured resource —
 /// the shape `for-each` exists for, and the shape no stdlib fixture has.
 fn basket() -> Blueprint {
@@ -92,7 +96,7 @@ fn basket() -> Blueprint {
             let owner = t.self_addr();
 
             t.point(&owner.child(CONFIG, &[])).read();
-            t.for_each(&holdings, |t, resource| {
+            t.for_each(&holdings, HOLDINGS, |t, resource| {
                 let owner = t.self_addr();
                 t.point(&owner.child(VAULT, &[resource])).write();
             });
@@ -156,9 +160,9 @@ fn nested_binders_survive_evaluation() {
     let blueprint = Blueprint::builder()
         .method("sweep", &[], |t: &mut Trace| {
             let groups: Sym<Seq> = t.config(0);
-            t.for_each(&groups, |t, group| {
+            t.for_each(&groups, MAX_FOREACH_ELEMENTS, |t, group| {
                 let members: Sym<Seq> = group.clone().field(1).cast();
-                t.for_each(&members, |t, member| {
+                t.for_each(&members, MAX_FOREACH_ELEMENTS, |t, member| {
                     let owner = t.self_addr();
                     let tag = group.clone().field(0);
                     t.point(&owner.child(VAULT, &[member, tag])).delta();
@@ -383,26 +387,38 @@ fn a_dynamic_plan_reports_itself_as_dynamic() {
 
 #[test]
 fn the_worst_case_is_reported_where_it_can_exceed_the_bound() {
-    // Two nested for-each clauses reach 1024^2 effects, past the 4096 a
-    // signature may declare. The SDK cannot reject this — whether it happens
-    // is a property of the config an instance is created with, not of the
-    // declaration — but it can refuse to let the author find out from a
-    // production routing failure.
-    let deep = Blueprint::builder()
-        .method("sweep", &[], |t: &mut Trace| {
-            let groups: Sym<Seq> = t.config(0);
-            t.for_each(&groups, |t, group| {
-                let members: Sym<Seq> = group.cast();
-                t.for_each(&members, |t, member| {
-                    let owner = t.self_addr();
-                    t.point(&owner.child(VAULT, &[member])).delta();
+    // Two nested for-each clauses over lists the declaration cannot
+    // price reach 1024^2 effects, past the 4096 a signature may declare.
+    // The SDK cannot reject this — whether it happens is a property of
+    // the config an instance is created with, not of the declaration —
+    // but it can refuse to let the author find out from a production
+    // routing failure.
+    let nested = |outer, inner| {
+        Blueprint::builder()
+            .method("sweep", &[], move |t: &mut Trace| {
+                let groups: Sym<Seq> = t.config(0);
+                t.for_each(&groups, outer, |t, group| {
+                    let members: Sym<Seq> = group.cast();
+                    t.for_each(&members, inner, |t, member| {
+                        let owner = t.self_addr();
+                        t.point(&owner.child(VAULT, &[member])).delta();
+                    });
                 });
-            });
-        })
-        .build();
+            })
+            .build()
+    };
+    let deep = nested(MAX_FOREACH_ELEMENTS, MAX_FOREACH_ELEMENTS);
     let method = deep.method("sweep").unwrap();
     assert_eq!(method.worst_case_effects(), MAX_FOREACH_ELEMENTS.pow(2));
     assert!(!method.worst_case_fits());
+
+    // The same two loops over lists whose types state their caps are
+    // priced at the product of those caps, which is a bound the nesting
+    // meets.
+    let capped = nested(HOLDINGS, 4);
+    let method = capped.method("sweep").unwrap();
+    assert_eq!(method.worst_case_effects(), HOLDINGS * 4);
+    assert!(method.worst_case_fits());
 
     // The single-level basket is safely inside it.
     assert!(basket().method("rebalance").unwrap().worst_case_fits());
@@ -420,7 +436,7 @@ fn nesting_past_the_clause_bound_fails_the_build() {
             let owner = t.self_addr();
             t.point(&owner.child(VAULT, &[])).write();
         } else {
-            t.for_each(&list, |t, _| nest(t, left - 1));
+            t.for_each(&list, MAX_FOREACH_ELEMENTS, |t, _| nest(t, left - 1));
         }
     }
     let _ = Blueprint::builder().method("deep", &[], |t: &mut Trace| nest(t, 5));
@@ -436,7 +452,7 @@ fn a_verdict_from_inside_a_for_each_fails_the_build() {
     // thing.
     let _ = Blueprint::builder().method("pick", &[], |t: &mut Trace| {
         let list: Sym<Seq> = t.config(0);
-        t.for_each(&list, |t, item| {
+        t.for_each(&list, MAX_FOREACH_ELEMENTS, |t, item| {
             let owner = t.self_addr();
             let chosen = eq(&item, &owner);
             t.when(&chosen, |t| {
@@ -458,7 +474,7 @@ fn a_smuggled_binder_fails_the_build() {
     let mut escaped: Option<Sym<_>> = None;
     let _ = Blueprint::builder().method("leak", &[], |t: &mut Trace| {
         let list: Sym<Seq> = t.config(0);
-        t.for_each(&list, |_, item| escaped = Some(item));
+        t.for_each(&list, MAX_FOREACH_ELEMENTS, |_, item| escaped = Some(item));
         let owner = t.self_addr();
         let key = owner.child(VAULT, &[escaped.take().unwrap()]);
         t.point(&key).write();

@@ -228,7 +228,7 @@ address_slots!(Address, ComponentAddr, PrincipalAddr, ResourceAddr);
 
 /// A table fills its slot as the list of pairs the DSL's `Lookup` and
 /// `Contains` walk — one slot, whatever the row count.
-impl<K: IntoSlot, V: IntoSlot> IntoSlot for Table<K, V> {
+impl<K: IntoSlot, V: IntoSlot, const N: usize> IntoSlot for Table<K, V, N> {
     fn into_slot(self) -> Value {
         Value::List(
             self.into_rows()
@@ -244,6 +244,14 @@ impl<K: IntoSlot, V: IntoSlot> IntoSlot for Table<K, V> {
 impl<T: IntoSlot> IntoSlot for Vec<T> {
     fn into_slot(self) -> Value {
         Value::List(self.into_iter().map(IntoSlot::into_slot).collect())
+    }
+}
+
+/// A capped list fills its slot as the list it holds: the cap is the
+/// type's and the slot carries the rows.
+impl<T: IntoSlot, const N: usize> IntoSlot for Capped<Vec<T>, N> {
+    fn into_slot(self) -> Value {
+        self.into_inner().into_slot()
     }
 }
 

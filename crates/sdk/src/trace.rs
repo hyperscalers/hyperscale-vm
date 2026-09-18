@@ -74,9 +74,12 @@ pub struct Trace {
     /// to `params` and mostly empty, because most positions take whatever
     /// the cell they land in is keyed by.
     denominations: Vec<Option<Expr>>,
-    /// The worst-case effect count, folding `for-each` width per nesting
-    /// level.
+    /// The worst-case effect count, folding each open binder's own width.
     worst_case: usize,
+    /// The width of each open `for-each`, innermost last: the most
+    /// elements its list can hold, which is what one effect under it
+    /// expands to.
+    widths: Vec<usize>,
     /// The handle bindings, in the order the body opened them.
     handles: Vec<AbiParam>,
     /// The clause verdicts the export takes, after the handles and
@@ -115,6 +118,7 @@ impl Trace {
             guards: Vec::new(),
             flags: Vec::new(),
             worst_case: 0,
+            widths: Vec::new(),
             handles: Vec::new(),
             values: Vec::new(),
             last_clause: None,
@@ -198,10 +202,13 @@ impl Trace {
     /// Emit one clause into the current scope.
     fn emit(&mut self, clause: Clause) {
         if matches!(clause, Clause::Effect { .. }) {
-            // One effect under `d` nested binders can declare up to
-            // `MAX_FOREACH_ELEMENTS^d` of them.
-            let width = MAX_FOREACH_ELEMENTS
-                .checked_pow(u32::try_from(self.depth()).unwrap_or(u32::MAX))
+            // One effect under the open binders expands to one per
+            // combination of their elements, which is the product of the
+            // widths their lists state.
+            let width = self
+                .widths
+                .iter()
+                .try_fold(1usize, |so_far, width| so_far.checked_mul(*width))
                 .unwrap_or(usize::MAX);
             self.worst_case = self.worst_case.saturating_add(width);
         }
@@ -533,10 +540,16 @@ impl Trace {
     /// The element is handed to `body` as a symbolic value; its binding
     /// index is the tracer's problem, not the author's.
     ///
+    /// `width` is the most elements the list can hold, which is what one
+    /// effect inside expands to: a configured collection states it in
+    /// its own type, and a list whose length only a transaction knows
+    /// takes the evaluator's ceiling. Held to that ceiling either way,
+    /// since it is what the evaluation refuses past.
+    ///
     /// # Panics
     ///
     /// If the nesting would pass [`MAX_CLAUSE_DEPTH`].
-    pub fn for_each<F>(&mut self, list: &Sym<Seq>, body: F)
+    pub fn for_each<F>(&mut self, list: &Sym<Seq>, width: usize, body: F)
     where
         F: FnOnce(&mut Self, Sym<Opaque>),
     {
@@ -551,7 +564,9 @@ impl Trace {
         );
 
         self.scopes.push(Vec::new());
+        self.widths.push(width.min(MAX_FOREACH_ELEMENTS));
         body(self, Sym::new(Expr::Binding(absolute(binder))));
+        self.widths.pop();
         let inner = self
             .scopes
             .pop()
@@ -1499,9 +1514,9 @@ mod tests {
     fn nested_for_each_bodies_carry_both_binders() {
         let mut trace = Trace::new(vec![]);
         let outer: Sym<Seq> = trace.config(0);
-        trace.for_each(&outer, |t, group| {
+        trace.for_each(&outer, MAX_FOREACH_ELEMENTS, |t, group| {
             let inner: Sym<Seq> = group.clone().cast();
-            t.for_each(&inner, |t, item| {
+            t.for_each(&inner, MAX_FOREACH_ELEMENTS, |t, item| {
                 // `group` is the outer binder, `item` the inner one.
                 let owner = t.self_addr();
                 let key: Sym<Key> = owner.child(SlotId(1), &[item, group.clone()]);
@@ -1528,19 +1543,28 @@ mod tests {
         assert_eq!(material[1], Expr::Binding(1), "the outer element");
     }
 
+    /// An effect under a binder expands to one per element the list can
+    /// hold, which is the width the binder was opened at — so a capped
+    /// list prices at its cap and one the declaration cannot price at
+    /// the ceiling.
     #[test]
-    fn the_worst_case_folds_for_each_width() {
-        let mut trace = Trace::new(vec![]);
-        let list: Sym<Seq> = trace.config(0);
-        let flat: Sym<Key> = trace.config(1);
-        trace.point(&flat).read();
-        trace.for_each(&list, |t, item| {
-            let key: Sym<Key> = item.cast();
-            t.point(&key).write();
-        });
-        let recorded = trace.finish();
-        // One effect at depth 0, one at depth 1 worth `MAX_FOREACH_ELEMENTS`.
-        assert_eq!(recorded.worst_case, 1 + MAX_FOREACH_ELEMENTS);
+    fn the_worst_case_folds_each_binders_own_width() {
+        let priced = |width| {
+            let mut trace = Trace::new(vec![]);
+            let list: Sym<Seq> = trace.config(0);
+            let flat: Sym<Key> = trace.config(1);
+            trace.point(&flat).read();
+            trace.for_each(&list, width, |t, item| {
+                let key: Sym<Key> = item.cast();
+                t.point(&key).write();
+            });
+            trace.finish().worst_case
+        };
+        // One effect at depth 0, one at depth 1 worth the binder's width.
+        assert_eq!(priced(MAX_FOREACH_ELEMENTS), 1 + MAX_FOREACH_ELEMENTS);
+        assert_eq!(priced(8), 1 + 8);
+        // A cap past what the evaluation admits is the evaluation's.
+        assert_eq!(priced(MAX_FOREACH_ELEMENTS * 2), 1 + MAX_FOREACH_ELEMENTS);
     }
 
     #[test]

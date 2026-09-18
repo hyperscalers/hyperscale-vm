@@ -17,6 +17,7 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 pub mod grammar {
+    use hyperscale_vm_sdk::hbor::Capped;
     use hyperscale_vm_sdk::state::{
         Bucket, Cell, Ids, Instances, Keyed, NfBucket, OrderKey, Ordered, Quantity, Table, Vault,
     };
@@ -28,30 +29,34 @@ pub mod grammar {
     /// point is that the evaluator reaches it and the guest does not:
     /// the rows are the creator's, fixed in the address, and no export
     /// carries them.
+    /// The most rows any of this schedule's configured collections
+    /// holds, which is what a `for-each` over one expands to.
+    const ROWS: usize = 8;
+
     #[config]
     struct Terms {
         /// What each named tier is charged.
-        tiers: Table<u64, u64>,
+        tiers: Table<u64, u64, ROWS>,
         /// What a tier the schedule does not name is charged.
         fallback: u64,
         /// The parties a schedule is written for, which is the list a
         /// `for-each` maps over.
-        sides: Vec<Address>,
+        sides: Capped<Vec<Address>, ROWS>,
         /// The windows a walk over this instance's logs maps over,
         /// each naming a sub-collection of its own.
-        windows: Vec<u64>,
+        windows: Capped<Vec<u64>, ROWS>,
         /// The marks whose instances this instance custodies.
         ///
         /// Another instance's, necessarily: a mark derives from the
         /// address of whoever issues it, and this record is sealed
         /// before this instance has one.
-        marks: Vec<ResourceAddr>,
+        marks: Capped<Vec<ResourceAddr>, ROWS>,
         /// The resources a survey of this instance's vaults walks.
         ///
         /// A second list, because a vault is keyed by what it holds: a
         /// loop over it declares a read on a *denominated* leaf, which
         /// is the mode `sides` cannot reach.
-        assets: Vec<ResourceAddr>,
+        assets: Capped<Vec<ResourceAddr>, ROWS>,
     }
 
     /// A mark carrying a schema: what one of its instances holds, in the

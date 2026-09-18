@@ -313,13 +313,25 @@ fn node(node: &Node, lowered: &Lowered) -> TokenStream {
         // as the last one emitted — so the binding rides in the emission
         // order rather than being recovered by counting a clause list.
         Node::BindGuard => quote!(__t.bind_guard();),
-        Node::ForEach { list, depth, body } => {
+        Node::ForEach {
+            list,
+            width,
+            depth,
+            body,
+        } => {
             let list = list.emit();
             let element = binding_ident(*depth);
             let body = body.iter().map(|n| self::node(n, lowered));
+            // The cap the collection's own type states, which is what one
+            // effect inside expands to; a list the declaration cannot
+            // price takes the ceiling the evaluation refuses past.
+            let width = width.as_ref().map_or_else(
+                || quote!(::hyperscale_vm_sdk::MAX_FOREACH_ELEMENTS),
+                |ty| quote!(<#ty as ::hyperscale_vm_sdk::state::Rows>::CAP),
+            );
             quote!({
                 let __list = #list.cast::<::hyperscale_vm_sdk::Seq>();
-                __t.for_each(&__list, |__t, #element| {
+                __t.for_each(&__list, #width, |__t, #element| {
                     #(#body)*
                 });
             })
