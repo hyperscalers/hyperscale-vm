@@ -540,11 +540,14 @@ impl Trace {
     /// The element is handed to `body` as a symbolic value; its binding
     /// index is the tracer's problem, not the author's.
     ///
-    /// `width` is the most elements the list can hold, which is what one
-    /// effect inside expands to: a configured collection states it in
-    /// its own type, and a list whose length only a transaction knows
-    /// takes the evaluator's ceiling. Held to that ceiling either way,
-    /// since it is what the evaluation refuses past.
+    /// `width` is the most elements the list is written to hold, which is
+    /// what one effect inside expands to: a configured collection states
+    /// it in its own type, and a list whose length only a transaction
+    /// knows takes the evaluator's ceiling. Clamped to that ceiling
+    /// either way, since it is what the evaluation refuses past — and a
+    /// configuration wider than its type states is refused there too,
+    /// which is what the declared figure rests on rather than on anything
+    /// a creation is held to.
     ///
     /// # Panics
     ///

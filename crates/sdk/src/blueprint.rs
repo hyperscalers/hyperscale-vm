@@ -37,25 +37,32 @@ impl Method {
         &self.signature
     }
 
-    /// The most effects this signature can declare, over every
-    /// configuration.
+    /// The most effects this signature declares over the configurations
+    /// its own declaration prices.
     ///
-    /// The real count depends on the lengths of the lists a `for-each` maps
-    /// over — configuration, not declaration — so this is the only bound
-    /// knowable at build time. Compare against
-    /// [`hyperscale_vm_effects::MAX_EFFECTS_PER_SIGNATURE`].
+    /// A `for-each` expands to one effect per element, and the element
+    /// count is a configuration a creator writes rather than anything the
+    /// declaration fixes — so a loop is priced at the cap its list's type
+    /// states, which is the author's statement of what the method is
+    /// written for. Nothing published holds a creator to that cap, so a
+    /// wider configuration is one this figure does not cover; what
+    /// covers it is the evaluation, which charges every iteration against
+    /// [`hyperscale_vm_effects::MAX_EFFECTS_PER_SIGNATURE`] and refuses
+    /// past it.
     #[must_use]
     pub const fn worst_case_effects(&self) -> usize {
         self.worst_case
     }
 
-    /// Whether the worst case fits inside the evaluator's per-signature
-    /// allowance.
+    /// Whether that fits inside the evaluator's per-signature allowance.
     ///
-    /// A method that fails this is not necessarily broken — it is one whose
-    /// safe configurations the author now has to bound themselves, because
-    /// the tracer cannot. Worth surfacing at build time either way: the
-    /// alternative is discovering it when a particular instance's config
+    /// A method that fails this is one whose own declared caps already
+    /// price it past what a call may carry, so every call refuses. Passing
+    /// is the weaker statement: the configurations the declaration prices
+    /// fit, and a creator writing a wider one meets
+    /// [`EvalError::TooManyEffects`](hyperscale_vm_effects::EvalError) at
+    /// the call instead. Worth surfacing at build time either way — the
+    /// alternative is discovering it when an instance's configuration
     /// makes every call to the method unroutable.
     #[must_use]
     pub const fn worst_case_fits(&self) -> bool {
