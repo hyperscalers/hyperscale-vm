@@ -233,6 +233,12 @@ impl<T, const N: usize> Capped<Vec<T>, N> {
         self.0.swap(a, b);
     }
 
+    /// Put the elements in `key` order, keeping the order of ties: a
+    /// reordering changes no length.
+    pub fn sort_by_key<K: Ord>(&mut self, key: impl FnMut(&T) -> K) {
+        self.0.sort_by_key(key);
+    }
+
     /// Keep the first `len` elements.
     pub fn truncate(&mut self, len: usize) {
         self.0.truncate(len);
