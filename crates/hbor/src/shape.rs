@@ -28,7 +28,7 @@
 //! wire drops, so it carries none and describes as its inner type. A
 //! type whose *name* is what a consumer needs states its node by hand.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::decode::Decoder;
@@ -77,7 +77,7 @@ impl fmt::Display for NodeId {
 /// The vocabulary is what the encoding admits and nothing beside it, and
 /// every run carries the cap its type states: there is no form here that
 /// no value can be written in, and none whose widest value is unknown.
-#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 #[hbor(crate = crate)]
 pub enum TypeShape {
     /// One byte, `0` or `1`.
@@ -183,7 +183,7 @@ pub enum TypeShape {
 }
 
 /// One named field of a struct.
-#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 #[hbor(crate = crate)]
 pub struct ShapeField {
     /// The field's name, as its author spelled it.
@@ -193,7 +193,7 @@ pub struct ShapeField {
 }
 
 /// One variant of an enum.
-#[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 #[hbor(crate = crate)]
 pub struct ShapeVariant {
     /// The variant's name, as its author spelled it.
@@ -407,6 +407,13 @@ impl Measure {
 pub struct ShapeTable {
     nodes: Vec<TypeShape>,
     measures: Vec<Measure>,
+    /// Where a node the table already holds sits, so finding it is a
+    /// lookup rather than a pass over everything added before it — a
+    /// table arrives from the wire node by node, and a scan per node is
+    /// a cost its publisher would choose.
+    by_node: BTreeMap<TypeShape, NodeId>,
+    /// Where a published type sits, on the same terms.
+    by_name: BTreeMap<Name, NodeId>,
 }
 
 impl ShapeTable {
@@ -416,6 +423,8 @@ impl ShapeTable {
         Self {
             nodes: Vec::new(),
             measures: Vec::new(),
+            by_node: BTreeMap::new(),
+            by_name: BTreeMap::new(),
         }
     }
 
@@ -519,8 +528,7 @@ impl ShapeTable {
     /// The type published under `name`, where the table holds one.
     #[must_use]
     pub fn named(&self, name: &str) -> Option<NodeId> {
-        self.names()
-            .find_map(|(held, id)| (held == name).then_some(id))
+        self.by_name.get(name).copied()
     }
 
     /// Every published type, by name, in index order.
@@ -655,8 +663,8 @@ impl ShapeTable {
     ///
     /// [`ShapeFault`] for a node the table cannot hold.
     pub fn push(&mut self, node: TypeShape) -> Result<NodeId, ShapeFault> {
-        if let Some(index) = self.nodes.iter().position(|held| *held == node) {
-            return Ok(NodeId::at(index));
+        if let Some(id) = self.by_node.get(&node) {
+            return Ok(*id);
         }
         let measure = self.measure(&node)?;
         if measure.depth > DEFAULT_MAX_DEPTH {
@@ -666,6 +674,10 @@ impl ShapeTable {
             return Err(ShapeFault::TooTall);
         }
         let id = NodeId::at(self.nodes.len());
+        if let TypeShape::Named { name, .. } = &node {
+            self.by_name.insert(name.clone(), id);
+        }
+        self.by_node.insert(node.clone(), id);
         self.nodes.push(node);
         self.measures.push(measure);
         Ok(id)
