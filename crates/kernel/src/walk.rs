@@ -452,7 +452,7 @@ fn departing(
     // the table entries the declaration resolved for it.
     let frame: Vec<u32> = calls
         .get(usize::try_from(node).unwrap_or(usize::MAX))
-        .map(|call| {
+        .map_or_else(Vec::new, |call| {
             call.args
                 .iter()
                 .filter_map(|arg| match arg {
@@ -461,8 +461,7 @@ fn departing(
                 })
                 .flatten()
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     for (slot, rep) in produced.into_iter().enumerate() {
         let output = u32::try_from(slot).unwrap_or(u32::MAX);
         let Some(departure) = legs.departure(node, output) else {

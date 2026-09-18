@@ -805,8 +805,7 @@ impl Chain {
                 .calls()
                 .get(node as usize)
                 .and_then(|call| self.records.packages.get(call.package))
-                .map(|metadata| metadata.errors.clone())
-                .unwrap_or_default(),
+                .map_or_else(Vec::new, |metadata| metadata.errors.clone()),
             _ => Vec::new(),
         };
         // Read back here, while the admitted form and the routed calls

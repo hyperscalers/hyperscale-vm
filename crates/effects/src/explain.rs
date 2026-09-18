@@ -342,8 +342,7 @@ fn unmet_presence(
     // would be picking by declaration order.
     let matched: Vec<&Injected> = at
         .and_then(|at| admitted.injected().get(at))
-        .map(Vec::as_slice)
-        .unwrap_or_default()
+        .map_or(&[][..], Vec::as_slice)
         .iter()
         .filter(|injected| {
             injected.rule.leaves().any(|leaf| {
@@ -410,8 +409,7 @@ fn unsatisfied_claims(admitted: &Admitted, node: u32) -> String {
     let asked: Vec<String> = admitted
         .injected()
         .get(at)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
+        .map_or(&[][..], Vec::as_slice)
         .iter()
         .filter(|injected| {
             injected
@@ -963,10 +961,9 @@ impl<'a> Names<'a> {
                     width,
                     denomination,
                 } = shape;
-                let holding = denomination
-                    .as_ref()
-                    .map(|resource| format!(", denominated in {}", self.expr(resource, SELECT)))
-                    .unwrap_or_default();
+                let holding = denomination.as_ref().map_or_else(String::new, |resource| {
+                    format!(", denominated in {}", self.expr(resource, SELECT))
+                });
                 let _ = writeln!(
                     out,
                     "  {:>5}  {name} — {}, {}, at most {width} bytes{holding}",

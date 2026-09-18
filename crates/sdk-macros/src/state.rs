@@ -183,8 +183,7 @@ pub fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)
         .path
         .segments
         .last()
-        .map(|s| s.ident.to_string())
-        .unwrap_or_default();
+        .map_or_else(String::new, |s| s.ident.to_string());
     let wrapped_instances = matches!(&element_of(&field.ty), Some(ty) if is_named(ty, "Instances"));
     let kind = match outer.as_str() {
         "Config" => FieldKind::Config,

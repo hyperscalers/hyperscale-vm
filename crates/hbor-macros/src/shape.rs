@@ -131,8 +131,7 @@ fn fields(fields: &Fields) -> Result<TokenStream> {
                 let name = field
                     .ident
                     .as_ref()
-                    .map(ToString::to_string)
-                    .unwrap_or_default();
+                    .map_or_else(String::new, ToString::to_string);
                 quote! {
                     __hbor::ShapeField {
                         name: ::std::string::ToString::to_string(#name),

@@ -499,8 +499,7 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
         .path
         .segments
         .last()
-        .map(|s| s.ident.to_string())
-        .unwrap_or_default();
+        .map_or_else(String::new, |s| s.ident.to_string());
     let variant = match name.as_str() {
         "Bucket" => quote!(Bucket),
         "NfBucket" => quote!(NfBucket),
