@@ -52,7 +52,7 @@ pub use artifact::{
     ArtifactError, METADATA_SECTION, METADATA_WIRE_DEPTH, attach_metadata, declaration_hash,
     decode_metadata, encode_metadata, extract_metadata, metadata_section,
 };
-pub use auth::{AUTHORITY_WIRE_DEPTH, Authority, PrincipalRule, RuleBytes, auth_cell_admits};
+pub use auth::{Authority, PrincipalRule, RuleBytes, auth_cell_admits};
 pub use cells::{
     COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, CrossingCell, CrossingSite, ESCROW_CLAIM_SLOT,
     ESCROW_RECORD_SLOT, MARKER_CELL_BYTES, Marked, Marker, NULLIFIER_SLOT, committed_tx_key,
@@ -107,10 +107,10 @@ pub use publish::{
 };
 pub use records::{ChainRecords, Composed, Records, issued_record};
 pub use resource::{
-    GrantedBehaviour, GrantsExpr, GrantsResolveError, MAX_RESOURCE_MATERIAL_PARTS,
-    RECORD_WIRE_DEPTH, ReachedCell, ResourceGrants, ResourceKind, ResourceMeta, ResourceRecord,
-    granting_issued_resource, holdings_collection, holdings_entry, holdings_range,
-    instance_data_key, issued_resource, protocol_resource, resource_record_key,
+    GrantedBehaviour, GrantsExpr, GrantsResolveError, MAX_RESOURCE_MATERIAL_PARTS, ReachedCell,
+    ResourceGrants, ResourceKind, ResourceMeta, ResourceRecord, granting_issued_resource,
+    holdings_collection, holdings_entry, holdings_range, instance_data_key, issued_resource,
+    protocol_resource, resource_record_key,
 };
 pub use route::{FrameDeclaration, PrefixShardResolver, ShardResolver, per_shard};
 pub use rule::{

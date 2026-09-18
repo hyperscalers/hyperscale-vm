@@ -7,8 +7,8 @@
 //! the record says what they issue, never how much of it exists.
 
 use hyperscale_hbor::{
-    Bytes, Capped, DecodeError, EncodeError, Hbor, HborShape, from_slice_with_depth, to_vec,
-    to_vec_with_depth, varint,
+    Bytes, Capped, DecodeError, EncodeError, Hbor, HborBound, HborShape, from_slice_with_depth,
+    to_vec, to_vec_with_depth, varint,
 };
 use hyperscale_vm_types::{Address, AddressClass, CollectionId, Moves, ResourceAddr, SubstateKey};
 
@@ -98,15 +98,15 @@ pub fn granting_issued_resource(
     granting_resource_address(hasher, instance, kind, rules, &material)
 }
 
-/// The decoder cap for a record cell: the one variant frame a record is,
-/// its scalar payload adding no level of its own.
+/// The decoder cap for a record cell: the levels the record's own shape
+/// nests.
 ///
-/// Exactly what the shape takes, so a record that grows a nested field
-/// fails to encode until somebody raises this on purpose — which is what
-/// the fallible [`to_cell`](ResourceRecord::to_cell) is for. Public
-/// because the record crosses one boundary: the authoring surface writes
-/// the cell a client later decodes, and the two agree by reading it here.
-pub const RECORD_WIRE_DEPTH: usize = 1;
+/// A cap that admits exactly this record's values, so one that grows a
+/// nested field moves it rather than failing against a figure written
+/// beside it. The record crosses one boundary — the authoring surface
+/// writes the cell a client later decodes — and the two agree by reading
+/// the shape.
+const CELL_DEPTH: usize = <ResourceRecord as HborBound>::MAX_DEPTH;
 
 /// One resource's record cell: what a client learns about a resource
 /// that its address cannot be read backwards to give them.
@@ -152,7 +152,7 @@ impl ResourceRecord {
     /// can reach; surfaced rather than swallowed so a future field's cap
     /// lands somewhere.
     pub fn to_cell(&self) -> Result<Vec<u8>, EncodeError> {
-        to_vec_with_depth(self, RECORD_WIRE_DEPTH)
+        to_vec_with_depth(self, CELL_DEPTH)
     }
 
     /// One record from its canonical cell bytes.
@@ -161,7 +161,7 @@ impl ResourceRecord {
     ///
     /// [`DecodeError`] on trailing bytes or a non-canonical form.
     pub fn from_cell(bytes: &[u8]) -> Result<Self, DecodeError> {
-        from_slice_with_depth(bytes, RECORD_WIRE_DEPTH)
+        from_slice_with_depth(bytes, CELL_DEPTH)
     }
 }
 

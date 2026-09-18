@@ -10,8 +10,8 @@
 //! judges that read it agree.
 
 use hyperscale_hbor::{
-    Bytes, DecodeError, EncodeError, Hbor, HborShape, from_slice, from_slice_with_depth, to_vec,
-    to_vec_with_depth,
+    Bytes, DecodeError, EncodeError, Hbor, HborBound, HborShape, from_slice, from_slice_with_depth,
+    to_vec, to_vec_with_depth,
 };
 use hyperscale_vm_types::Address;
 
@@ -145,15 +145,15 @@ pub struct Authority {
     pub confirmation: RuleBytes,
 }
 
-/// The decoder cap for the governing cell: the record frame is one
-/// level, and each of the two byte strings it holds is one more.
+/// The decoder cap for the governing cell: the levels the record's own
+/// shape nests.
 ///
-/// Exactly what the shape takes, so a record that grows a nested field
-/// fails to encode until somebody raises this on purpose. Public because
-/// the record crosses one boundary: the account writes the cell its
-/// shard and the fee reservation later decode, and the three agree by
-/// reading it here.
-pub const AUTHORITY_WIRE_DEPTH: usize = 2;
+/// A cap that admits exactly this record's values, so one that grows a
+/// nested field moves it rather than failing against a figure written
+/// beside it. The record crosses one boundary — the account writes the
+/// cell its shard and the fee reservation later decode — and the three
+/// agree by reading the shape.
+const CELL_DEPTH: usize = <Authority as HborBound>::MAX_DEPTH;
 
 impl Authority {
     /// The policy an account has before it names a second factor: the
@@ -176,7 +176,7 @@ impl Authority {
     /// Only on an encoder failure no pair of byte strings can reach.
     #[must_use]
     pub fn in_cell(&self) -> Vec<u8> {
-        to_vec_with_depth(self, AUTHORITY_WIRE_DEPTH).expect("a pair of byte strings encodes")
+        to_vec_with_depth(self, CELL_DEPTH).expect("a pair of byte strings encodes")
     }
 
     /// The record a governing cell holds.
@@ -189,7 +189,7 @@ impl Authority {
     ///
     /// [`DecodeError`] on bytes that are not this record.
     pub fn from_cell(cell: &[u8]) -> Result<Self, DecodeError> {
-        from_slice_with_depth(cell, AUTHORITY_WIRE_DEPTH)
+        from_slice_with_depth(cell, CELL_DEPTH)
     }
 }
 

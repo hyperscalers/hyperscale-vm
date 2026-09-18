@@ -49,16 +49,16 @@
 //! clause follows from calling one.
 
 use hyperscale_hbor::{
-    Bytes, Capped, DEFAULT_MAX_DEPTH, Hbor, HborDecode, HborEncode, HborShape, Overflow, ShapeNode,
+    Bytes, Capped, Hbor, HborBound, HborDecode, HborEncode, HborShape, Overflow, ShapeNode,
     from_slice_with_depth, to_vec_with_depth,
 };
+use hyperscale_vm_effects::Authority;
 /// The record a resource's cell holds, in the shape a client reads.
 ///
 /// Named here for the code the macro emits: a body never constructs one —
 /// `create` on the record handle states at most a display width, and the
 /// kind comes from the mark's own declaration.
 pub use hyperscale_vm_effects::ResourceRecord;
-use hyperscale_vm_effects::{AUTHORITY_WIRE_DEPTH, Authority, RECORD_WIRE_DEPTH};
 /// The stored-authority vocabulary, named where a body's words live.
 ///
 /// A rule parameter is [`RuleBytes`] — the same type a cell holds, so a
@@ -287,13 +287,15 @@ pub trait Cellular: Sized {
 /// through its own `Cellular`, where absence is zero, and framed through
 /// this one, where absence is `None`.
 pub trait Record: HborEncode + HborDecode + HborShape + LeafShape {
-    /// The decoder nesting cap this type is read under.
+    /// The decoder nesting cap this type is read under: the levels its
+    /// own shape nests.
     ///
-    /// The default is the encoder's own, which is the right bound for a
-    /// record only its own package writes. A type whose content a caller
-    /// supplies states a tighter one, so the admissible set is exact
-    /// rather than merely bounded.
-    const WIRE_DEPTH: usize = DEFAULT_MAX_DEPTH;
+    /// A cap that admits exactly the type's values and nothing deeper,
+    /// which is what makes the admissible set exact rather than merely
+    /// bounded. Not a figure a record states: the shape it already
+    /// publishes is where the answer is, and a second statement beside
+    /// it would be one to keep in step.
+    const WIRE_DEPTH: usize = <Self as HborBound>::MAX_DEPTH;
 }
 
 /// A record's cell: its encoding, or no bytes at all.
@@ -323,21 +325,15 @@ impl<T: Record> Cellular for Option<T> {
 /// them: [`crate::RuleBytes`] is `hyperscale-vm-effects`', and that crate
 /// does not depend on the SDK.
 ///
-/// One byte string and no nesting of its own — what a rule holds is the
-/// rule vocabulary's, decoded where the rule is judged, so the cap here
-/// is the one level a byte string occupies. This is what frames a rule
-/// cell, and the framing `RuleBytes::rule_in_cell` reads back.
-impl Record for RuleBytes {
-    const WIRE_DEPTH: usize = 1;
-}
+/// What a rule holds is the rule vocabulary's, decoded where the rule is
+/// judged, so what this frames is one byte string. This is what frames a
+/// rule cell, and the framing `RuleBytes::rule_in_cell` reads back.
+impl Record for RuleBytes {}
 
-/// An account's governing record, under the cap its own crate states:
-/// this is what frames the governing cell, and the framing
-/// `Authority::from_cell` reads back where the kernel's sign-in and the
-/// fee reservation both read it.
-impl Record for Authority {
-    const WIRE_DEPTH: usize = AUTHORITY_WIRE_DEPTH;
-}
+/// An account's governing record: what frames the governing cell, and
+/// the framing `Authority::from_cell` reads back where the kernel's
+/// sign-in and the fee reservation both read it.
+impl Record for Authority {}
 
 /// A period, an epoch, a sequence number: the one scalar the vocabulary
 /// frames the way it frames a record, so a cell of it can hold *nothing*
@@ -347,9 +343,7 @@ impl Record for Authority {
 /// bytes at all — the same eight little-endian bytes the bare cell
 /// holds, so the two forms differ in what absence means and in nothing
 /// about a present value.
-impl Record for u64 {
-    const WIRE_DEPTH: usize = 1;
-}
+impl Record for u64 {}
 
 impl LeafShape for u128 {
     const LEAF: &'static ShapeNode = &ShapeNode::U128;
@@ -1754,10 +1748,9 @@ impl Keyed<Instances> {
     }
 }
 
-/// The record cell decodes under the same cap the protocol reads it at.
-impl Record for ResourceRecord {
-    const WIRE_DEPTH: usize = RECORD_WIRE_DEPTH;
-}
+/// The record cell decodes under the same cap the protocol reads it at,
+/// because both are the shape's own.
+impl Record for ResourceRecord {}
 
 /// As the unit entry: presence is the whole of what a holdings entry
 /// says, so there is nothing to write and nothing to decode.
