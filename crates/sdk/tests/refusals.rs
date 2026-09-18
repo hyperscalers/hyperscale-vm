@@ -134,7 +134,6 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/bare_mint_with_record.rs");
     refuse.compile_fail("tests/refusals/fielded_mint_without_record.rs");
     refuse.compile_fail("tests/refusals/fielded_fungible.rs");
-    refuse.compile_fail("tests/refusals/renamed_onto_the_seal.rs");
     refuse.compile_fail("tests/refusals/grant_chains_two_badges.rs");
     refuse.compile_fail("tests/refusals/instance_of_a_balance.rs");
     refuse.compile_fail("tests/refusals/supply_of_a_schema.rs");
@@ -161,7 +160,6 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
 fn the_lowering_refuses_a_mark_it_can_see_is_wrong() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/total_gated.rs");
-    refuse.compile_fail("tests/refusals/name_restates_the_derivation.rs");
 }
 
 /// A gate names an identity its target names, at every leaf.
@@ -303,8 +301,8 @@ fn the_lowering_refuses_a_gate_outside_the_state_impl() {
     refuse.compile_fail("tests/refusals/foreign_gated.rs");
 }
 
-/// A published name names one export. The collision the `instantiate`
-/// check already caught for the seal is every name's hazard, and it
+/// A published name names one export. Two identifiers can spell one
+/// published name — the kebab form erases case — and the collision
 /// refuses at the line that wrote it rather than panicking inside the
 /// generated `blueprint()`.
 #[test]
@@ -315,16 +313,14 @@ fn the_lowering_refuses_a_published_name_collision() {
 
 /// The bring-up is one node with one body, and what an authored
 /// `instantiate` may say about it is exactly what any method may — minus
-/// a return type, since the supply is `initial(..)`'s; minus a gate,
-/// since the founder is the configuration's; and minus a published name,
-/// since the name is what marks it. A refusing body ends in `Ok(())`,
-/// because the supply is filed after it.
+/// a return type, since the supply is `initial(..)`'s, and minus a gate,
+/// since the founder is the configuration's. A refusing body ends in
+/// `Ok(())`, because the supply is filed after it.
 #[test]
 fn the_lowering_bounds_the_bring_up_body() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/bring_up_returns.rs");
     refuse.compile_fail("tests/refusals/bring_up_gated.rs");
-    refuse.compile_fail("tests/refusals/bring_up_renamed.rs");
     refuse.compile_fail("tests/refusals/bring_up_tail.rs");
 }
 
@@ -362,15 +358,14 @@ fn the_lowering_refuses_a_second_gate() {
     refuse.compile_fail("tests/refusals/duplicate_config_requires.rs");
 }
 
-/// A field's `#[slot]`/`#[holds]` and a method's `#[name]` are each one
-/// pin. A second would silently win while the first vanished — the
-/// smaller-than-written declaration this derivation must not have — so it
-/// is refused across both spans, like a second gate.
+/// A field's `#[slot]` is one pin. A second would silently win while the
+/// first vanished — the smaller-than-written declaration this derivation
+/// must not have — so it is refused across both spans, like a second
+/// gate.
 #[test]
 fn the_lowering_refuses_a_duplicate_pin() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/duplicate_slot.rs");
-    refuse.compile_fail("tests/refusals/duplicate_name.rs");
 }
 
 /// One `#[state]` struct, one `#[config]` struct.
@@ -483,7 +478,7 @@ fn the_macro_refuses_a_marker_nothing_reads() {
     refuse.compile_fail("tests/refusals/slot_on_config_field.rs");
     refuse.compile_fail("tests/refusals/requires_on_state_struct.rs");
     refuse.compile_fail("tests/refusals/total_on_private_method.rs");
-    refuse.compile_fail("tests/refusals/name_in_foreign_impl.rs");
+    refuse.compile_fail("tests/refusals/total_in_foreign_impl.rs");
     refuse.compile_fail("tests/refusals/proves_on_struct.rs");
     refuse.compile_fail("tests/refusals/requires_on_enum.rs");
     refuse.compile_fail("tests/refusals/marker_on_free_fn.rs");

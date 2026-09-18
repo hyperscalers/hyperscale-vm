@@ -1,5 +1,5 @@
-error: another method already publishes as `tally`, and a published name names one export
-  --> tests/refusals/colliding_name.rs:19:9
+error: another method already publishes as `re-count`, and a published name names one export
+  --> tests/refusals/colliding_name.rs:20:16
    |
-19 |         #[name("tally")]
-   |         ^
+20 |         pub fn reCount(&self) -> Quantity {
+   |                ^^^^^^^

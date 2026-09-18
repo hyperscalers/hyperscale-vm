@@ -810,13 +810,8 @@ mod board {
         }
 
         /// Two of the three, whichever two.
-        ///
-        /// Published under a name its Rust identifier does not derive:
-        /// what a package publishes outlives the identifier that
-        /// happened to name it, so the rename is stated once.
-        #[name("reset")]
         #[requires(n_of(2, config.chair, config.deputy, config.third))]
-        pub fn clear_fee(&mut self) {
+        pub fn reset(&mut self) {
             self.fee.set(Quantity::ZERO);
         }
 
@@ -856,8 +851,7 @@ fn a_declared_gate_carries_the_whole_threshold_algebra() {
             rules: vec![slot(0), slot(1)],
         },
     );
-    // `n_of` is the threshold no operator expresses, and this one is
-    // published under a name its identifier does not derive.
+    // `n_of` is the threshold no operator expresses.
     assert_eq!(
         requires("reset"),
         RuleExpr::CountOf {

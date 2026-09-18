@@ -109,8 +109,6 @@
 //!   badge parameter (an address; the id a `u64`).
 //! - `#[total]` — the method cannot refuse or trap; the gate checks the
 //!   claim against the artifact.
-//! - `#[name("…")]` — publish under this name instead of the kebab-cased
-//!   identifier.
 //!
 //! A method carries at most one gate attribute.
 //!
@@ -530,48 +528,16 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
 }
 
 /// The published name of a method: its Rust name as the protocol spells
-/// names, unless `#[name("…")]` says otherwise.
-///
-/// Kebab by default because every other published name already is — the
-/// module's exports, its events, its errors — so a method was the one
-/// place an author restated a rule the macro applies everywhere else.
-/// The attribute stays for the rename that is not a respelling: a
-/// published name outlives the Rust identifier that happened to derive
-/// it, and a package whose method reads better under another name says
-/// so once.
-fn method_name(method: &syn::ImplItemFn) -> syn::Result<String> {
-    let mut names = method.attrs.iter().filter(|a| a.path().is_ident("name"));
-    let Some(attr) = names.next() else {
-        return Ok(kebab(&method.sig.ident.to_string()));
-    };
-    // Reading the first and stopping would take one `#[name]`'s word while
-    // a second vanished — the silently-renamed method this must not allow.
-    if let Some(second) = names.next() {
-        let mut refusal =
-            syn::Error::new_spanned(second, "a method carries one `#[name]` — this repeats it");
-        refusal.combine(syn::Error::new_spanned(
-            attr,
-            "the `#[name]` this method already carries",
-        ));
-        return Err(refusal);
-    }
-    let literal: syn::LitStr = attr.parse_args()?;
-    let published = literal.value();
-    if published == kebab(&method.sig.ident.to_string()) {
-        return Err(syn::Error::new_spanned(
-            attr,
-            "this is the name the method already publishes — a `#[name]` that \
-             restates the derivation says nothing, and one that stops agreeing \
-             with it silently renames the method",
-        ));
-    }
-    Ok(published)
+/// names, which is how every other published name — the module's
+/// exports, its events, its errors — is already derived.
+fn method_name(method: &syn::ImplItemFn) -> String {
+    kebab(&method.sig.ident.to_string())
 }
 
 /// The macro's own attributes, which are read and then removed so what it
 /// emits is ordinary Rust.
 const OWN: &[&str] = &[
-    "slot", "holds", "width", "state", "config", "name", "event", "error", "record", "resource",
+    "slot", "holds", "width", "state", "config", "event", "error", "record", "resource",
     "requires", "proves", "total", "emits",
 ];
 
@@ -858,7 +824,7 @@ fn check_reserved_locals(items: &[syn::Item], state_name: &syn::Ident) -> syn::R
 /// shapes is still one codec, and the other markers read fields a struct
 /// has.
 const ON_A_STRUCT: &[&str] = &["state", "config", "event", "resource"];
-const ON_A_METHOD: &[&str] = &["proves", "total", "name", "emits"];
+const ON_A_METHOD: &[&str] = &["proves", "total", "emits"];
 const ON_A_STATE_FIELD: &[&str] = &["slot", "holds", "width"];
 
 fn marker_kinds_on_struct(
@@ -936,9 +902,7 @@ fn marker_kinds_on_enum(item: &syn::ItemEnum) -> syn::Result<()> {
     }
     if let Some((attr, name)) = own_attr(
         &item.attrs,
-        &[
-            "requires", "proves", "total", "name", "slot", "holds", "width",
-        ],
+        &["requires", "proves", "total", "slot", "holds", "width"],
     ) {
         return Err(syn::Error::new_spanned(
             attr,
@@ -1321,7 +1285,7 @@ fn lower_method(
     serves: client::Serves,
     seal: Option<Range<usize>>,
 ) -> syn::Result<Lowered> {
-    let published = method_name(method)?;
+    let published = method_name(method);
     let mut params = Vec::new();
     let mut idents = Vec::new();
     let mut kinds = Vec::new();
@@ -1493,7 +1457,7 @@ fn refuse_unpublished_marks<'a>(
                 format!("a gate guards a published method, and {because}, or drop the attribute"),
             ));
         }
-        if let Some((attr, _)) = own_attr(&method.attrs, &["total", "name"]) {
+        if let Some((attr, _)) = own_attr(&method.attrs, &["total"]) {
             return Err(syn::Error::new_spanned(
                 attr,
                 format!("this describes a published method, and {because}, or drop the attribute"),
@@ -1548,33 +1512,18 @@ fn lower_methods(
                 )?;
             }
             if matches!(method.vis, syn::Visibility::Public(_)) {
-                // The published name, not the Rust one: `#[name(..)]`
-                // reaches the same collisions, and the builder would
-                // catch them as a panic from inside a generated
-                // `blueprint()` rather than at the line that wrote them.
-                let name = method_name(method)?;
-                let at = || {
-                    method
-                        .attrs
-                        .iter()
-                        .find(|attr| attr.path().is_ident("name"))
-                        .map_or_else(|| method.sig.ident.span(), Spanned::span)
-                };
-                if matches!(serves, client::Serves::Instances)
-                    && (name == INSTANTIATE || method.sig.ident == INSTANTIATE)
-                {
+                // The published name rather than the Rust one: two
+                // identifiers can spell one published name, and the
+                // builder would catch that as a panic from inside a
+                // generated `blueprint()` rather than at the line that
+                // wrote it.
+                let name = method_name(method);
+                let at = || method.sig.ident.span();
+                if matches!(serves, client::Serves::Instances) && method.sig.ident == INSTANTIATE {
                     // The bring-up's body, by the Rust name: what the
                     // author wrote is spliced into the seal the macro
                     // synthesizes, rather than lowered as a method of its
-                    // own. The published name is the seal's alone.
-                    if method.sig.ident != INSTANTIATE {
-                        return Err(syn::Error::new(
-                            at(),
-                            "`instantiate` is the seal: the macro derives it for every \
-                             instance-serving package, and a method named `instantiate` \
-                             is its body — an authored method cannot be renamed onto it",
-                        ));
-                    }
+                    // own.
                     if published.contains(&name) {
                         return Err(syn::Error::new(
                             at(),
@@ -1825,13 +1774,6 @@ fn bring_up_body(method: &syn::ImplItemFn) -> syn::Result<BringUp> {
             "the bring-up's gate is the configuration's: `#[requires(..)]` on the \
              `#[config]` struct names who may bring a component up, and a second \
              spelling here would be a second answer",
-        ));
-    }
-    if let Some((attr, _)) = own_attr(&method.attrs, &["name"]) {
-        return Err(syn::Error::new_spanned(
-            attr,
-            "`instantiate` is the seal's published name, and the method's own name is \
-             what marks it as the seal's body — it cannot publish under another",
         ));
     }
     let declines = match &method.sig.output {

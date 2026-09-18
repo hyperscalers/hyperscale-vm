@@ -1,5 +1,0 @@
-error: `instantiate` is the seal: the macro derives it for every instance-serving package, and a method named `instantiate` is its body — an authored method cannot be renamed onto it
-  --> tests/refusals/renamed_onto_the_seal.rs:11:9
-   |
-11 |         #[name("instantiate")]
-   |         ^

@@ -9,15 +9,15 @@ mod contract {
     }
 
     impl Contract {
-        pub fn tally(&self) -> Quantity {
+        pub fn re_count(&self) -> Quantity {
             Quantity::from_subunits(0)
         }
 
-        // A rename landing on a sibling's published name: one export per
-        // name, refused at the line rather than a panic inside the
-        // generated `blueprint()`.
-        #[name("tally")]
-        pub fn recount(&self) -> Quantity {
+        // Two identifiers spelling one published name: the kebab form
+        // erases case, so one export per name is refused at the line
+        // rather than as a panic inside the generated `blueprint()`.
+        #[allow(non_snake_case)]
+        pub fn reCount(&self) -> Quantity {
             Quantity::from_subunits(1)
         }
     }

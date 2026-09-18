@@ -5,9 +5,9 @@ mod contract {
     struct Helper;
 
     impl Helper {
-        // Only the state struct's methods publish; a published name on
-        // anything else names nothing.
-        #[name("noted")]
+        // Only the state struct's methods publish; a mark on anything
+        // else describes nothing.
+        #[total]
         pub fn noted(&self) -> u64 {
             0
         }
