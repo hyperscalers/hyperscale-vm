@@ -2,6 +2,7 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 mod contract {
+    use hyperscale_vm_sdk::hbor::Capped;
     use hyperscale_vm_sdk::state::{Cell, NfBucket};
 
     #[resource(non_fungible)]
@@ -11,7 +12,7 @@ mod contract {
 
     #[config]
     struct Settings {
-        rows: Vec<u64>,
+        rows: Capped<Vec<u64>, 4>,
     }
 
     #[state]

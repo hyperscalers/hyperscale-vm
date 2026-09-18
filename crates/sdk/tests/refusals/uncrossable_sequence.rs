@@ -3,11 +3,12 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint]
 mod contract {
     use hyperscale_vm_sdk::Address;
+    use hyperscale_vm_sdk::hbor::Capped;
     use hyperscale_vm_sdk::state::Cell;
 
     #[config]
     struct Settings {
-        parties: Vec<Address>,
+        parties: Capped<Vec<Address>, 4>,
     }
 
     #[state]

@@ -2,12 +2,13 @@ use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
 mod contract {
+    use hyperscale_vm_sdk::hbor::Capped;
     use hyperscale_vm_sdk::state::Keyed;
 
     #[config]
     struct Settings {
-        rows: Vec<u64>,
-        columns: Vec<u64>,
+        rows: Capped<Vec<u64>, 4>,
+        columns: Capped<Vec<u64>, 4>,
     }
 
     #[state]

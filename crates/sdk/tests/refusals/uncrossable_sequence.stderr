@@ -1,5 +1,5 @@
 error: this value crosses the call boundary as nothing an export parameter can carry — a sequence crosses as the numbers it holds, and only a byte string crosses as the bytes a guest decodes
-  --> tests/refusals/uncrossable_sequence.rs:20:38
+  --> tests/refusals/uncrossable_sequence.rs:21:38
    |
-20 |             self.noted.set(how_many(&self.config().parties));
+21 |             self.noted.set(how_many(&self.config().parties));
    |                                      ^^^^

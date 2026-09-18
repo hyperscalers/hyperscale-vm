@@ -2315,6 +2315,7 @@ fn expand(
     check_marker_kinds(items, &state_name, config_name.as_ref())?;
     check_vocabulary_shadows(items)?;
     check_reserved_locals(items, &state_name)?;
+    records::refuse_uncapped(items)?;
     let config_fields = config_slots(items, config_name.as_ref());
     check_config_width(config_name.as_ref(), config_fields.len())?;
     let events = event_names(items)?;

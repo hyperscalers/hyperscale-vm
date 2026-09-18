@@ -485,6 +485,21 @@ fn the_generated_client_refuses_a_call_it_cannot_shape() {
 /// state struct, a mark on a private method or a helper's — would
 /// otherwise vanish without declaring anything. Each refusal names the
 /// placement that is read.
+/// What a package writes has a width its declaration states, so what it
+/// declares carries its cap in its own type; and a leaf holds one value,
+/// so a collection reaches state through the slot kinds and never
+/// through a cell.
+///
+/// The type system says both — a shaped type cannot name an uncapped
+/// collection, and no `LeafShape` covers one — but it says them on a
+/// generated line. These pin the refusals to the field.
+#[test]
+fn the_macro_refuses_a_collection_no_declaration_bounds() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/uncapped_collection_in_a_record.rs");
+    refuse.compile_fail("tests/refusals/collection_in_a_cell.rs");
+}
+
 #[test]
 fn the_macro_refuses_a_marker_nothing_reads() {
     let refuse = TestCases::new();

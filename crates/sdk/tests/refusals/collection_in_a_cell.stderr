@@ -1,0 +1,19 @@
+error: a leaf holds one value, and a collection in one is a collection with every property of one lost — declare the field `Keyed<_>`, `Ordered<_>` or `Unordered<_>`, which is the same idea where the entries are leaves of their own
+  --> tests/refusals/collection_in_a_cell.rs:14:20
+   |
+14 |         seen: Cell<Capped<Vec<u64>, 4>>,
+   |                    ^^^^^^
+
+error[E0599]: the method `set` exists for struct `hyperscale_vm_sdk::state::Cell<Capped<Vec<u64>, 4>>`, but its trait bounds were not satisfied
+  --> tests/refusals/collection_in_a_cell.rs:19:23
+   |
+19 |             self.seen.set(Capped::empty());
+   |                       ^^^ method cannot be called due to unsatisfied trait bounds
+   |
+  ::: $WORKSPACE/crates/hbor/src/capped.rs
+   |
+   | pub struct Capped<C, const N: usize>(C);
+   | ------------------------------------ doesn't satisfy `Capped<Vec<u64>, 4>: Cellular`
+   |
+   = note: the following trait bounds were not satisfied:
+           `Capped<Vec<u64>, 4>: Cellular`

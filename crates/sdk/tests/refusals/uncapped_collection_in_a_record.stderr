@@ -1,0 +1,22 @@
+error: a `#[record]` field carries its cap in its own type, because the width of what a package writes is what its declaration states — write `Capped<Vec<_>, N>`
+  --> tests/refusals/uncapped_collection_in_a_record.rs:13:18
+   |
+13 |         parties: Vec<u64>,
+   |                  ^^^
+
+error[E0277]: the trait bound `Vec<u64>: HborShape` is not satisfied
+  --> tests/refusals/uncapped_collection_in_a_record.rs:13:18
+   |
+13 |         parties: Vec<u64>,
+   |                  ^^^^^^^^ the trait `HborShape` is not implemented for `Vec<u64>`
+   |
+   = help: the following other types implement trait `HborShape`:
+             ()
+             (A, B)
+             (A, B, C)
+             (A, B, C, D)
+             Arc<T>
+             Authority
+             Box<T>
+             Capped<BTreeMap<K, V>, N>
+           and $N others

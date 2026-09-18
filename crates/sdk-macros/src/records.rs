@@ -8,8 +8,96 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use quote::quote;
+use syn::spanned::Spanned as _;
 
 use crate::role::Role;
+
+/// The type to write where a bare collection was, or `None` where the
+/// type is not one.
+///
+/// Read syntactically, as every type reading in this macro is. A cap
+/// behind an alias is one the macro cannot see, and the type system
+/// refuses that too — a shaped type cannot name an uncapped collection,
+/// and a configured one has no cap for a `for-each` to be priced at.
+pub fn uncapped(ty: &syn::Type) -> Option<&'static str> {
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    let held = |name: &str| {
+        let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+            return false;
+        };
+        matches!(args.args.first(), Some(syn::GenericArgument::Type(inner))
+            if matches!(inner, syn::Type::Path(p) if p.path.is_ident(name)))
+    };
+    match segment.ident.to_string().as_str() {
+        "Vec" if held("u8") => Some("Bytes<N>"),
+        "Vec" => Some("Capped<Vec<_>, N>"),
+        "String" => Some("Text<N>"),
+        "BTreeSet" => Some("Capped<BTreeSet<_>, N>"),
+        "BTreeMap" => Some("Capped<BTreeMap<_, _>, N>"),
+        _ => None,
+    }
+}
+
+/// Whether `ty` is many values under one name.
+///
+/// What a slot kind carries and a leaf does not: the properties a
+/// collection has — many leaves, per entry routing, independent writers
+/// — are exactly the ones a cell loses. Opaque bytes are one value a
+/// package moves without reading, so they are not one of these.
+pub fn is_collection(ty: &syn::Type) -> bool {
+    let syn::Type::Path(path) = ty else {
+        return false;
+    };
+    let Some(segment) = path.path.segments.last() else {
+        return false;
+    };
+    let holds_bytes = matches!(uncapped(ty), Some("Bytes<N>"));
+    matches!(
+        segment.ident.to_string().as_str(),
+        "Vec" | "BTreeSet" | "BTreeMap" | "Capped"
+    ) && !holds_bytes
+}
+
+/// Refuse a collection whose type does not say how much of it there can
+/// be, in every position a package declares one.
+///
+/// The width of what a package writes is what the publish gate holds to
+/// the kernel's caps, and a collection with no cap has none: the type
+/// system says so too, since a shaped type cannot name one, but it says
+/// it on a generated line. This says it on the field.
+///
+/// # Errors
+///
+/// On the first field carrying one, naming the type to write instead.
+pub fn refuse_uncapped(items: &[syn::Item]) -> syn::Result<()> {
+    for item in items {
+        let Some(declared) = Declared::of(item) else {
+            continue;
+        };
+        let marked = ["record", "event", "resource", "config"]
+            .into_iter()
+            .find(|mark| declared.marked(mark));
+        let Some(mark) = marked else {
+            continue;
+        };
+        for field in declared.fields() {
+            let Some(write) = uncapped(&field.ty) else {
+                continue;
+            };
+            return Err(syn::Error::new(
+                field.ty.span(),
+                format!(
+                    "a `#[{mark}]` field carries its cap in its own type, because the width \
+                     of what a package writes is what its declaration states — write `{write}`"
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// One inherent `emit` per event type, at the index the name table fixes.
 ///

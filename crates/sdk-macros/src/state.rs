@@ -209,6 +209,20 @@ pub fn parse_field(field: &syn::Field, next: u16) -> syn::Result<(String, Field)
             ));
         }
     };
+    // A leaf holds one value, and a collection in one is many: the
+    // properties a collection has — many leaves, per entry routing,
+    // independent writers — are exactly what a cell loses. The slot
+    // kinds are where they live.
+    if let Some(held) = element_of(&field.ty)
+        && crate::records::is_collection(&held)
+    {
+        return Err(syn::Error::new(
+            held.span(),
+            "a leaf holds one value, and a collection in one is a collection with every \
+             property of one lost — declare the field `Keyed<_>`, `Ordered<_>` or \
+             `Unordered<_>`, which is the same idea where the entries are leaves of their own",
+        ));
+    }
     // The element is the field type's own name: `NfVault` is what the
     // derivation reads off a collection that holds instances, and the
     // declared spellings are the ones that put it there.
