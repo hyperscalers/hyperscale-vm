@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 mod common;
 
 use common::admit_leaf;
-use hyperscale_hbor::{Bytes, Capped};
+use hyperscale_hbor::{Bytes, Capped, Name};
 use hyperscale_vm_effects::{
     Claim, Clause, Constraint, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta, Intent,
     IntentHeader, IntentTree, ManifestGraph, MethodSignature, PackageHash, PackageMetadata,
@@ -703,7 +703,7 @@ fn a_threshold_is_satisfiable_where_enough_branches_are() {
 fn venue_metadata() -> PackageMetadata {
     let mut package = PackageMetadata::default();
     package.methods.insert(
-        "approve".into(),
+        Name::declared("approve"),
         MethodSignature {
             totality: Totality::Fallible,
             effects: vec![Clause::Proves {

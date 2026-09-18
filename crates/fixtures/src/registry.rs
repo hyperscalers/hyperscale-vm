@@ -5,7 +5,7 @@
 //! wrappers a client calls it through. A signature and the wrapper
 //! mirroring it drift the moment they live apart.
 
-use hyperscale_hbor::{Capped, TypeShape};
+use hyperscale_hbor::{Capped, Name, TypeShape};
 use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::{
     AbiParam, Expr, MethodSignature, PackageMetadata, ParamType, SlotId, SlotKind,
@@ -57,7 +57,7 @@ pub fn metadata() -> PackageMetadata {
     methods.state.insert(
         NAMES,
         SlotShape {
-            name: "names".to_owned(),
+            name: Name::declared("names"),
             kind: SlotKind::Unordered,
             element: amount,
             width: 16,
@@ -66,7 +66,7 @@ pub fn metadata() -> PackageMetadata {
     );
     let (target, order) = binding(0);
     methods.methods.insert(
-        "bind".into(),
+        Name::declared("bind"),
         MethodSignature {
             totality: Totality::Infallible,
             issues: Capped::empty(),
@@ -88,7 +88,7 @@ pub fn metadata() -> PackageMetadata {
     );
     let (target, _) = binding(0);
     methods.methods.insert(
-        "check".into(),
+        Name::declared("check"),
         MethodSignature {
             totality: Totality::Infallible,
             issues: Capped::empty(),
@@ -108,7 +108,7 @@ pub fn metadata() -> PackageMetadata {
         },
     );
     methods.methods.insert(
-        "drain".into(),
+        Name::declared("drain"),
         MethodSignature {
             totality: Totality::Infallible,
             issues: Capped::empty(),

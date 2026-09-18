@@ -7,6 +7,7 @@
 //! surface at invocation, through whatever error channel the runtime it
 //! met happened to have.
 
+use hyperscale_hbor::Name;
 use hyperscale_vm_effects::{
     AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, SlotRef,
     TargetExpr, package_slot, seal_clauses,
@@ -33,14 +34,14 @@ fn taking(resource: Option<&str>) -> Vec<u8> {
 fn spreading(abi: Vec<AbiParam>) -> PackageMetadata {
     let mut metadata = PackageMetadata::default();
     metadata.methods.insert(
-        "instantiate".into(),
+        Name::declared("instantiate"),
         MethodSignature {
             effects: seal_clauses(),
             ..MethodSignature::default()
         },
     );
     metadata.methods.insert(
-        "m".into(),
+        Name::declared("m"),
         MethodSignature {
             params: vec![ParamType::Ids],
             abi,

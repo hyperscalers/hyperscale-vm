@@ -11,7 +11,7 @@ use common::{
     ALICE, BOB, RES_X, admit_leaf, admit_leaf_presenting, meta_granting, payouts, pkg, resolver,
     shard_of, vault, world,
 };
-use hyperscale_hbor::{Bytes, Capped};
+use hyperscale_hbor::{Bytes, Capped, Name};
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, HALT, VAULT};
 use hyperscale_vm_effects::{
     AbiParam, AdmissionError, Claim, ClaimRef, Clause, Condition, Constraint, EdgeRef, EvalError,
@@ -60,7 +60,7 @@ fn splitter() -> ComponentAddr {
 fn sorter_metadata() -> PackageMetadata {
     let mut package = PackageMetadata::default();
     package.methods.insert(
-        "sort".into(),
+        Name::declared("sort"),
         MethodSignature {
             totality: Totality::Infallible,
             params: vec![ParamType::Bucket, ParamType::Address],
@@ -341,7 +341,7 @@ fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, Com
     };
     let mut package = PackageMetadata::default();
     package.methods.insert(
-        "present".into(),
+        Name::declared("present"),
         MethodSignature {
             totality: Totality::Fallible,
             effects,
@@ -358,7 +358,7 @@ fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, Com
         Presenting::Fungible(_) | Presenting::Instance(..) => Expr::Config(0),
     };
     package.methods.insert(
-        "operate".into(),
+        Name::declared("operate"),
         MethodSignature {
             totality: Totality::Fallible,
             effects: vec![Clause::Requires {
@@ -609,7 +609,7 @@ fn an_unsatisfied_gate_reads_back_leaf_by_leaf() {
     // short by exactly one leaf.
     let mut package = PackageMetadata::default();
     package.methods.insert(
-        "operate".into(),
+        Name::declared("operate"),
         MethodSignature {
             totality: Totality::Fallible,
             effects: vec![Clause::Requires {
@@ -1036,7 +1036,7 @@ fn a_component_address_where_a_resource_belongs_is_refused() {
 fn a_refusal_names_the_listed_clause_that_declared_it() {
     let mut package = PackageMetadata::default();
     package.methods.insert(
-        "grab".into(),
+        Name::declared("grab"),
         MethodSignature {
             totality: Totality::Fallible,
             effects: vec![
@@ -1117,7 +1117,7 @@ fn a_refusal_names_the_listed_clause_that_declared_it() {
 fn an_unbindable_abi_param_is_explained_as_a_binding() {
     let mut package = PackageMetadata::default();
     package.methods.insert(
-        "poke".into(),
+        Name::declared("poke"),
         MethodSignature {
             totality: Totality::Fallible,
             params: vec![ParamType::U64],
@@ -1275,7 +1275,7 @@ fn a_double_destruction_asks_the_burn_question_once() {
 
     let mut package = PackageMetadata::default();
     package.methods.insert(
-        "shred".into(),
+        Name::declared("shred"),
         MethodSignature {
             totality: Totality::Fallible,
             params: vec![ParamType::Bucket, ParamType::Bucket],
@@ -1408,7 +1408,7 @@ fn the_injection_dedup_scan_is_charged_work() {
 
     let mut package = PackageMetadata::default();
     package.methods.insert(
-        "drain".into(),
+        Name::declared("drain"),
         MethodSignature {
             totality: Totality::Fallible,
             effects,
@@ -1525,7 +1525,7 @@ fn conditional_component(chain: &mut Records) -> ComponentAddr {
     };
     let mut package = PackageMetadata::default();
     package.methods.insert(
-        "act".into(),
+        Name::declared("act"),
         MethodSignature {
             totality: Totality::Fallible,
             effects: vec![
@@ -1680,7 +1680,7 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
 fn evidence_follows_the_conditions_this_call_evaluated() {
     let mut package = PackageMetadata::default();
     package.methods.insert(
-        "settle".into(),
+        Name::declared("settle"),
         MethodSignature {
             totality: Totality::Fallible,
             params: vec![ParamType::U64],
@@ -1778,7 +1778,7 @@ fn seizable_meta() -> ResourceMeta {
 fn bailiff_world() -> (Records, ComponentAddr) {
     let mut package = PackageMetadata::default();
     package.methods.insert(
-        "seize".into(),
+        Name::declared("seize"),
         MethodSignature {
             totality: Totality::Fallible,
             params: vec![ParamType::Address, ParamType::U64, ParamType::Resource],
@@ -1960,7 +1960,7 @@ fn a_reach_is_admitted_by_the_reached_resource_and_by_nothing_else() {
 fn keeper_metadata() -> PackageMetadata {
     let mut package = PackageMetadata::default();
     package.methods.insert(
-        "file".into(),
+        Name::declared("file"),
         MethodSignature {
             totality: Totality::Infallible,
             params: vec![ParamType::BytesExact(4)],

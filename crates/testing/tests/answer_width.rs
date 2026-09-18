@@ -7,6 +7,7 @@
 //! it. The macro couples an answer to a type; a hand-written guest is
 //! not so held, and this is the walk holding it.
 
+use hyperscale_hbor::Name;
 use hyperscale_vm_effects::{MethodSignature, PackageMetadata, Totality};
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
 use hyperscale_vm_testing::{Chain, Code, Package, PrincipalAddr, principal};
@@ -18,7 +19,7 @@ const CALLER: PrincipalAddr = principal(0x41);
 fn answering() -> PackageMetadata {
     let mut metadata = PackageMetadata::default();
     metadata.methods.insert(
-        "say".into(),
+        Name::declared("say"),
         MethodSignature {
             totality: Totality::Infallible,
             answers: true,

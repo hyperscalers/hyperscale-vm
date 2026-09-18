@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use hyperscale_hbor::Capped;
+use hyperscale_hbor::{Capped, Name};
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
     ChainRecords, Claim, ClaimRef, Clause, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta,
@@ -97,7 +97,7 @@ fn account() -> PackageMetadata {
     };
     let mut package = PackageMetadata::default();
     package.methods.insert(
-        "authorize".into(),
+        Name::declared("authorize"),
         MethodSignature {
             totality: Totality::Fallible,
             effects: vec![Clause::Proves {
@@ -110,7 +110,7 @@ fn account() -> PackageMetadata {
     // Reads a stored rule, and moves the badge: the shape whose evidence
     // holds both a sign-in and an earned proof at once.
     package.methods.insert(
-        "spend".into(),
+        Name::declared("spend"),
         MethodSignature {
             totality: Totality::Fallible,
             effects: vec![

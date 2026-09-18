@@ -22,6 +22,7 @@
 //! way to spell a byte write to one, so a rule the macro enforced would
 //! be a rule an artifact sidesteps.
 
+use hyperscale_hbor::Name;
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
     AbiParam, Claim, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType,
@@ -84,7 +85,7 @@ const fn read(target: TargetExpr, denomination: Option<Box<Expr>>) -> Clause {
 fn counterfeiter() -> PackageMetadata {
     let mut metadata = PackageMetadata::default();
     metadata.methods.insert(
-        "forge".into(),
+        Name::declared("forge"),
         MethodSignature {
             totality: Totality::Infallible,
             params: vec![ParamType::U64],
@@ -171,7 +172,7 @@ fn aliased() -> PackageMetadata {
     let pot = || own(POT, vec![held()]);
     let mut metadata = PackageMetadata::default();
     metadata.methods.insert(
-        "forge".into(),
+        Name::declared("forge"),
         MethodSignature {
             totality: Totality::Infallible,
             params: vec![ParamType::U64],
@@ -246,7 +247,7 @@ fn two_faced() -> PackageMetadata {
     let pot = || own(POT, vec![held()]);
     let mut metadata = PackageMetadata::default();
     metadata.methods.insert(
-        "fill".into(),
+        Name::declared("fill"),
         MethodSignature {
             totality: Totality::Infallible,
             params: vec![ParamType::U64],
@@ -259,7 +260,7 @@ fn two_faced() -> PackageMetadata {
         },
     );
     metadata.methods.insert(
-        "drain".into(),
+        Name::declared("drain"),
         MethodSignature {
             totality: Totality::Infallible,
             params: vec![ParamType::U64],
@@ -329,7 +330,7 @@ fn one_slot_is_not_a_vault_in_one_method_and_a_byte_cell_in_another() {
 fn impostor() -> PackageMetadata {
     let mut metadata = PackageMetadata::default();
     metadata.methods.insert(
-        "arm".into(),
+        Name::declared("arm"),
         MethodSignature {
             totality: Totality::Infallible,
             params: vec![ParamType::Address],
@@ -345,7 +346,7 @@ fn impostor() -> PackageMetadata {
         },
     );
     metadata.methods.insert(
-        "present".into(),
+        Name::declared("present"),
         MethodSignature {
             totality: Totality::Infallible,
             params: vec![ParamType::Address],
@@ -432,7 +433,7 @@ fn impostor_body(
 fn treasury() -> PackageMetadata {
     let mut metadata = PackageMetadata::default();
     metadata.methods.insert(
-        "payout".into(),
+        Name::declared("payout"),
         MethodSignature {
             totality: Totality::Infallible,
             params: vec![ParamType::U64],
@@ -539,7 +540,7 @@ fn silent() -> PackageMetadata {
     };
     let mut metadata = PackageMetadata::default();
     metadata.methods.insert(
-        "fill".into(),
+        Name::declared("fill"),
         MethodSignature {
             totality: Totality::Infallible,
             params: vec![ParamType::Bucket],

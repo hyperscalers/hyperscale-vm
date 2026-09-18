@@ -8,12 +8,13 @@
 //! hear back, so a mark the code cannot support is a torn settlement
 //! rather than a lost optimisation.
 
+use hyperscale_hbor::Name;
 use hyperscale_vm_runtime::check_method;
 use hyperscale_vm_stdlib::{ACCOUNT_MODULE, STAKING_MODULE, account, staking};
 
 /// One method, as the two conditions below see it.
 struct Method {
-    name: String,
+    name: Name,
     /// Whether its metadata claims the mark.
     marked: bool,
     /// Whether its door is open to everyone — a gated method carries a

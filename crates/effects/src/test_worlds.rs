@@ -1,7 +1,7 @@
 //! Shared test worlds: small published packages, their instances, and
 //! the manifests that call them.
 
-use hyperscale_hbor::Capped;
+use hyperscale_hbor::{Capped, Name};
 use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, Moves, ResourceAddr};
 
 use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
@@ -93,7 +93,7 @@ pub fn star_world(sink: Totality) -> (Records, Manifest) {
     let mut chain = Records::new();
     let mut vault_pkg = PackageMetadata::default();
     vault_pkg.methods.insert(
-        "withdraw".into(),
+        Name::declared("withdraw"),
         MethodSignature {
             outputs: vec![Expr::SelfResource {
                 kind: ResourceKind::Fungible,
@@ -106,7 +106,7 @@ pub fn star_world(sink: Totality) -> (Records, Manifest) {
     );
     let mut venue_pkg = PackageMetadata::default();
     venue_pkg.methods.insert(
-        "swap".into(),
+        Name::declared("swap"),
         MethodSignature {
             outputs: vec![Expr::SelfResource {
                 kind: ResourceKind::Fungible,
@@ -122,7 +122,7 @@ pub fn star_world(sink: Totality) -> (Records, Manifest) {
     );
     let mut sink_pkg = PackageMetadata::default();
     sink_pkg.methods.insert(
-        "deposit".into(),
+        Name::declared("deposit"),
         MethodSignature {
             totality: sink,
             effects: vec![self_point(
@@ -177,7 +177,7 @@ pub fn payer_payee_world() -> (Records, Manifest) {
     let mut chain = Records::new();
     let mut sender_pkg = PackageMetadata::default();
     sender_pkg.methods.insert(
-        "pay".into(),
+        Name::declared("pay"),
         MethodSignature {
             totality: Totality::Fallible,
             params: vec![ParamType::Address, ParamType::U128],
@@ -191,7 +191,7 @@ pub fn payer_payee_world() -> (Records, Manifest) {
     );
     let mut receiver_pkg = PackageMetadata::default();
     receiver_pkg.methods.insert(
-        "recv".into(),
+        Name::declared("recv"),
         MethodSignature {
             totality: Totality::Fallible,
             params: vec![ParamType::Bucket],

@@ -6,7 +6,7 @@
 //! wrappers a client calls it through. A signature and the wrapper
 //! mirroring it drift the moment they live apart.
 
-use hyperscale_hbor::Capped;
+use hyperscale_hbor::{Capped, Name};
 use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::vocabulary::INSTANCE;
 use hyperscale_vm_effects::{
@@ -118,7 +118,7 @@ pub fn metadata() -> PackageMetadata {
     let minted_id = Expr::FreshId { slot: 0 };
     let mut methods = PackageMetadata::default();
     methods.methods.insert(
-        "mint".into(),
+        Name::declared("mint"),
         MethodSignature {
             totality: Totality::Infallible,
             // The pool's own resource, by the mark that separates it from
@@ -144,7 +144,7 @@ pub fn metadata() -> PackageMetadata {
         },
     );
     methods.methods.insert(
-        "deposit".into(),
+        Name::declared("deposit"),
         MethodSignature {
             totality: Totality::Infallible,
             issues: Capped::empty(),
@@ -168,7 +168,7 @@ pub fn metadata() -> PackageMetadata {
         },
     );
     methods.methods.insert(
-        "withdraw".into(),
+        Name::declared("withdraw"),
         MethodSignature {
             totality: Totality::Infallible,
             issues: Capped::empty(),
@@ -192,7 +192,7 @@ pub fn metadata() -> PackageMetadata {
         },
     );
     methods.methods.insert(
-        "burn".into(),
+        Name::declared("burn"),
         MethodSignature {
             totality: Totality::Infallible,
             // Bringing value out of existence is as declared as bringing
@@ -212,7 +212,7 @@ pub fn metadata() -> PackageMetadata {
     // large, one named instance of it, and a quorum over three.
     for (name, rule) in consumer_gates() {
         methods.methods.insert(
-            name.into(),
+            Name::declared(name),
             MethodSignature {
                 totality: Totality::Infallible,
                 effects: vec![Clause::Requires { guard: None, rule }],

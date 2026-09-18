@@ -8,7 +8,7 @@
 //! this is the walk holding it — both refusals landing where the edge
 //! comes back, before anything downstream can file or consume it.
 
-use hyperscale_hbor::Capped;
+use hyperscale_hbor::{Capped, Name};
 use hyperscale_vm_effects::{
     Expr, GrantRuleExpr, GrantSubject, GrantedBehaviour, GrantsExpr, Issuance, Issued,
     MethodSignature, PackageMetadata, ResourceKind, Totality, Value,
@@ -41,7 +41,7 @@ fn badge_grants() -> GrantsExpr {
 fn issuer() -> PackageMetadata {
     let mut metadata = PackageMetadata::default();
     metadata.methods.insert(
-        "mint".into(),
+        Name::declared("mint"),
         MethodSignature {
             totality: Totality::Infallible,
             issues: Capped::new(vec![Issuance {
@@ -75,7 +75,7 @@ fn issuer() -> PackageMetadata {
 fn miscast_issuer() -> PackageMetadata {
     let mut metadata = PackageMetadata::default();
     metadata.methods.insert(
-        "mint".into(),
+        Name::declared("mint"),
         MethodSignature {
             totality: Totality::Infallible,
             issues: Capped::new(vec![Issuance {

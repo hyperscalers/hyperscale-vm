@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use hyperscale_hbor::Capped;
+use hyperscale_hbor::{Capped, Name};
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
     ChainRecords, Claim, Clause, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta,
@@ -93,7 +93,7 @@ fn moves_the_badge() -> Clause {
 fn account() -> PackageMetadata {
     let mut package = PackageMetadata::default();
     package.methods.insert(
-        "authorize".into(),
+        Name::declared("authorize"),
         MethodSignature {
             totality: Totality::Fallible,
             effects: vec![Clause::Proves {
@@ -107,7 +107,7 @@ fn account() -> PackageMetadata {
     // that answers a gate has both a claim to read and a movement to
     // price before it gives up.
     package.methods.insert(
-        "grab".into(),
+        Name::declared("grab"),
         MethodSignature {
             totality: Totality::Fallible,
             effects: vec![
@@ -123,7 +123,7 @@ fn account() -> PackageMetadata {
     // A minting method that also produces an edge: a proof of it cannot
     // be minted, because the output would dangle.
     package.methods.insert(
-        "stash".into(),
+        Name::declared("stash"),
         MethodSignature {
             totality: Totality::Fallible,
             effects: vec![

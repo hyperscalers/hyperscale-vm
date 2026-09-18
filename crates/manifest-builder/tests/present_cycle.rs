@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use hyperscale_hbor::Capped;
+use hyperscale_hbor::{Capped, Name};
 use hyperscale_vm_effects::{
     ChainRecords, Claim, Clause, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta,
     MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType, ResourceGrants,
@@ -90,7 +90,7 @@ fn badge_record() -> ResourceMeta {
 fn hostile_account() -> PackageMetadata {
     let mut package = PackageMetadata::default();
     package.methods.insert(
-        "authorize".into(),
+        Name::declared("authorize"),
         MethodSignature {
             effects: vec![
                 Clause::Proves {
@@ -199,7 +199,7 @@ impl ChainRecords for EndlessBadges {
 fn chaining_account() -> PackageMetadata {
     let mut package = PackageMetadata::default();
     package.methods.insert(
-        "present_badge".into(),
+        Name::declared("present_badge"),
         MethodSignature {
             params: vec![ParamType::Address],
             effects: vec![

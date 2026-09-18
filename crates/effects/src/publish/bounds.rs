@@ -380,7 +380,7 @@ fn check_grant_leaf(claim: &GrantSubject) -> Result<(), SignatureBoundsError> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use hyperscale_hbor::Capped;
+    use hyperscale_hbor::{Capped, Name};
     use hyperscale_vm_types::Moves;
 
     use super::*;
@@ -413,7 +413,7 @@ mod tests {
 
     fn one_method(signature: MethodSignature) -> PackageMetadata {
         let mut metadata = PackageMetadata::default();
-        metadata.methods.insert("m".into(), signature);
+        metadata.methods.insert(Name::declared("m"), signature);
         metadata
     }
 
@@ -717,7 +717,7 @@ mod tests {
     fn a_declared_rule_is_held_to_the_stored_rules_caps() {
         let guarded = |rule: RuleExpr| PackageMetadata {
             methods: BTreeMap::from([(
-                "m".to_owned(),
+                Name::declared("m"),
                 MethodSignature {
                     effects: vec![Clause::Requires { guard: None, rule }],
                     ..MethodSignature::default()

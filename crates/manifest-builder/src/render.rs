@@ -314,9 +314,9 @@ fn edge_types(
         let resolved = chain
             .instance(node.target)
             .and_then(|meta| Some((chain.package(meta.package)?, meta)));
-        let declared = resolved
-            .as_ref()
-            .and_then(|(package, meta)| Some((meta.as_ref(), package.methods.get(&node.method)?)));
+        let declared = resolved.as_ref().and_then(|(package, meta)| {
+            Some((meta.as_ref(), package.methods.get(node.method.as_str())?))
+        });
         let Some((meta, signature)) = declared else {
             let slots = consumed.get(&producer).copied().unwrap_or(0);
             types.insert(producer, vec![None; usize::try_from(slots).unwrap_or(0)]);

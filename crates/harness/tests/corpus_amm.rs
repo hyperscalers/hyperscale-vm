@@ -1,6 +1,7 @@
 //! The pool patterns end to end on both runtimes: swaps with real pool
 //! math, output floors, and the share vault's rounding.
 
+use hyperscale_hbor::Name;
 use hyperscale_vm_effects::{
     AdmissionError, Claim, Hash32, Intent, IntentHeader, IntentTree, ManifestGraph, SlotId,
     TestHasher, Value, child_key, holdings_collection,
@@ -386,7 +387,7 @@ fn a_configuration_reads_by_name_from_metadata() {
     let named: Vec<(&str, &Value)> = metadata
         .config
         .iter()
-        .map(String::as_str)
+        .map(Name::as_str)
         .zip(instance.config.iter())
         .collect();
     assert_eq!(

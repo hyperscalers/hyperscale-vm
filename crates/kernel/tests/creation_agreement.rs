@@ -3,7 +3,7 @@
 //! declaration names exactly the key an execution creating at that slot
 //! writes.
 
-use hyperscale_hbor::Capped;
+use hyperscale_hbor::{Capped, Name};
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, ChainRecords, Clause, Expr, GraphNode, Hash32, Hasher, InstanceMeta,
     Intent, IntentHeader, IntentTree, ManifestGraph, MethodSignature, ModeExpr, PackageHash,
@@ -40,7 +40,7 @@ fn admit_leaf(
 fn spawner() -> PackageMetadata {
     let mut package = PackageMetadata::default();
     package.methods.insert(
-        "spawn".into(),
+        Name::declared("spawn"),
         MethodSignature {
             totality: Totality::Fallible,
             effects: vec![

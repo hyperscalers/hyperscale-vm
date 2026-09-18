@@ -419,7 +419,7 @@ pub fn graph_records(
         let Some(package) = chain.package(meta.package) else {
             continue;
         };
-        let Some(signature) = package.methods.get(&node.method) else {
+        let Some(signature) = package.methods.get(node.method.as_str()) else {
             continue;
         };
         let Ok((values, known)) = typed_values(&node.method, &node.args, &signature.params) else {

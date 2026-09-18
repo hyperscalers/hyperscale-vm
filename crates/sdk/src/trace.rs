@@ -31,7 +31,7 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_hbor::Capped;
+use hyperscale_hbor::{Capped, Name};
 use hyperscale_vm_effects::{
     AbiParam, Clause, Expr, GrantedBehaviour, GrantsExpr, Issuance, Issued, MAX_CLAUSE_DEPTH,
     MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, ParamType, ResourceKind,
@@ -103,7 +103,7 @@ pub struct Trace {
     totality: Totality,
     /// Whether the method hands back a value beside its edges.
     answers: bool,
-    emits: Vec<String>,
+    emits: Vec<Name>,
 }
 
 impl Trace {
@@ -726,8 +726,12 @@ impl Trace {
     /// The name, never a byte figure: an event encodes infallibly, so
     /// its widest encoding is something the shape table knows and the
     /// blueprint derives. What the author states is which events.
+    ///
+    /// # Panics
+    ///
+    /// If `event` is not a name.
     pub fn emits(&mut self, event: &str) {
-        self.emits.push(event.to_owned());
+        self.emits.push(Name::declared(event));
     }
 
     /// Record the total mark: no refusal, and no partial operation
@@ -1288,7 +1292,7 @@ pub(crate) struct Recorded {
     pub(crate) clauses: Vec<Clause>,
     pub(crate) outputs: Vec<Expr>,
     pub(crate) answers: bool,
-    pub(crate) emits: Vec<String>,
+    pub(crate) emits: Vec<Name>,
     pub(crate) denominations: Vec<Option<Expr>>,
     pub(crate) worst_case: usize,
     pub(crate) abi: Vec<AbiParam>,

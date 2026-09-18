@@ -19,7 +19,7 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::{ALICE, BOB, meta_granting, pkg, world};
-use hyperscale_hbor::{Bytes, Capped};
+use hyperscale_hbor::{Bytes, Capped, Name};
 use hyperscale_vm_effects::vocabulary::{HALT, VAULT};
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, Claim, ClaimRef, EdgeRef, GrantedBehaviour, GraphArg, GraphNode,
@@ -414,7 +414,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
         let asset = || Expr::Literal(Value::Address(asset.address()));
         let mut package = PackageMetadata::default();
         package.methods.insert(
-            "receive".into(),
+            Name::declared("receive"),
             MethodSignature {
                 totality: Totality::Fallible,
                 effects: vec![Clause::Effect {

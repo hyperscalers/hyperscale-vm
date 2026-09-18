@@ -13,6 +13,8 @@
 
 use std::collections::BTreeSet;
 
+use hyperscale_hbor::Name;
+
 mod common;
 
 use common::world::admit_here;
@@ -531,7 +533,7 @@ fn every_hand_written_method_has_a_wrapper() {
     assert_eq!(hand_written.len(), wrapped.len());
     for ((package, metadata), (named, methods)) in hand_written.into_iter().zip(wrapped) {
         assert_eq!(package, named);
-        let declared: BTreeSet<&str> = metadata.methods.keys().map(String::as_str).collect();
+        let declared: BTreeSet<&str> = metadata.methods.keys().map(Name::as_str).collect();
         let wrapped: BTreeSet<&str> = methods.iter().copied().collect();
         assert_eq!(declared, wrapped, "{package}");
     }

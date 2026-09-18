@@ -773,7 +773,7 @@ impl Placed<'_> {
 mod tests {
     use std::collections::BTreeSet;
 
-    use hyperscale_hbor::Capped;
+    use hyperscale_hbor::{Capped, Name};
     use hyperscale_vm_types::{
         AddressClass, CallTarget, IntentHash, MAX_CROSSINGS_PER_TX, Moves, PrincipalAddr,
         ResourceAddr, ValueEdge,
@@ -816,7 +816,7 @@ mod tests {
                     .ok()
                     .and_then(|target| chain.instance(target))
                     .and_then(|meta| chain.package(meta.package))
-                    .and_then(|package| package.methods.get(&node.method).cloned())
+                    .and_then(|package| package.methods.get(node.method.as_str()).cloned())
                     .expect("the fixture resolves every target");
                 let unsigned = NodeOrigin::unsigned(index);
                 NodeOrigin::of(unsigned.intent, index, unsigned.expiry_ms, &signature)
@@ -910,7 +910,9 @@ mod tests {
             let mut metadata =
                 (*base.package(pkg(name)).expect("the fixture published it")).clone();
             if name == package {
-                metadata.methods.insert(method.into(), signature.clone());
+                metadata
+                    .methods
+                    .insert(Name::declared(method), signature.clone());
             }
             chain.packages.publish_unchecked(pkg(name), metadata);
             chain.instances.create(&TestHasher, meta_of(name));
@@ -923,7 +925,7 @@ mod tests {
         let mut chain = Records::new();
         let mut solo = PackageMetadata::default();
         solo.methods.insert(
-            "act".into(),
+            Name::declared("act"),
             method(vec![self_point(
                 SlotId(1),
                 ModeExpr::Delta { moves: Moves::Both },
@@ -1030,7 +1032,7 @@ mod tests {
         let mut chain = Records::new();
         let mut producing = PackageMetadata::default();
         producing.methods.insert(
-            "make".into(),
+            Name::declared("make"),
             MethodSignature {
                 totality: Totality::Fallible,
                 outputs: vec![Expr::SelfAddr],
@@ -1043,7 +1045,7 @@ mod tests {
         );
         let mut consuming = PackageMetadata::default();
         consuming.methods.insert(
-            "take".into(),
+            Name::declared("take"),
             MethodSignature {
                 totality: Totality::Total,
                 effects: vec![self_point(
@@ -1350,7 +1352,7 @@ mod tests {
         }
         let mut account = (*base.package(pkg("vault")).expect("published")).clone();
         account.methods.insert(
-            "attest".into(),
+            Name::declared("attest"),
             MethodSignature {
                 effects: vec![self_point(SlotId(9), ModeExpr::Read)],
                 ..MethodSignature::default()

@@ -722,7 +722,12 @@ fn report(
         .map(|call| {
             chain
                 .package(call.package)
-                .and_then(|package| package.methods.get(&call.export).map(|m| m.event_bytes))
+                .and_then(|package| {
+                    package
+                        .methods
+                        .get(call.export.as_str())
+                        .map(|m| m.event_bytes)
+                })
                 .unwrap_or(0)
         })
         .collect();

@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_hbor::{Bytes, Capped};
+use hyperscale_hbor::{Bytes, Capped, Name};
 pub use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, VAULT};
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, ChainRecords, Clause, Expr, GrantedBehaviour, Hash32, Hasher,
@@ -276,7 +276,7 @@ pub fn wide_account_metadata() -> PackageMetadata {
         denomination: None,
     });
     methods.methods.insert(
-        "withdraw_wide".into(),
+        Name::declared("withdraw_wide"),
         MethodSignature {
             totality: Totality::Fallible,
             params: vec![ParamType::Address, ParamType::U128],

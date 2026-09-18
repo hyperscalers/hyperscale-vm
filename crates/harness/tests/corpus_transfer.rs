@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use hyperscale_hbor::Capped;
+use hyperscale_hbor::{Capped, Name};
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
     AbiParam, Clause, Constraint, Expr, Hash32, InstanceMeta, ManifestGraph, MethodSignature,
@@ -76,7 +76,7 @@ fn mirror_metadata() -> PackageMetadata {
     let resource_of_arg0 = || Expr::ResourceOf(Box::new(Expr::Arg(0)));
     let mut metadata = PackageMetadata::default();
     metadata.methods.insert(
-        "deposit".into(),
+        Name::declared("deposit"),
         MethodSignature {
             totality: Totality::Fallible,
             params: vec![ParamType::Bucket],
@@ -118,7 +118,7 @@ fn mirror_metadata() -> PackageMetadata {
             ..MethodSignature::default()
         },
     );
-    metadata.events = vec!["Withdrawn".into(), "Deposited".into()];
+    metadata.events = vec![Name::declared("Withdrawn"), Name::declared("Deposited")];
     metadata
 }
 

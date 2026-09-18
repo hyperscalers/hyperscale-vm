@@ -6,6 +6,7 @@
 //! only thing that reads a hand-authored declaration before a block
 //! carries it is this gate.
 
+use hyperscale_hbor::Name;
 use hyperscale_vm_effects::cells::NULLIFIER_SLOT;
 use hyperscale_vm_effects::vocabulary::{AUTH, INSTANCE, RESOURCE};
 use hyperscale_vm_effects::{
@@ -38,14 +39,14 @@ fn writing(slot: SlotId, material: Vec<Expr>) -> PackageMetadata {
     // Every published package brings its components up through a seal of
     // its own; the case under test is the method beside it.
     metadata.methods.insert(
-        "instantiate".into(),
+        Name::declared("instantiate"),
         MethodSignature {
             effects: seal_clauses(),
             ..MethodSignature::default()
         },
     );
     metadata.methods.insert(
-        "m".into(),
+        Name::declared("m"),
         MethodSignature {
             params: vec![ParamType::U64],
             abi: vec![

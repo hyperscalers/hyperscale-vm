@@ -18,7 +18,7 @@
 
 use std::sync::Arc;
 
-use hyperscale_hbor::Capped;
+use hyperscale_hbor::{Capped, Name};
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, ChainRecords, Clause, Declaration, Expr, GraphArg, GraphNode, Hash32,
     Hasher, InstanceMeta, Intent, IntentHeader, IntentTree, ManifestGraph, MethodSignature,
@@ -84,7 +84,7 @@ fn vault_of(owner: impl Into<Address>) -> SubstateKey {
 fn predator() -> PackageMetadata {
     let mut methods = PackageMetadata::default();
     methods.methods.insert(
-        "drain".into(),
+        Name::declared("drain"),
         MethodSignature {
             totality: Totality::Fallible,
             params: vec![ParamType::Address],

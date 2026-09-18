@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use hyperscale_hbor::node::{max_depth, max_encoded_len};
-use hyperscale_hbor::{Capped, HborBound, HborShape, NodeId, ShapeNode, ShapeTable};
+use hyperscale_hbor::{Capped, HborBound, HborShape, Name, NodeId, ShapeNode, ShapeTable};
 use hyperscale_vm_effects::{
     Expr, MAX_EFFECTS_PER_SIGNATURE, MAX_EVENT_TYPES_PER_METHOD, MAX_ISSUANCES_PER_SIGNATURE,
     MethodSignature, PackageMetadata, ParamType, SlotId, SlotKind, SlotShape,
@@ -25,7 +25,7 @@ pub struct Method {
     /// The events this method's body may emit, by the name the package
     /// registers them under. Resolved to indices and priced when the
     /// blueprint builds its metadata.
-    emits: Vec<String>,
+    emits: Vec<Name>,
     signature: MethodSignature,
     worst_case: usize,
 }
@@ -66,12 +66,12 @@ impl Method {
 /// A contract's methods and their declarations.
 #[derive(Clone, Debug, Default)]
 pub struct Blueprint {
-    methods: BTreeMap<String, Method>,
-    events: Vec<String>,
-    errors: Vec<String>,
+    methods: BTreeMap<Name, Method>,
+    events: Vec<Name>,
+    errors: Vec<Name>,
     types: ShapeTable,
     state: BTreeMap<SlotId, SlotShape>,
-    config: Vec<String>,
+    config: Vec<Name>,
 }
 
 impl Blueprint {
@@ -103,7 +103,7 @@ impl Blueprint {
     fn emitted(
         &self,
         method: &str,
-        named: &[String],
+        named: &[Name],
     ) -> (Capped<Vec<u32>, MAX_EVENT_TYPES_PER_METHOD>, u32) {
         let mut indices = Vec::with_capacity(named.len());
         let mut bytes = 0usize;
@@ -190,7 +190,8 @@ impl Builder {
     /// the wrong kind, lets a `for-each` element escape its closure, or
     /// publishes under a name the package already publishes. All four
     /// would otherwise become a published method that can never be called
-    /// — or one that silently replaced another.
+    /// — or one that silently replaced another. Or if `name` is not a
+    /// name, which the macro holds an identifier to where it is written.
     #[must_use]
     pub fn method<F>(mut self, name: &str, params: &[ParamType], declare: F) -> Self
     where
@@ -224,7 +225,7 @@ impl Builder {
             emits: recorded.emits,
             worst_case: recorded.worst_case,
         };
-        let taken = self.blueprint.methods.insert(name.to_owned(), method);
+        let taken = self.blueprint.methods.insert(Name::declared(name), method);
         assert!(
             taken.is_none(),
             "the package already publishes a method named `{name}`"
@@ -302,7 +303,7 @@ impl Builder {
             panic!("an event is a type the package declares, and describes as one");
         };
         self.declared(T::NODE);
-        self.blueprint.events.push((*name).to_owned());
+        self.blueprint.events.push(Name::declared(name));
         self
     }
 
@@ -311,9 +312,13 @@ impl Builder {
     ///
     /// A value in that record carries its own kind, so the name is the
     /// only thing a consumer cannot recover from the leaf.
+    ///
+    /// # Panics
+    ///
+    /// If `name` is not a name.
     #[must_use]
     pub fn config(mut self, name: &str) -> Self {
-        self.blueprint.config.push(name.to_owned());
+        self.blueprint.config.push(Name::declared(name));
         self
     }
 
@@ -345,12 +350,12 @@ impl Builder {
     ///
     /// # Panics
     ///
-    /// If two fields claim one slot.
+    /// If two fields claim one slot, or `name` is not a name.
     #[must_use]
     pub fn slot<T: LeafShape>(mut self, slot: u16, name: &str, kind: SlotKind) -> Self {
         let (element, width) = self.leaf::<T>();
         let declared = SlotShape {
-            name: name.to_owned(),
+            name: Name::declared(name),
             kind,
             element,
             width,
@@ -385,7 +390,7 @@ impl Builder {
     ) -> Self {
         let (element, width) = self.leaf::<T>();
         let declared = SlotShape {
-            name: name.to_owned(),
+            name: Name::declared(name),
             kind,
             element,
             width,
@@ -430,9 +435,13 @@ impl Builder {
 
     /// Name the package's `index`-th error code, in the order a declined
     /// invocation's code refers to.
+    ///
+    /// # Panics
+    ///
+    /// If `name` is not a name.
     #[must_use]
     pub fn error(mut self, name: &str) -> Self {
-        self.blueprint.errors.push(name.to_owned());
+        self.blueprint.errors.push(Name::declared(name));
         self
     }
 

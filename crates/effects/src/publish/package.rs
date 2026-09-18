@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_hbor::ShapeFault;
+use hyperscale_hbor::{Name, ShapeFault};
 use hyperscale_vm_types::{
     EVENT_FRAME_BYTES, MAX_ERROR_CODES, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES,
     MAX_EVENT_TYPES, MAX_SLOT_WIDTH,
@@ -45,7 +45,7 @@ pub enum MetadataError {
     #[error("method {method} emits event {index}, which its package does not declare once")]
     EmitsUnknownEvent {
         /// The method naming it.
-        method: String,
+        method: Name,
         /// The index it named.
         index: u32,
     },
@@ -53,7 +53,7 @@ pub enum MetadataError {
     #[error("method {method} declares {declared} event bytes and its events encode to {derived}")]
     EventBytesDisagrees {
         /// The method whose figure disagrees.
-        method: String,
+        method: Name,
         /// What it declared.
         declared: u32,
         /// What its events derive to.
@@ -71,7 +71,7 @@ pub enum MetadataError {
     )]
     EventPayloadTooWide {
         /// The event past the cap.
-        name: String,
+        name: Name,
         /// What its shape measures.
         bound: usize,
     },
@@ -84,7 +84,7 @@ pub enum MetadataError {
     #[error("type {name:?} encodes to {bound} bytes, past the {MAX_SLOT_WIDTH} a leaf may hold")]
     TypeTooWide {
         /// The type past the cap.
-        name: String,
+        name: Name,
         /// What its shape measures.
         bound: usize,
     },
@@ -99,7 +99,7 @@ pub enum MetadataError {
     #[error("method {name:?}: {source}")]
     Method {
         /// The method whose signature is refused.
-        name: String,
+        name: Name,
         /// What is past its bound, and where in the signature.
         #[source]
         source: PlacedBounds,
@@ -133,7 +133,7 @@ pub enum MetadataError {
     #[error("event {name:?} declares no shape, so its payload opens to nothing")]
     EventWithoutShape {
         /// The event named without one.
-        name: String,
+        name: Name,
     },
     /// One name over two entries of the event table.
     ///
@@ -145,7 +145,7 @@ pub enum MetadataError {
     #[error("event {name:?} is named at two indices, so one of them decodes as the other")]
     EventNamedTwice {
         /// The name at both.
-        name: String,
+        name: Name,
     },
     /// A declared slot outside the band a package numbers its own state
     /// in.
@@ -179,9 +179,9 @@ pub enum MetadataError {
         /// The slot both name.
         slot: SlotId,
         /// The method that says it holds value.
-        denominating: String,
+        denominating: Name,
         /// The method that says it holds bytes.
-        plain: String,
+        plain: Name,
     },
     /// A declared slot whose element names a node the package's types do
     /// not hold.
@@ -199,7 +199,7 @@ pub enum MetadataError {
     #[error("type {name:?} is the protocol's name for another shape")]
     ReservedType {
         /// The name claimed.
-        name: String,
+        name: Name,
     },
 }
 
@@ -469,7 +469,7 @@ impl Numbered {
 /// room to name a second — what is left is a leaf one method denominates
 /// and another does not.
 fn check_slot_contents(metadata: &PackageMetadata) -> Result<(), MetadataError> {
-    let mut answered: BTreeMap<Numbered, (bool, &str)> = BTreeMap::new();
+    let mut answered: BTreeMap<Numbered, (bool, &Name)> = BTreeMap::new();
     for (method, signature) in &metadata.methods {
         // A method's own first answer, so what is compared here is one
         // method against another. Two clauses of one signature reaching
@@ -495,14 +495,14 @@ fn check_slot_contents(metadata: &PackageMetadata) -> Result<(), MetadataError> 
             let (said, first) = *answered.entry(numbered).or_insert((holds, method));
             if said != holds {
                 let (denominating, plain) = if said {
-                    (first, method.as_str())
+                    (first, method)
                 } else {
-                    (method.as_str(), first)
+                    (method, first)
                 };
                 return Err(MetadataError::SlotHoldsTwoThings {
                     slot: numbered.slot(),
-                    denominating: denominating.to_owned(),
-                    plain: plain.to_owned(),
+                    denominating: denominating.clone(),
+                    plain: plain.clone(),
                 });
             }
         }
@@ -538,14 +538,12 @@ fn check_types(metadata: &PackageMetadata) -> Result<(), MetadataError> {
         let bound = metadata.types.most(id);
         if bound > MAX_SLOT_WIDTH as usize {
             return Err(MetadataError::TypeTooWide {
-                name: name.to_owned(),
+                name: name.clone(),
                 bound,
             });
         }
         if reserved_shape(name).is_some_and(|reserved| !metadata.types.matches(id, reserved)) {
-            return Err(MetadataError::ReservedType {
-                name: name.to_owned(),
-            });
+            return Err(MetadataError::ReservedType { name: name.clone() });
         }
     }
     Ok(())
@@ -556,11 +554,6 @@ mod tests {
     use hyperscale_hbor::{
         Capped, Name, NodeId, ShapeFault, ShapeField, ShapeNode, ShapeTable, TypeShape,
     };
-
-    /// A name written out in a test, held to being one where it is written.
-    fn spelled(text: &str) -> Name {
-        Name::try_from(text).expect("a name the protocol spells")
-    }
     use hyperscale_vm_types::Moves;
 
     use super::super::fixtures::{a_resource, one_clause, own_interval, own_point};
@@ -589,9 +582,9 @@ mod tests {
 
     /// One method emitting the package's first event at `bytes`, so a
     /// package declaring events has one that may emit them.
-    fn emitting(bytes: u32) -> BTreeMap<String, MethodSignature> {
+    fn emitting(bytes: u32) -> BTreeMap<Name, MethodSignature> {
         std::iter::once((
-            "moves".to_owned(),
+            Name::declared("moves"),
             MethodSignature {
                 emits: Capped::new(vec![0]).unwrap(),
                 event_bytes: bytes,
@@ -607,7 +600,7 @@ mod tests {
         let shape = types.push(shape).expect("a form the table holds");
         types
             .push(TypeShape::Named {
-                name: spelled(name),
+                name: Name::declared(name),
                 shape,
             })
             .expect("one name over one shape");
@@ -628,7 +621,7 @@ mod tests {
         // The empty shape encodes to nothing, so the method that emits
         // it is bounded at nothing too.
         let named = |types: ShapeTable| PackageMetadata {
-            events: vec!["moved".into()],
+            events: vec![Name::declared("moved")],
             methods: emitting(frame_bytes()),
             types,
             ..PackageMetadata::default()
@@ -636,7 +629,7 @@ mod tests {
         assert_eq!(
             check_metadata(&named(ShapeTable::new())),
             Err(MetadataError::EventWithoutShape {
-                name: "moved".into()
+                name: Name::declared("moved")
             })
         );
         // An event carrying nothing still declares the empty shape, so
@@ -652,7 +645,7 @@ mod tests {
     #[test]
     fn one_name_at_two_event_indices_is_refused() {
         let metadata = PackageMetadata {
-            events: vec!["moved".into(), "moved".into()],
+            events: vec![Name::declared("moved"), Name::declared("moved")],
             methods: emitting(frame_bytes() + 8),
             types: one("moved", TypeShape::U64),
             ..PackageMetadata::default()
@@ -660,7 +653,7 @@ mod tests {
         assert_eq!(
             check_metadata(&metadata),
             Err(MetadataError::EventNamedTwice {
-                name: "moved".into()
+                name: Name::declared("moved")
             })
         );
     }
@@ -674,7 +667,7 @@ mod tests {
             state: std::iter::once((
                 SlotId(17),
                 SlotShape {
-                    name: "held".into(),
+                    name: Name::declared("held"),
                     kind: SlotKind::Keyed,
                     element,
                     width: 8,
@@ -717,7 +710,7 @@ mod tests {
             state: std::iter::once((
                 SlotId(17),
                 SlotShape {
-                    name: "held".into(),
+                    name: Name::declared("held"),
                     kind: SlotKind::Keyed,
                     element,
                     width,
@@ -769,7 +762,7 @@ mod tests {
             state: std::iter::once((
                 SlotId(slot),
                 SlotShape {
-                    name: "held".into(),
+                    name: Name::declared("held"),
                     kind: SlotKind::Cell,
                     element: word,
                     width: 8,
@@ -807,8 +800,8 @@ mod tests {
         let slot = SlotId(PACKAGE_SLOT_BASE);
         let package = |forge: MethodSignature, withdraw: MethodSignature| PackageMetadata {
             methods: [
-                ("forge".to_owned(), forge),
-                ("withdraw".to_owned(), withdraw),
+                (Name::declared("forge"), forge),
+                (Name::declared("withdraw"), withdraw),
             ]
             .into_iter()
             .collect(),
@@ -816,8 +809,8 @@ mod tests {
         };
         let disagreed = |slot| MetadataError::SlotHoldsTwoThings {
             slot,
-            denominating: "withdraw".into(),
-            plain: "forge".into(),
+            denominating: Name::declared("withdraw"),
+            plain: Name::declared("forge"),
         };
         let cell = |denomination| {
             one_clause(
@@ -881,18 +874,18 @@ mod tests {
             let (mut types, run) = run(cap);
             let shape = types
                 .push(TypeShape::Struct(vec![ShapeField {
-                    name: spelled("note"),
+                    name: Name::declared("note"),
                     shape: run,
                 }]))
                 .unwrap();
             types
                 .push(TypeShape::Named {
-                    name: spelled("noted"),
+                    name: Name::declared("noted"),
                     shape,
                 })
                 .unwrap();
             PackageMetadata {
-                events: vec!["noted".into()],
+                events: vec![Name::declared("noted")],
                 methods: emitting(frame_bytes() + u32::try_from(types.most(shape)).unwrap()),
                 types,
                 ..PackageMetadata::default()
@@ -903,7 +896,7 @@ mod tests {
         assert_eq!(
             check_metadata(&payload(payload_cap - 1)),
             Err(MetadataError::EventPayloadTooWide {
-                name: "noted".into(),
+                name: Name::declared("noted"),
                 bound: MAX_EVENT_PAYLOAD_BYTES + 1,
             })
         );
@@ -914,7 +907,7 @@ mod tests {
             let (mut types, run) = run(cap);
             types
                 .push(TypeShape::Named {
-                    name: spelled("entry"),
+                    name: Name::declared("entry"),
                     shape: run,
                 })
                 .unwrap();
@@ -924,7 +917,7 @@ mod tests {
         assert_eq!(
             check_metadata(&record(MAX_SLOT_WIDTH - 1)),
             Err(MetadataError::TypeTooWide {
-                name: "entry".into(),
+                name: Name::declared("entry"),
                 bound: MAX_SLOT_WIDTH as usize + 1,
             })
         );
@@ -944,7 +937,7 @@ mod tests {
         assert_eq!(
             check_metadata(&declaring(one("ResourceAddr", text.clone()))),
             Err(MetadataError::ReservedType {
-                name: "ResourceAddr".into(),
+                name: Name::declared("ResourceAddr"),
             })
         );
         // A name the protocol does not hold is the package's own to spend.

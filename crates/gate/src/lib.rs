@@ -491,6 +491,7 @@ fn derived_width(expr: &Expr, params: &[ParamType]) -> Option<CoreType> {
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_hbor::Name;
     use hyperscale_vm_effects::{
         AbiParam, Clause, Expr, MethodSignature, PackageMetadata, RuleExpr, SlotRef, seal_clauses,
     };
@@ -523,9 +524,11 @@ mod tests {
         for method in methods {
             metadata
                 .methods
-                .insert((*method).into(), MethodSignature::default());
+                .insert(Name::declared(method), MethodSignature::default());
         }
-        metadata.methods.insert("instantiate".into(), sealing());
+        metadata
+            .methods
+            .insert(Name::declared("instantiate"), sealing());
         metadata
     }
 
@@ -686,9 +689,11 @@ mod tests {
     fn a_totality_mark_the_export_type_contradicts_refuses_at_publish() {
         let declining = module_declining("swap");
         let mut fallible = PackageMetadata::default();
-        fallible.methods.insert("instantiate".into(), sealing());
+        fallible
+            .methods
+            .insert(Name::declared("instantiate"), sealing());
         fallible.methods.insert(
-            "swap".into(),
+            Name::declared("swap"),
             MethodSignature {
                 totality: Totality::Fallible,
                 ..MethodSignature::default()
@@ -781,7 +786,7 @@ mod tests {
         let mut metadata = PackageMetadata::default();
         metadata
             .methods
-            .insert("present".into(), proving(Expr::Arg(0)));
+            .insert(Name::declared("present"), proving(Expr::Arg(0)));
 
         // The protocol's own account may; a publisher may not, and the
         // refusal names the method.
@@ -798,7 +803,7 @@ mod tests {
         let mut selves = PackageMetadata::default();
         selves
             .methods
-            .insert("pass".into(), proving(Expr::SelfAddr));
+            .insert(Name::declared("pass"), proving(Expr::SelfAddr));
         assert!(judge_custody(&selves, Provenance::Published).is_ok());
     }
 

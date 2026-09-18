@@ -119,6 +119,23 @@ impl Name {
         Ok(Self(text))
     }
 
+    /// `text`, where a declaration spelled it.
+    ///
+    /// What a macro emits once it has held an identifier to what a name
+    /// is made of on the identifier's own span, so the only declaration
+    /// that reaches the panic is one written by hand.
+    ///
+    /// # Panics
+    ///
+    /// If `text` is not a name.
+    #[must_use]
+    pub fn declared(text: &str) -> Self {
+        match Self::new(text.to_owned()) {
+            Ok(name) => name,
+            Err(why) => panic!("`{text}` is declared as a name, and {why}"),
+        }
+    }
+
     /// The name as text.
     #[must_use]
     pub fn as_str(&self) -> &str {

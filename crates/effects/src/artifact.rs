@@ -284,11 +284,6 @@ mod tests {
     use crate::metadata::{PackageMetadata, package_hash};
     use crate::signature::{MethodSignature, Totality};
 
-    /// A name written out in a test, held to being one where it is written.
-    fn spelled(text: &str) -> Name {
-        Name::try_from(text).expect("a name the protocol spells")
-    }
-
     /// The wire depth admits every shape the door admits, so a package
     /// cannot pass the checks and then fail to be written down.
     ///
@@ -307,20 +302,20 @@ mod tests {
         }
         let field = types
             .push(TypeShape::Struct(vec![ShapeField {
-                name: spelled("field"),
+                name: Name::declared("field"),
                 shape: held,
             }]))
             .unwrap();
         let variant = types
             .push(TypeShape::Enum(vec![ShapeVariant {
-                name: spelled("variant"),
+                name: Name::declared("variant"),
                 discriminant: 0,
                 content: field,
             }]))
             .unwrap();
         types
             .push(TypeShape::Named {
-                name: spelled("deepest"),
+                name: Name::declared("deepest"),
                 shape: variant,
             })
             .unwrap();
@@ -355,7 +350,7 @@ mod tests {
     fn a_declaration_addresses_apart_from_an_artifact() {
         let mut metadata = PackageMetadata::default();
         metadata.methods.insert(
-            "swap".to_owned(),
+            Name::declared("swap"),
             MethodSignature {
                 totality: Totality::Fallible,
                 ..MethodSignature::default()
@@ -379,11 +374,11 @@ mod tests {
     #[test]
     fn metadata_rides_the_artifact_and_comes_back_canonical() {
         let mut metadata = PackageMetadata::default();
-        metadata.events.push("transferred".to_owned());
+        metadata.events.push(Name::declared("transferred"));
         // A declared event has a method that may emit it, which the
         // door checks on the way back out.
         metadata.methods.insert(
-            "transfer".to_owned(),
+            Name::declared("transfer"),
             MethodSignature {
                 emits: Capped::new(vec![0]).unwrap(),
                 // What the shape below encodes to and the framing kept
@@ -397,14 +392,14 @@ mod tests {
         let transferred = metadata
             .types
             .push(TypeShape::Struct(vec![ShapeField {
-                name: spelled("amount"),
+                name: Name::declared("amount"),
                 shape: amount,
             }]))
             .unwrap();
         metadata
             .types
             .push(TypeShape::Named {
-                name: spelled("transferred"),
+                name: Name::declared("transferred"),
                 shape: transferred,
             })
             .unwrap();
@@ -452,7 +447,7 @@ mod tests {
         }
         let mut metadata = PackageMetadata::default();
         metadata.methods.insert(
-            "m".into(),
+            Name::declared("m"),
             MethodSignature {
                 totality: Totality::Fallible,
                 effects: vec![Clause::Effect {

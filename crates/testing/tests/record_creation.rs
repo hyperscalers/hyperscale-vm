@@ -16,12 +16,6 @@ use hyperscale_vm_sdk::hbor::{Name, ShapeNode, ShapeValue, Text, to_vec};
 use hyperscale_vm_testing::{Chain, PrincipalAddr, account, package, principal};
 use hyperscale_vm_types::{Outcome, Presence, UnmetCondition};
 
-/// A field name written out in a test, held to being one where it is
-/// written.
-fn spelled(text: &str) -> Name {
-    Name::try_from(text).expect("a name the protocol spells")
-}
-
 const FOUNDER: PrincipalAddr = principal(0x31);
 
 #[blueprint]
@@ -252,8 +246,11 @@ fn an_instance_cell_decodes_from_metadata_alone() {
     assert_eq!(
         read,
         Some(ShapeValue::Struct(vec![
-            (spelled("operator"), ShapeValue::U64(42)),
-            (spelled("label"), ShapeValue::Text("front-row".to_owned())),
+            (Name::declared("operator"), ShapeValue::U64(42)),
+            (
+                Name::declared("label"),
+                ShapeValue::Text("front-row".to_owned())
+            ),
         ]))
     );
 }

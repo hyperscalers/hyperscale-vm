@@ -40,12 +40,6 @@ use hyperscale_vm_types::{
 use wasmtime::Result;
 use wasmtime::error::{Context, ensure};
 
-/// A field name written out in a test, held to being one where it is
-/// written.
-fn spelled(text: &str) -> Name {
-    Name::try_from(text).expect("a name the protocol spells")
-}
-
 /// Any network; these tests only need every intent to name the same one.
 const TEST_NETWORK: NetworkId = NetworkId(242);
 
@@ -504,10 +498,13 @@ fn an_event_decodes_from_metadata_alone() -> Result<()> {
     assert_eq!(
         read,
         ShapeValue::Struct(vec![
-            (spelled("validator_id"), ShapeValue::U64(VALIDATOR)),
-            (spelled("pubkey"), ShapeValue::ByteArray(PUBKEY.to_vec())),
+            (Name::declared("validator_id"), ShapeValue::U64(VALIDATOR)),
             (
-                spelled("possession_proof"),
+                Name::declared("pubkey"),
+                ShapeValue::ByteArray(PUBKEY.to_vec())
+            ),
+            (
+                Name::declared("possession_proof"),
                 ShapeValue::ByteArray(POSSESSION_PROOF.to_vec())
             ),
         ])
@@ -545,7 +542,7 @@ fn a_state_cell_decodes_from_its_slot_alone() -> Result<()> {
     assert_eq!(
         read,
         Some(ShapeValue::Struct(vec![(
-            spelled("pubkey"),
+            Name::declared("pubkey"),
             ShapeValue::ByteArray(PUBKEY.to_vec())
         )]))
     );

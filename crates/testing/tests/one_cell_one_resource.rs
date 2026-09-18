@@ -11,6 +11,7 @@
 //! two names are two cells. A pot filled under one name is not the pot a
 //! withdrawal under the other reaches.
 
+use hyperscale_hbor::Name;
 use hyperscale_vm_effects::{
     AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, SlotId, SlotRef,
     TargetExpr, Totality, Value,
@@ -51,7 +52,7 @@ fn holding(held: ResourceAddr, mode: ModeExpr) -> Clause {
 fn mixer() -> PackageMetadata {
     let mut metadata = PackageMetadata::default();
     metadata.methods.insert(
-        "fill".into(),
+        Name::declared("fill"),
         MethodSignature {
             totality: Totality::Infallible,
             params: vec![ParamType::Bucket],
@@ -61,7 +62,7 @@ fn mixer() -> PackageMetadata {
         },
     );
     metadata.methods.insert(
-        "drain".into(),
+        Name::declared("drain"),
         MethodSignature {
             totality: Totality::Infallible,
             params: vec![ParamType::U64],

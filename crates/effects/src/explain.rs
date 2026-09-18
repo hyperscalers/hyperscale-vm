@@ -48,7 +48,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use hyperscale_hbor::{NodeId, ShapeTable, TypeShape};
+use hyperscale_hbor::{Name, NodeId, ShapeTable, TypeShape};
 use hyperscale_vm_types::{
     Address, AddressClass, EffectTarget, Moves, Presence, SubstateKey, UnmetCondition,
 };
@@ -648,7 +648,7 @@ fn proven_by(claim: &Claim) -> String {
 fn bound_abi(records: &dyn ChainRecords, node: &GraphNode, abi: u32) -> Option<String> {
     let instance = records.instance(node.target)?;
     let metadata = records.package(instance.package)?;
-    let signature = metadata.methods.get(&node.method)?;
+    let signature = metadata.methods.get(node.method.as_str())?;
     let param = signature.abi.get(usize::try_from(abi).ok()?)?;
     Some(Names::new(&metadata).abi_param(param, &signature.effects))
 }
@@ -737,7 +737,7 @@ fn listed_line(effects: &[Clause], index: u32, site: Option<u32>) -> Option<u32>
 fn declared_clause(records: &dyn ChainRecords, node: &GraphNode, clause: u32) -> Option<String> {
     let instance = records.instance(node.target)?;
     let metadata = records.package(instance.package)?;
-    let signature = metadata.methods.get(&node.method)?;
+    let signature = metadata.methods.get(node.method.as_str())?;
     let mut index = 0;
     let mut out = String::new();
     for declared in &signature.effects {
@@ -989,7 +989,7 @@ impl<'a> Names<'a> {
         }
         name_table("events", &self.metadata.events, out);
         name_table("errors", &self.metadata.errors, out);
-        let mut named: Vec<(&str, NodeId)> = self.metadata.types.names().collect();
+        let mut named: Vec<(&Name, NodeId)> = self.metadata.types.names().collect();
         named.sort_unstable();
         if !named.is_empty() {
             out.push_str("types\n");
@@ -1016,7 +1016,7 @@ impl<'a> Names<'a> {
                 self.metadata
                     .events
                     .get(*index as usize)
-                    .map_or("?", String::as_str)
+                    .map_or("?", Name::as_str)
             })
             .collect();
         let _ = writeln!(
@@ -1658,10 +1658,10 @@ impl<'a> Names<'a> {
         if let Some(name) = vocabulary_name(slot) {
             return name.to_owned();
         }
-        self.metadata
-            .state
-            .get(&slot)
-            .map_or_else(|| format!("slot {}", slot.0), |shape| shape.name.clone())
+        self.metadata.state.get(&slot).map_or_else(
+            || format!("slot {}", slot.0),
+            |shape| shape.name.to_string(),
+        )
     }
 }
 
@@ -1897,7 +1897,7 @@ fn rule_exprs<'a>(rule: &'a RuleExpr, into: &mut Vec<&'a Expr>) {
 }
 
 /// One index-to-name table.
-fn name_table(title: &str, names: &[String], out: &mut String) {
+fn name_table(title: &str, names: &[Name], out: &mut String) {
     if names.is_empty() {
         return;
     }
@@ -2095,7 +2095,7 @@ fn hex(raw: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_hbor::{Capped, TypeShape};
+    use hyperscale_hbor::{Capped, Name, TypeShape};
     use hyperscale_vm_types::{Address, AddressClass, Moves, Presence};
 
     use super::{SlotRef, explain, explain_method, joined};
@@ -2256,9 +2256,9 @@ mod tests {
     /// to resolve through.
     fn package(method: &str, signature: MethodSignature) -> PackageMetadata {
         let mut metadata = PackageMetadata {
-            config: vec!["x".to_owned(), "y".to_owned()],
-            events: vec!["traded".to_owned()],
-            errors: vec!["underfunded".to_owned()],
+            config: vec![Name::declared("x"), Name::declared("y")],
+            events: vec![Name::declared("traded")],
+            errors: vec![Name::declared("underfunded")],
             ..PackageMetadata::default()
         };
         let amount = metadata
@@ -2268,14 +2268,14 @@ mod tests {
         metadata.state.insert(
             package_slot(0),
             SlotShape {
-                name: "entries".to_owned(),
+                name: Name::declared("entries"),
                 kind: SlotKind::Ordered,
                 element: amount,
                 width: 16,
                 denomination: None,
             },
         );
-        metadata.methods.insert(method.to_owned(), signature);
+        metadata.methods.insert(Name::declared(method), signature);
         metadata
     }
 

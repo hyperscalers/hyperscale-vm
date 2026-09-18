@@ -100,7 +100,7 @@ pub fn per_shard(admitted: &Admitted, shards: &dyn ShardResolver) -> BTreeMap<Sh
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use hyperscale_hbor::Capped;
+    use hyperscale_hbor::{Capped, Name};
     use hyperscale_vm_types::{
         Address, AddressClass, CallTarget, Effect, EffectConflict, EffectSet, EffectTarget,
         MAX_MANIFEST_NODES, Mode, Moves, NetworkId, PrincipalAddr,
@@ -357,7 +357,7 @@ mod tests {
         let mut chain = Records::new();
         let mut meta = PackageMetadata::default();
         meta.methods.insert(
-            "peek".into(),
+            Name::declared("peek"),
             // Two of the package's own slots, so neither is the
             // configuration leaf the instantiation fence already reads —
             // which would fold into one effect and prove nothing.
@@ -394,7 +394,7 @@ mod tests {
         // never for arithmetic.
         let mut chain = Records::new();
         let mut meta = PackageMetadata::default();
-        meta.methods.insert("m".into(), method(vec![]));
+        meta.methods.insert(Name::declared("m"), method(vec![]));
         chain.packages.publish_unchecked(pkg("wide"), meta);
         chain.instances.create(&TestHasher, meta_of("wide"));
         let admit_at = |count: usize| {
@@ -430,7 +430,7 @@ mod tests {
         let mut chain = Records::new();
         let mut meta = PackageMetadata::default();
         meta.methods.insert(
-            "take".into(),
+            Name::declared("take"),
             MethodSignature {
                 totality: Totality::Fallible,
                 params: vec![ParamType::U128],
@@ -532,7 +532,7 @@ mod tests {
     fn spreading_package(abi: Vec<AbiParam>) -> PackageMetadata {
         let mut package = PackageMetadata::default();
         package.methods.insert(
-            "m".into(),
+            Name::declared("m"),
             MethodSignature {
                 totality: Totality::Fallible,
                 abi,
@@ -582,7 +582,7 @@ mod tests {
     fn guarded_spreading_world(spread: Vec<Value>, taken: bool) -> (Records, ManifestGraph) {
         let mut package = PackageMetadata::default();
         package.methods.insert(
-            "m".into(),
+            Name::declared("m"),
             MethodSignature {
                 totality: Totality::Fallible,
                 abi: vec![AbiParam::Handle { clause: 0, site: 0 }],
@@ -676,7 +676,7 @@ mod tests {
     fn guarded_world(left: Value, right: Value, abi: Vec<AbiParam>) -> (Records, ManifestGraph) {
         let mut package = PackageMetadata::default();
         package.methods.insert(
-            "m".into(),
+            Name::declared("m"),
             MethodSignature {
                 totality: Totality::Fallible,
                 abi,
@@ -780,7 +780,7 @@ mod tests {
         // top-level one, which is the only one an ABI binding can name.
         let mut package = PackageMetadata::default();
         package.methods.insert(
-            "m".into(),
+            Name::declared("m"),
             MethodSignature {
                 totality: Totality::Fallible,
                 effects: vec![Clause::ForEach {
@@ -911,7 +911,7 @@ mod tests {
         let ids = vec![3, 9];
         let mut package = PackageMetadata::default();
         package.methods.insert(
-            "take".into(),
+            Name::declared("take"),
             MethodSignature {
                 totality: Totality::Fallible,
                 params: vec![ParamType::NfBucket],
@@ -924,7 +924,7 @@ mod tests {
             },
         );
         package.methods.insert(
-            "make".into(),
+            Name::declared("make"),
             MethodSignature {
                 totality: Totality::Fallible,
                 outputs: vec![Expr::Literal(Value::Bucket {
@@ -961,7 +961,7 @@ mod tests {
     fn a_bucket_binding_names_the_edge_its_parameter_carries() {
         let mut package = PackageMetadata::default();
         package.methods.insert(
-            "take".into(),
+            Name::declared("take"),
             MethodSignature {
                 totality: Totality::Fallible,
                 params: vec![ParamType::Bucket, ParamType::Bucket],
@@ -974,7 +974,7 @@ mod tests {
             },
         );
         package.methods.insert(
-            "make".into(),
+            Name::declared("make"),
             MethodSignature {
                 totality: Totality::Fallible,
                 outputs: vec![
@@ -1031,7 +1031,7 @@ mod tests {
     fn forwarding_world() -> (Records, ManifestGraph) {
         let mut router = PackageMetadata::default();
         router.methods.insert(
-            "forward".into(),
+            Name::declared("forward"),
             MethodSignature {
                 totality: Totality::Fallible,
                 params: vec![ParamType::Bucket],
@@ -1046,7 +1046,7 @@ mod tests {
             },
         );
         router.methods.insert(
-            "make".into(),
+            Name::declared("make"),
             MethodSignature {
                 totality: Totality::Fallible,
                 outputs: vec![Expr::Literal(Value::Address(resource(0xE1).address()))],
@@ -1109,7 +1109,7 @@ mod tests {
         let foreign = |owner: Expr| {
             let mut package = PackageMetadata::default();
             package.methods.insert(
-                "reach".into(),
+                Name::declared("reach"),
                 MethodSignature {
                     totality: Totality::Fallible,
                     params: vec![ParamType::Address],
@@ -1166,7 +1166,7 @@ mod tests {
         // package for a call to resolve against.
         let mut package = PackageMetadata::default();
         package.methods.insert(
-            "m".into(),
+            Name::declared("m"),
             MethodSignature {
                 totality: Totality::Fallible,
                 params: vec![ParamType::Bucket],

@@ -60,10 +60,10 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use hyperscale_hbor::{Capped, Name, ShapeTable, TypeShape, to_vec_with_depth};
+    use hyperscale_hbor::{Capped, MAX_NAME_BYTES, Name, ShapeTable, TypeShape, to_vec_with_depth};
 
     /// A table naming the empty shape under each of `names`.
-    fn units(names: &[String]) -> ShapeTable {
+    fn units(names: &[Name]) -> ShapeTable {
         let mut types = ShapeTable::new();
         let unit = types
             .push(TypeShape::Tuple(Vec::new()))
@@ -71,7 +71,7 @@ mod tests {
         for name in names {
             types
                 .push(TypeShape::Named {
-                    name: Name::try_from(name.as_str()).expect("a name"),
+                    name: name.clone(),
                     shape: unit,
                 })
                 .expect("one name over the empty shape");
@@ -116,7 +116,7 @@ mod tests {
 
     fn one_method(signature: MethodSignature) -> PackageMetadata {
         let mut metadata = PackageMetadata::default();
-        metadata.methods.insert("m".into(), signature);
+        metadata.methods.insert(Name::declared("m"), signature);
         metadata
     }
 
@@ -309,8 +309,8 @@ mod tests {
         let mut metadata = one_method(every_authored_shape());
         metadata
             .methods
-            .insert("another".into(), MethodSignature::default());
-        metadata.events = vec!["Withdrawn".into(), "Deposited".into()];
+            .insert(Name::declared("another"), MethodSignature::default());
+        metadata.events = vec![Name::declared("Withdrawn"), Name::declared("Deposited")];
         metadata.types = units(&metadata.events);
         // A declared event has a method that may emit it; the empty
         // shape encodes to nothing, so the bound is the framing the
@@ -364,51 +364,109 @@ mod tests {
         assert!(decode_metadata(&[0xFF, 0x00]).is_err());
     }
 
+    /// The metadata tables under no type but their own: every name a
+    /// plain `String` and the method table a sequence of pairs, which
+    /// encodes byte-identically to a map whose entries arrive in the
+    /// same order. What a hostile publisher writes, and the only way to
+    /// spell a table the real type cannot hold.
+    #[derive(Default, hyperscale_hbor::Hbor)]
+    struct Forged {
+        methods: Vec<(String, MethodSignature)>,
+        events: Vec<String>,
+        errors: Vec<String>,
+        types: ShapeTable,
+        config: Vec<String>,
+        state: BTreeMap<SlotId, SlotShape>,
+    }
+
+    /// `forged`'s section bytes.
+    fn forge(forged: &Forged) -> Vec<u8> {
+        to_vec_with_depth(forged, METADATA_WIRE_DEPTH).expect("the forged table encodes")
+    }
+
     #[test]
     fn the_method_table_decodes_only_in_ascending_name_order() {
         // The table travels sorted, so permuting it or repeating a name
         // is a distinct byte string that must not decode to a value the
-        // map would silently normalise. A sequence of pairs encodes
-        // byte-identically to a map whose entries arrive in the same
-        // order, so this is how a forged table is spelled at all — the
-        // map form cannot hold one.
-        #[derive(hyperscale_hbor::Hbor)]
-        struct Forged {
-            methods: Vec<(String, MethodSignature)>,
-            events: Vec<String>,
-            errors: Vec<String>,
-            types: ShapeTable,
-            config: Vec<String>,
-            state: BTreeMap<SlotId, SlotShape>,
-        }
-
+        // map would silently normalise.
         let mut metadata = PackageMetadata::default();
         for name in ["a", "b"] {
             metadata
                 .methods
-                .insert(name.into(), MethodSignature::default());
+                .insert(Name::declared(name), MethodSignature::default());
         }
         let bytes = encode_metadata(&metadata).expect("encodes");
         let rewrite = |names: &[&str]| {
-            to_vec_with_depth(
-                &Forged {
-                    methods: names
-                        .iter()
-                        .map(|name| ((*name).to_owned(), MethodSignature::default()))
-                        .collect(),
-                    events: Vec::new(),
-                    errors: Vec::new(),
-                    types: ShapeTable::new(),
-                    config: Vec::new(),
-                    state: BTreeMap::new(),
-                },
-                METADATA_WIRE_DEPTH,
-            )
-            .expect("the forged table encodes")
+            forge(&Forged {
+                methods: names
+                    .iter()
+                    .map(|name| ((*name).to_owned(), MethodSignature::default()))
+                    .collect(),
+                ..Forged::default()
+            })
         };
         assert_eq!(rewrite(&["a", "b"]), bytes);
         assert!(decode_metadata(&rewrite(&["b", "a"])).is_err());
         assert!(decode_metadata(&rewrite(&["a", "a"])).is_err());
+    }
+
+    /// A name reaching a consumer is the identifier that declared it,
+    /// and the refusal is the type's where the bytes are read rather
+    /// than a pass over a decoded table afterwards — so a table naming
+    /// something no declaration could have spelled is not metadata at
+    /// all, whichever of its tables carries the name.
+    #[test]
+    fn a_table_naming_what_no_identifier_spells_does_not_decode() {
+        let long = "a".repeat(MAX_NAME_BYTES + 1);
+        let unspellable = [
+            // Each refused where it is read, with the reason it is
+            // refused for: the charset and the cap are separate bounds
+            // and a name can miss either.
+            ("deposit-nf", "not a name the protocol spells"),
+            ("café", "not a name the protocol spells"),
+            ("", "not a name the protocol spells"),
+            ("0th", "not a name the protocol spells"),
+            ("a b", "not a name the protocol spells"),
+            // The rendering a reader never sees, arranged by bytes.
+            ("with\u{202E}drawn", "not a name the protocol spells"),
+            (long.as_str(), "exceeds the declared bound"),
+        ];
+        for (name, reason) in unspellable {
+            let tables: [Forged; 4] = [
+                Forged {
+                    methods: vec![(name.to_owned(), MethodSignature::default())],
+                    ..Forged::default()
+                },
+                Forged {
+                    events: vec![name.to_owned()],
+                    ..Forged::default()
+                },
+                Forged {
+                    errors: vec![name.to_owned()],
+                    ..Forged::default()
+                },
+                Forged {
+                    config: vec![name.to_owned()],
+                    ..Forged::default()
+                },
+            ];
+            for forged in &tables {
+                // The reason as well as the refusal: the tables carry
+                // their own bounds, and one of those would refuse some
+                // of these for a reason that has nothing to do with the
+                // name.
+                let refusal = decode_metadata(&forge(forged)).expect_err("decoded as a name");
+                assert!(refusal.to_string().contains(reason), "{name:?}: {refusal}");
+            }
+        }
+        // The same tables spelling a name are the tables they forge.
+        let spelled = decode_metadata(&forge(&Forged {
+            methods: vec![("withdraw".to_owned(), MethodSignature::default())],
+            errors: vec!["Underfunded".to_owned()],
+            config: vec!["reserve".to_owned()],
+            ..Forged::default()
+        }));
+        assert!(spelled.is_ok(), "{spelled:?}");
     }
 
     #[test]
@@ -524,14 +582,16 @@ mod tests {
         // A name of its own per entry, each with a shape under it, so the
         // table's length is the only thing under test here.
         let events = |len: usize| {
-            let named: Vec<String> = (0..len).map(|index| format!("e{index}")).collect();
+            let named: Vec<Name> = (0..len)
+                .map(|index| Name::declared(&format!("e{index}")))
+                .collect();
             PackageMetadata {
                 types: units(&named),
                 events: named,
                 // A declared event has a method that may emit it, which
                 // the door checks beside the table's length.
                 methods: std::iter::once((
-                    "moves".to_owned(),
+                    Name::declared("moves"),
                     MethodSignature {
                         emits: Capped::new(vec![0]).unwrap(),
                         event_bytes: frame_bytes(),
@@ -548,7 +608,7 @@ mod tests {
         );
 
         let errors = |len: usize| PackageMetadata {
-            errors: vec![String::new(); len],
+            errors: vec![Name::declared("Declined"); len],
             ..PackageMetadata::default()
         };
         assert_bounded(
@@ -565,7 +625,12 @@ mod tests {
         // rather than any one entry being wide.
         let over = PackageMetadata {
             methods: (0..20_000)
-                .map(|index| (format!("m{index:059}"), MethodSignature::default()))
+                .map(|index| {
+                    (
+                        Name::declared(&format!("m{index:059}")),
+                        MethodSignature::default(),
+                    )
+                })
                 .collect(),
             ..PackageMetadata::default()
         };

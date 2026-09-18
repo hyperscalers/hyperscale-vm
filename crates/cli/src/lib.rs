@@ -484,7 +484,7 @@ pub fn explain_issued(
         .iter()
         .map(|field| {
             config
-                .get(field)
+                .get(field.as_str())
                 .cloned()
                 .unwrap_or(Value::Address(STAND_IN))
         })
@@ -501,7 +501,7 @@ pub fn explain_issued(
         let unanswered: Vec<String> = grants_read_config(&issuance.grants)
             .into_iter()
             .filter_map(|slot| metadata.config.get(slot as usize))
-            .filter(|field| !config.contains_key(*field))
+            .filter(|field| !config.contains_key(field.as_str()))
             .map(|field| format!("--config {field}=<value>"))
             .collect();
         if !unanswered.is_empty() {

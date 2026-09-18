@@ -4,7 +4,7 @@ use hyperscale_vm_effects::address_text;
 use hyperscale_vm_kernel::Receipt;
 use hyperscale_vm_sdk::DeclinesAs;
 use hyperscale_vm_sdk::client::Answered;
-use hyperscale_vm_sdk::hbor::{HborDecode, from_slice};
+use hyperscale_vm_sdk::hbor::{HborDecode, Name, from_slice};
 use hyperscale_vm_types::{AbortReason, Address, Answer, Outcome};
 
 /// The receipt one [`transact`](crate::Chain::transact) produced.
@@ -19,7 +19,7 @@ use hyperscale_vm_types::{AbortReason, Address, Answer, Outcome};
 pub struct Conclusion<T = ()> {
     receipt: Receipt,
     /// The declining node's package error table, where one declined.
-    errors: Vec<String>,
+    errors: Vec<Name>,
     /// The outcome read back into legible terms, where the receipt's own
     /// `Debug` is not: an unmet condition as the requirement that put it
     /// there, a decline as the method and the name its package gave the
@@ -37,7 +37,7 @@ pub struct Conclusion<T = ()> {
 impl<T> Conclusion<T> {
     pub(crate) const fn new(
         receipt: Receipt,
-        errors: Vec<String>,
+        errors: Vec<Name>,
         explained: Option<String>,
         written: T,
     ) -> Self {
@@ -90,7 +90,7 @@ impl<T> Conclusion<T> {
     #[must_use]
     pub fn declined_as(&self) -> Option<&str> {
         let code = self.declined()?;
-        self.errors.get(code as usize).map(String::as_str)
+        self.errors.get(code as usize).map(Name::as_str)
     }
 
     /// The class the invocation trapped with, if it trapped.
@@ -236,7 +236,7 @@ pub fn explain_decline(
     node: u32,
     code: u32,
     call: Option<(&str, Address)>,
-    errors: &[String],
+    errors: &[Name],
 ) -> String {
     let Some((method, target)) = call else {
         return format!("node {node} declined with code {code}");
@@ -275,7 +275,7 @@ impl<A: HborDecode> Conclusion<Answered<A>> {
 mod tests {
     use hyperscale_vm_types::{Address, AddressClass};
 
-    use super::explain_decline;
+    use super::{Name, explain_decline};
 
     fn target() -> Address {
         Address::new([0xAB; 31], AddressClass::Component)
@@ -285,7 +285,10 @@ mod tests {
     /// method plus that name.
     #[test]
     fn a_decline_reads_as_the_method_and_the_named_error() {
-        let errors = vec!["SlippageExceeded".to_owned(), "EmptyPool".to_owned()];
+        let errors = vec![
+            Name::declared("SlippageExceeded"),
+            Name::declared("EmptyPool"),
+        ];
         let sentence = explain_decline(2, 0, Some(("swap", target())), &errors);
         assert!(sentence.contains("`swap`"), "{sentence}");
         assert!(sentence.contains("SlippageExceeded"), "{sentence}");
@@ -296,7 +299,7 @@ mod tests {
     /// dressed up as a name.
     #[test]
     fn a_code_past_the_table_is_marked_as_such() {
-        let errors = vec!["Short".to_owned()];
+        let errors = vec![Name::declared("Short")];
         let sentence = explain_decline(1, 7, Some(("repay", target())), &errors);
         assert!(sentence.contains("code 7"), "{sentence}");
         assert!(

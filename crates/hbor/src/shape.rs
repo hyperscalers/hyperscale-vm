@@ -494,9 +494,9 @@ impl ShapeTable {
     }
 
     /// Every published type, by name, in index order.
-    pub fn names(&self) -> impl Iterator<Item = (&str, NodeId)> {
+    pub fn names(&self) -> impl Iterator<Item = (&Name, NodeId)> {
         self.nodes().filter_map(|(id, node)| match node {
-            TypeShape::Named { name, .. } => Some((name.as_str(), id)),
+            TypeShape::Named { name, .. } => Some((name, id)),
             _ => None,
         })
     }
@@ -1182,11 +1182,6 @@ mod tests {
     use crate::node::min_encoded_len;
     use crate::{assert_canonical_at_depth, from_slice_with_depth, to_vec, to_vec_with_depth};
 
-    /// A name written out in a test, held to being one where it is written.
-    fn named(text: &str) -> Name {
-        Name::try_from(text).expect("a name the protocol spells")
-    }
-
     /// Every form the vocabulary admits, in one table, so a round-trip
     /// covers the whole of it rather than the forms a real type reaches.
     fn every_form() -> (ShapeTable, NodeId, NodeId) {
@@ -1198,28 +1193,28 @@ mod tests {
         let pair = push(TypeShape::Tuple(vec![i8, boolean]));
         let text = push(TypeShape::Text { cap: 300 });
         let named_text = push(TypeShape::Struct(vec![ShapeField {
-            name: named("text"),
+            name: Name::declared("text"),
             shape: text,
         }]));
         let leaf = push(TypeShape::Enum(vec![
             ShapeVariant {
-                name: named("Nothing"),
+                name: Name::declared("Nothing"),
                 discriminant: 0,
                 content: unit,
             },
             ShapeVariant {
-                name: named("Pair"),
+                name: Name::declared("Pair"),
                 discriminant: 7,
                 content: pair,
             },
             ShapeVariant {
-                name: named("Named"),
+                name: Name::declared("Named"),
                 discriminant: 9,
                 content: named_text,
             },
         ]));
         let leaf = push(TypeShape::Named {
-            name: named("leaf"),
+            name: Name::declared("leaf"),
             shape: leaf,
         });
         let widths = [
@@ -1256,32 +1251,32 @@ mod tests {
         });
         let whole = push(TypeShape::Struct(vec![
             ShapeField {
-                name: named("widths"),
+                name: Name::declared("widths"),
                 shape: widths,
             },
             ShapeField {
-                name: named("fixed"),
+                name: Name::declared("fixed"),
                 shape: fixed,
             },
             ShapeField {
-                name: named("maybe"),
+                name: Name::declared("maybe"),
                 shape: maybe,
             },
             ShapeField {
-                name: named("many"),
+                name: Name::declared("many"),
                 shape: many,
             },
             ShapeField {
-                name: named("distinct"),
+                name: Name::declared("distinct"),
                 shape: distinct,
             },
             ShapeField {
-                name: named("by_key"),
+                name: Name::declared("by_key"),
                 shape: by_key,
             },
         ]));
         let whole = push(TypeShape::Named {
-            name: named("whole"),
+            name: Name::declared("whole"),
             shape: whole,
         });
         (table, leaf, whole)
@@ -1336,7 +1331,7 @@ mod tests {
             (
                 20,
                 TypeShape::Named {
-                    name: named("leaf"),
+                    name: Name::declared("leaf"),
                     shape: leaf,
                 },
             ),
@@ -1462,7 +1457,7 @@ mod tests {
         let mut table = ShapeTable::new();
         let byte = table.push(TypeShape::U8).unwrap();
         let field = |name: &str| ShapeField {
-            name: named(name),
+            name: Name::declared(name),
             shape: byte,
         };
         assert_eq!(
@@ -1477,7 +1472,7 @@ mod tests {
 
         let unit = table.push(TypeShape::Tuple(Vec::new())).unwrap();
         let variant = |name: &str, discriminant| ShapeVariant {
-            name: named(name),
+            name: Name::declared(name),
             discriminant,
             content: unit,
         };
@@ -1529,7 +1524,7 @@ mod tests {
         let byte = table.push(TypeShape::U8).unwrap();
         let word = table.push(TypeShape::U64).unwrap();
         let named = |shape| TypeShape::Named {
-            name: named("thing"),
+            name: Name::declared("thing"),
             shape,
         };
         let first = table.push(named(byte)).unwrap();

@@ -5,7 +5,7 @@ use std::collections::btree_map::Entry;
 use std::sync::Arc;
 
 use hyperscale_hbor::{
-    DecodeError, Hbor, HborBound, HborShape, NodeId, ShapeNode, ShapeTable, ShapeValue,
+    DecodeError, Hbor, HborBound, HborShape, Name, NodeId, ShapeNode, ShapeTable, ShapeValue,
 };
 use hyperscale_vm_types::{
     AMOUNT_CELL_BYTES, Address, CallTarget, ComponentAddr, Event, MAX_SLOT_WIDTH, NativeAddr,
@@ -69,7 +69,7 @@ pub enum PublishRefusal {
     #[error("method {method:?}: {source}")]
     Method {
         /// The method whose signature was refused.
-        method: String,
+        method: Name,
         /// The judgment that refused it.
         #[source]
         source: SignatureError,
@@ -127,7 +127,7 @@ pub enum SlotKind {
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub struct SlotShape {
     /// The field's name, as its author spelled it.
-    pub name: String,
+    pub name: Name,
     /// What shape of state the slot holds.
     pub kind: SlotKind,
     /// The shape one leaf holds, at its node of the package's
@@ -258,7 +258,7 @@ pub type DeclaredPackages = &'static [(&'static str, fn() -> PackageMetadata)];
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub struct PackageMetadata {
     /// Effect signatures by method name.
-    pub methods: BTreeMap<String, MethodSignature>,
+    pub methods: BTreeMap<Name, MethodSignature>,
     /// The package's event names, in the index order a receipt event's
     /// type refers to.
     ///
@@ -266,7 +266,7 @@ pub struct PackageMetadata {
     /// index, and the kernel bounds it without resolving it. The table is
     /// what lets a consumer name what it read, and it can only mean one
     /// thing because a package is content-addressed and immutable.
-    pub events: Vec<String>,
+    pub events: Vec<Name>,
     /// The package's error names, in the index order a declined
     /// invocation's code refers to.
     ///
@@ -275,7 +275,7 @@ pub struct PackageMetadata {
     /// the table is what turns that code into something a wallet can
     /// render, and immutability is what stops an index coming to mean
     /// something else. Empty for a package whose methods cannot decline.
-    pub errors: Vec<String>,
+    pub errors: Vec<Name>,
     /// Every type this package declares, by the name the tables above
     /// index it under.
     ///
@@ -297,7 +297,7 @@ pub struct PackageMetadata {
     /// same shape as [`events`](Self::events) and for the same reason: a
     /// signature indexes a field positionally, and immutability is what
     /// stops a position coming to mean something else.
-    pub config: Vec<String>,
+    pub config: Vec<Name>,
     /// The component's state, by the slot its leaves sit under.
     ///
     /// What gets a consumer from a substate key to a type: a slot
@@ -582,7 +582,7 @@ mod tests {
         let mut record = PackageMetadata::default();
         record
             .methods
-            .insert("m".into(), MethodSignature::default());
+            .insert(Name::declared("m"), MethodSignature::default());
         cache.publish(hash, record.clone()).expect("publishes");
         cache.publish(hash, record.clone()).expect("republishes");
         assert_eq!(cache.get(hash), Some(&record));
@@ -598,9 +598,9 @@ mod tests {
     fn a_record_whose_tables_disagree_is_refused_at_the_door() {
         let hash = PackageHash(Hash32([2; 32]));
         let mut record = PackageMetadata::default();
-        record.events.push("paid".into());
+        record.events.push(Name::declared("paid"));
         record.methods.insert(
-            "pay".into(),
+            Name::declared("pay"),
             MethodSignature {
                 event_bytes: 64,
                 ..MethodSignature::default()
