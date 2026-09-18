@@ -55,6 +55,7 @@
 
 pub mod bounded;
 pub mod canonical;
+pub mod capped;
 pub mod decode;
 pub mod encode;
 pub mod error;
@@ -70,6 +71,7 @@ mod collection;
 mod primitive;
 
 pub use canonical::{assert_canonical, assert_canonical_at_depth};
+pub use capped::{Bytes, Capped, Overflow, Text};
 pub use decode::Decoder;
 pub use encode::{Encoder, Fixed, Sink};
 pub use error::{DecodeError, EncodeError};
