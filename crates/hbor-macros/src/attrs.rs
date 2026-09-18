@@ -67,9 +67,6 @@ pub struct VariantAttrs {
 /// What `#[hbor(...)]` says about a field.
 #[derive(Default)]
 pub struct FieldAttrs {
-    /// The largest length this field may carry, as any `usize` constant
-    /// expression. Protocol caps are named constants, so a literal-only
-    /// attribute would force the number to be written twice.
     /// Held out of the signing preimage. The field still rides the wire —
     /// a signature and the key that verifies it are transmitted, they just
     /// cannot be part of what they cover.
