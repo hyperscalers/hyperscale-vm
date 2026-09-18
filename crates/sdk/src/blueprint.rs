@@ -8,16 +8,16 @@
 //!
 use std::collections::BTreeMap;
 
-use hyperscale_hbor::shape::Resolution;
-use hyperscale_hbor::{Capped, HborShape, ShapeRegistry, TypeShape};
+use hyperscale_hbor::node::{max_depth, max_encoded_len};
+use hyperscale_hbor::{Capped, HborShape, NodeId, ShapeNode, ShapeTable};
 use hyperscale_vm_effects::{
     Expr, LeafForm, MAX_EFFECTS_PER_SIGNATURE, MAX_EVENT_TYPES_PER_METHOD,
-    MAX_ISSUANCES_PER_SIGNATURE, MAX_SHAPE_DEPTH, MethodSignature, PackageMetadata, ParamType,
-    SlotId, SlotKind, SlotShape,
+    MAX_ISSUANCES_PER_SIGNATURE, MethodSignature, PackageMetadata, ParamType, SlotId, SlotKind,
+    SlotShape,
 };
 use hyperscale_vm_types::EVENT_FRAME_BYTES;
 
-use crate::state::LeafShape;
+use crate::state::{LeafContent, LeafShape};
 use crate::trace::Trace;
 
 /// One method: what routing reads, plus what the guest bridge needs.
@@ -70,7 +70,7 @@ pub struct Blueprint {
     methods: BTreeMap<String, Method>,
     events: Vec<String>,
     errors: Vec<String>,
-    types: ShapeRegistry,
+    types: ShapeTable,
     state: BTreeMap<SlotId, SlotShape>,
     config: Vec<String>,
 }
@@ -98,15 +98,14 @@ impl Blueprint {
     /// `named`'s events as the signature carries them — their indices in
     /// the package's table, and the widest they encode to between them.
     ///
-    /// An event encodes infallibly, so every event shape is closed and
-    /// the figure always exists. The publish gate derives it again and
-    /// refuses a package whose two answers differ.
+    /// Every shape has a widest value, so the figure always exists. The
+    /// publish gate derives it again and refuses a package whose two
+    /// answers differ.
     fn emitted(
         &self,
         method: &str,
         named: &[String],
     ) -> (Capped<Vec<u32>, MAX_EVENT_TYPES_PER_METHOD>, u32) {
-        let mut resolution = Resolution::of(self.types.types());
         let mut indices = Vec::with_capacity(named.len());
         let mut bytes = 0usize;
         for event in named {
@@ -119,19 +118,14 @@ impl Blueprint {
                 });
             let shape = self
                 .types
-                .types()
-                .get(event)
-                .unwrap_or_else(|| panic!("`{event}` registers a shape when it is declared"));
-            let most = resolution
-                .max_encoded_len(shape, MAX_SHAPE_DEPTH)
-                .unwrap_or_else(|fault| panic!("`{event}`'s shape walks: {fault}"))
-                .unwrap_or_else(|| {
-                    panic!("`{event}` has no widest encoding — an event encodes infallibly")
-                });
+                .named(event)
+                .unwrap_or_else(|| panic!("`{event}` declares a shape when it is declared"));
             indices.push(u32::try_from(index).expect("an event table under the index cap"));
             // The framing beside the payload, matching what the publish
             // gate derives and what the kernel meters at emit.
-            bytes = bytes.saturating_add(EVENT_FRAME_BYTES).saturating_add(most);
+            bytes = bytes
+                .saturating_add(EVENT_FRAME_BYTES)
+                .saturating_add(self.types.most(shape));
         }
         indices.sort_unstable();
         let indices = Capped::new(indices).unwrap_or_else(|_| {
@@ -151,10 +145,10 @@ impl Blueprint {
     ///
     /// # Panics
     ///
-    /// If a method names an event the package never declared, or one
-    /// whose shape has no widest encoding. Both are authoring defects
-    /// the publish gate would refuse; panicking here names the method
-    /// rather than leaving a package that cannot publish.
+    /// If a method names an event the package never declared — an
+    /// authoring defect the publish gate would refuse; panicking here
+    /// names the method rather than leaving a package that cannot
+    /// publish.
     #[must_use]
     pub fn metadata(&self) -> PackageMetadata {
         PackageMetadata {
@@ -171,7 +165,7 @@ impl Blueprint {
                 .collect(),
             events: self.events.clone(),
             errors: self.errors.clone(),
-            types: self.types.types().clone(),
+            types: self.types.clone(),
             state: self.state.clone(),
             config: self.config.clone(),
         }
@@ -239,6 +233,37 @@ impl Builder {
         self
     }
 
+    /// Add `node` to the package's types, and answer where it sits.
+    ///
+    /// The one place a static tree becomes published metadata, and the
+    /// cross check between the two derivations of a width: the table
+    /// measures the node it was handed, and the constant beside the type
+    /// folds the same tree. The publish gate measures the table a third
+    /// time, from the array alone.
+    ///
+    /// # Panics
+    ///
+    /// If the tree is one no decoder follows, or the two derivations
+    /// disagree — neither of which a derived type can state.
+    fn declared(&mut self, node: &ShapeNode) -> NodeId {
+        let id = self
+            .blueprint
+            .types
+            .declare(node)
+            .unwrap_or_else(|fault| panic!("a declared type's shape: {fault}"));
+        assert_eq!(
+            self.blueprint.types.most(id),
+            max_encoded_len(node),
+            "the table measures the width the type states"
+        );
+        assert_eq!(
+            self.blueprint.types.depth(id),
+            max_depth(node),
+            "the table measures the depth the type states"
+        );
+        id
+    }
+
     /// Declare `T` as the package's next event type, in the order a
     /// receipt event's index refers to.
     ///
@@ -250,13 +275,14 @@ impl Builder {
     ///
     /// If `T` describes as anything but a declared type. An event is a
     /// struct the package declares; a wrapper that describes as its
-    /// contents would leave the table naming a shape nobody registered.
+    /// contents would leave the table naming a shape nobody declared.
     #[must_use]
     pub fn event<T: HborShape>(mut self) -> Self {
-        let TypeShape::Ref(name) = T::shape(&mut self.blueprint.types) else {
+        let ShapeNode::Named { name, .. } = T::NODE else {
             panic!("an event is a type the package declares, and describes as one");
         };
-        self.blueprint.events.push(name);
+        self.declared(T::NODE);
+        self.blueprint.events.push((*name).to_owned());
         self
     }
 
@@ -271,8 +297,9 @@ impl Builder {
         self
     }
 
-    /// The most bytes one leaf of `element` may hold: what a closed
-    /// shape derives, or what the field declared for an open one.
+    /// The most bytes one leaf of `element` may hold: what its shape
+    /// derives, or what the field declared for a leaf holding its own
+    /// bytes.
     ///
     /// Zero where neither answers, which the publish gate refuses: a
     /// slot whose leaves nothing bounds is not one a declaration can
@@ -280,25 +307,37 @@ impl Builder {
     ///
     /// # Panics
     ///
-    /// If a width is declared on a closed shape, which already states
-    /// its own: two statements of one figure is one the author has to
-    /// keep in step, and the derive is the one that cannot drift.
+    /// If a width is declared beside a shape that derives a different
+    /// one: two statements of one figure, and the derive is the one that
+    /// cannot drift.
     fn width_of(&self, name: &str, element: &LeafForm, declared: Option<u32>) -> u32 {
         let derived = match element {
             LeafForm::Bytes => None,
-            LeafForm::Value(shape) => Resolution::of(self.blueprint.types.types())
-                .max_encoded_len(shape, MAX_SHAPE_DEPTH)
-                .ok()
-                .flatten()
-                .and_then(|most| u32::try_from(most).ok()),
+            LeafForm::Value(shape) => Some(
+                u32::try_from(self.blueprint.types.most(*shape))
+                    .expect("a leaf narrower than the wire's width field"),
+            ),
         };
         match (derived, declared) {
-            (Some(_), Some(_)) => {
-                panic!("slot {name} declares a width its closed shape already derives")
+            (Some(derived), Some(declared)) => {
+                assert_eq!(
+                    derived, declared,
+                    "slot {name} declares {declared} bytes and its shape derives {derived}"
+                );
+                derived
             }
             (Some(derived), None) => derived,
             (None, Some(declared)) => declared,
             (None, None) => 0,
+        }
+    }
+
+    /// What `T`'s leaves hold, as the metadata states it: a value's
+    /// shape declared into the package's types, or the leaf's own bytes.
+    fn element<T: LeafShape>(&mut self) -> LeafForm {
+        match T::LEAF {
+            LeafContent::Value(node) => LeafForm::Value(self.declared(node)),
+            LeafContent::Bytes => LeafForm::Bytes,
         }
     }
 
@@ -311,8 +350,8 @@ impl Builder {
     ///
     /// # Panics
     ///
-    /// If two fields claim one slot, or a width is declared on a shape
-    /// that derives its own.
+    /// If two fields claim one slot, or a width is declared beside a
+    /// shape that derives a different one.
     #[must_use]
     pub fn slot<T: LeafShape>(
         mut self,
@@ -321,7 +360,7 @@ impl Builder {
         kind: SlotKind,
         width: Option<u32>,
     ) -> Self {
-        let element = T::leaf_form(&mut self.blueprint.types);
+        let element = self.element::<T>();
         let width = self.width_of(name, &element, width);
         let declared = SlotShape {
             name: name.to_owned(),
@@ -358,7 +397,7 @@ impl Builder {
         config: u32,
         width: Option<u32>,
     ) -> Self {
-        let element = T::leaf_form(&mut self.blueprint.types);
+        let element = self.element::<T>();
         let width = self.width_of(name, &element, width);
         let declared = SlotShape {
             name: name.to_owned(),
@@ -381,7 +420,7 @@ impl Builder {
     /// instance schema.
     #[must_use]
     pub fn declares<T: HborShape>(mut self) -> Self {
-        T::shape(&mut self.blueprint.types);
+        self.declared(T::NODE);
         self
     }
 

@@ -45,9 +45,7 @@ mod registry {
 
     #[state]
     struct Registry {
-        #[width(4096)]
         admin: Cell<Option<RuleBytes>>,
-        #[width(4160)]
         pending: Cell<Option<Pending>>,
         delay_ms: Cell<u64>,
         flag: Cell<Quantity>,

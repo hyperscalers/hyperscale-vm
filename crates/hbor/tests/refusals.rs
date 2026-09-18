@@ -21,7 +21,8 @@ fn the_derive_refuses_what_has_no_canonical_form() {
 
 /// A shape is a static tree a type states as a constant, so a type that
 /// reaches itself makes its constant name itself — and rustc refuses the
-/// cycle on the impl, before any walk could spend a budget on it.
+/// cycle on the impl, before any walk could spend a budget on it. The
+/// type still derives its codec; what it has no claim to is a shape.
 #[test]
 fn a_recursive_type_has_no_static_shape() {
     let refuse = TestCases::new();

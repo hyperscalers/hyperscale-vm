@@ -27,6 +27,10 @@ pub const NAMES: SlotId = package_slot(0);
 /// the hash is admission's to compute. `bind` writes the binding, `check`
 /// reads it and traps on a mismatch, and `drain` removes the hash order's
 /// tail from a caller-named cursor, `DRAIN_CAP` entries per crank.
+///
+/// # Panics
+///
+/// Never: the shapes this declares are scalars, which join any table.
 #[must_use]
 pub fn metadata() -> PackageMetadata {
     let binding = |name_slot: u32| {
@@ -46,12 +50,16 @@ pub fn metadata() -> PackageMetadata {
         )
     };
     let mut methods = PackageMetadata::default();
+    let amount = methods
+        .types
+        .push(TypeShape::U128)
+        .expect("a scalar joins any table");
     methods.state.insert(
         NAMES,
         SlotShape {
             name: "names".to_owned(),
             kind: SlotKind::Unordered,
-            element: LeafForm::Value(TypeShape::U128),
+            element: LeafForm::Value(amount),
             width: 16,
             denomination: None,
         },

@@ -1,10 +1,10 @@
-error[E0277]: the trait bound `Vec<u8>: HborInfallible` is not satisfied
-  --> tests/refusals/emitted_record_carries_a_length.rs:14:15
+error[E0277]: the trait bound `hyperscale_vm_sdk::hyperscale_hbor::Bytes<8>: LengthFree` is not satisfied
+  --> tests/refusals/emitted_record_carries_a_length.rs:15:15
    |
-14 |         note: Vec<u8>,
-   |               ^^^^^^^ the trait `HborInfallible` is not implemented for `Vec<u8>`
+15 |         note: Bytes<8>,
+   |               ^^^^^^^^ the trait `LengthFree` is not implemented for `hyperscale_vm_sdk::hyperscale_hbor::Bytes<8>`
    |
-   = help: the following other types implement trait `HborInfallible`:
+   = help: the following other types implement trait `LengthFree`:
              ()
              (A, B)
              (A, B, C)
@@ -14,3 +14,9 @@ error[E0277]: the trait bound `Vec<u8>: HborInfallible` is not satisfied
              ComponentAddr
              PackageAddr
            and $N others
+note: required by a bound in `contract::_::_::held`
+  --> tests/refusals/emitted_record_carries_a_length.rs:7:1
+   |
+ 7 | #[blueprint]
+   | ^^^^^^^^^^^^ required by this bound in `held`
+   = note: this error originates in the derive macro `::hyperscale_vm_sdk::hbor::Hbor` (in Nightly builds, run with -Z macro-backtrace for more info)

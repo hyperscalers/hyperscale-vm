@@ -13,7 +13,7 @@ use hyperscale_hbor::{from_slice_with_depth, to_vec_with_depth};
 
 use crate::dsl::{MAX_CLAUSE_DEPTH, MAX_EXPR_DEPTH};
 use crate::hash::Hasher;
-use crate::metadata::{MAX_SHAPE_DEPTH, PackageHash, PackageMetadata};
+use crate::metadata::{PackageHash, PackageMetadata};
 use crate::publish::check_metadata;
 use crate::types::MAX_VALUE_DEPTH;
 
@@ -31,18 +31,22 @@ const CUSTOM_SECTION_ID: u8 = 0;
 const WASM_MAGIC: [u8; 4] = *b"\0asm";
 const PREAMBLE_LEN: usize = 8;
 
+/// The levels the type table costs under the record's own field: the
+/// node list, a node's own collection, that collection's members, and a
+/// member's name. A table is flat — a node names its children by index —
+/// so a shape's own nesting costs the wire nothing.
+const SHAPE_TABLE_DEPTH: usize = 4;
+
 /// The nesting cap the section codec encodes and decodes at.
 ///
 /// A vocabulary layer costs at most two decoder levels — a collection
 /// field and its hoisted element body — so the clause, expression, and
 /// value bounds translate at two apiece, over a fixed prefix for the
 /// record, its method table, a method, and a clause's target and mode.
-/// A shape layer costs three: the variant's own sequence field, that
-/// sequence's elements, and the field or variant body one level down.
 /// The cap admits everything [`check_metadata`] accepts; the checks are
 /// what decide.
 pub const METADATA_WIRE_DEPTH: usize =
-    16 + 3 * MAX_SHAPE_DEPTH + 2 * (MAX_CLAUSE_DEPTH + MAX_EXPR_DEPTH + MAX_VALUE_DEPTH);
+    16 + SHAPE_TABLE_DEPTH + 2 * (MAX_CLAUSE_DEPTH + MAX_EXPR_DEPTH + MAX_VALUE_DEPTH);
 
 /// Why an artifact's metadata section could not be read or written.
 ///
@@ -258,7 +262,10 @@ fn read_uleb128(bytes: &[u8], pos: &mut usize) -> Result<usize, ArtifactError> {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_hbor::{Capped, ShapeField, TypeShape, to_vec_with_depth};
+    use hyperscale_hbor::{
+        Capped, DEFAULT_MAX_DEPTH, ShapeField, ShapeTable, ShapeVariant, TypeShape,
+        to_vec_with_depth,
+    };
     use hyperscale_vm_types::{EVENT_FRAME_BYTES, Moves};
 
     /// The framing one event costs, in the units a signature states it
@@ -274,44 +281,57 @@ mod tests {
     };
     use crate::dsl::{Clause, Expr, MAX_EXPR_DEPTH, ModeExpr, TargetExpr};
     use crate::hash::TestHasher;
-    use crate::metadata::{MAX_SHAPE_DEPTH, PackageMetadata, package_hash};
+    use crate::metadata::{PackageMetadata, package_hash};
     use crate::signature::{MethodSignature, Totality};
 
     /// The wire depth admits every shape the door admits, so a package
     /// cannot pass the checks and then fail to be written down.
+    ///
+    /// The table is flat, so a shape's own nesting costs the wire
+    /// nothing: the deepest admissible shape and the costliest node form
+    /// — an enum's variant over a struct's named field — both sit inside
+    /// the cap, and the cap is not slack past the node forms either.
     #[test]
     fn the_wire_depth_carries_the_deepest_admissible_shape() {
-        use hyperscale_hbor::ShapeVariant;
-
-        // The costliest form per level: a struct's field and an enum's
-        // variant each put a sequence between one shape and the next.
-        let nested = |levels| {
-            let deepest = (0..levels).fold(TypeShape::U8, |inner, level| {
-                let held = TypeShape::Struct(vec![ShapeField {
-                    name: format!("field{level}"),
-                    shape: inner,
-                }]);
-                TypeShape::Enum(vec![ShapeVariant {
-                    name: format!("variant{level}"),
-                    discriminant: 0,
-                    content: held,
-                }])
-            });
-            PackageMetadata {
-                types: std::iter::once(("deepest".to_owned(), deepest)).collect(),
-                ..PackageMetadata::default()
-            }
+        let mut types = ShapeTable::new();
+        let mut held = types.push(TypeShape::U8).unwrap();
+        // The struct below spends the last of the levels a decoder
+        // follows; an enum and a name spend none.
+        for _ in 1..DEFAULT_MAX_DEPTH {
+            held = types.push(TypeShape::Option(held)).unwrap();
+        }
+        let field = types
+            .push(TypeShape::Struct(vec![ShapeField {
+                name: "field".to_owned(),
+                shape: held,
+            }]))
+            .unwrap();
+        let variant = types
+            .push(TypeShape::Enum(vec![ShapeVariant {
+                name: "variant".to_owned(),
+                discriminant: 0,
+                content: field,
+            }]))
+            .unwrap();
+        types
+            .push(TypeShape::Named {
+                name: "deepest".to_owned(),
+                shape: variant,
+            })
+            .unwrap();
+        let deepest = PackageMetadata {
+            types,
+            ..PackageMetadata::default()
         };
-        // Whatever the door's last word is, the section codec carries it.
-        // A level costs at least one of the walk's budget, so no
-        // admissible shape has more of them than the cap.
-        let deepest = (1..=MAX_SHAPE_DEPTH)
-            .map(nested)
-            .take_while(|metadata| check_metadata(metadata).is_ok())
-            .last()
-            .expect("some depth is admissible");
+        assert_eq!(check_metadata(&deepest), Ok(()));
         let section = encode_metadata(&deepest).expect("the deepest shape encodes");
         assert_eq!(decode_metadata(&section).expect("and decodes"), deepest);
+        // The node forms spend exactly the levels the table is budgeted
+        // for, over the record's own.
+        let least = (1..=METADATA_WIRE_DEPTH)
+            .find(|depth| to_vec_with_depth(&deepest, *depth).is_ok())
+            .expect("the cap admits it");
+        assert_eq!(least, 1 + super::SHAPE_TABLE_DEPTH);
     }
 
     fn empty_component() -> Vec<u8> {
@@ -368,13 +388,21 @@ mod tests {
                 ..MethodSignature::default()
             },
         );
-        metadata.types.insert(
-            "transferred".to_owned(),
-            TypeShape::Struct(vec![ShapeField {
+        let amount = metadata.types.push(TypeShape::U128).unwrap();
+        let transferred = metadata
+            .types
+            .push(TypeShape::Struct(vec![ShapeField {
                 name: "amount".to_owned(),
-                shape: TypeShape::U128,
-            }]),
-        );
+                shape: amount,
+            }]))
+            .unwrap();
+        metadata
+            .types
+            .push(TypeShape::Named {
+                name: "transferred".to_owned(),
+                shape: transferred,
+            })
+            .unwrap();
 
         let published = attach_metadata(&empty_component(), &metadata).unwrap();
         assert_eq!(extract_metadata(&published).unwrap(), Some(metadata));

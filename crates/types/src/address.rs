@@ -5,8 +5,8 @@ pub mod text;
 use core::fmt;
 
 use hyperscale_hbor::{
-    DecodeError, Decoder, EncodeError, Encoder, Hbor, HborDecode, HborEncode, HborInfallible,
-    HborShape, HborWidth, ShapeRegistry, Sink, TypeShape,
+    DecodeError, Decoder, EncodeError, Encoder, Hbor, HborDecode, HborEncode, HborShape, HborWidth,
+    LengthFree, ShapeNode, Sink,
 };
 use thiserror::Error;
 
@@ -431,9 +431,7 @@ impl HborWidth for Address {
 
 /// Thirty-two bytes, always: no length field, so writing one down cannot
 /// fail and a body that may not allocate can still name one.
-impl HborInfallible for Address {
-    const MAX_ENCODED_LEN: usize = 32;
-}
+impl LengthFree for Address {}
 
 impl HborEncode for Address {
     fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
@@ -453,19 +451,17 @@ impl HborDecode for Address {
 /// name is the whole of what says so.
 pub const ADDRESS_SHAPE: &str = "address";
 
-/// Register an address shape of `name`, which is thirty-two bytes under
-/// every narrowing.
-fn address_shape(types: &mut ShapeRegistry, name: &str, owner: &'static str) -> TypeShape {
-    types.nominal(name, owner, |_| TypeShape::ByteArray(32))
-}
+/// The thirty-two bytes every address is, under every narrowing.
+const ADDRESS_BYTES: &ShapeNode = &ShapeNode::ByteArray(32);
 
 /// An address survives the encoding that erases it: the shape is a name
 /// over thirty-two bytes, because a consumer that reads `bytes32` cannot
 /// link, render, or resolve what it found.
 impl HborShape for Address {
-    fn shape(types: &mut ShapeRegistry) -> TypeShape {
-        address_shape(types, ADDRESS_SHAPE, core::any::type_name::<Self>())
-    }
+    const NODE: &'static ShapeNode = &ShapeNode::Named {
+        name: ADDRESS_SHAPE,
+        shape: ADDRESS_BYTES,
+    };
 }
 
 macro_rules! class_addr {
@@ -558,9 +554,7 @@ macro_rules! class_addr {
         // narrowing is a fact about construction, not about the wire, so
         // the no-alloc total path is as open to the typed form as to the
         // untyped one.
-        impl HborInfallible for $name {
-            const MAX_ENCODED_LEN: usize = 32;
-        }
+        impl LengthFree for $name {}
 
         impl HborEncode for $name {
             fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
@@ -580,9 +574,10 @@ macro_rules! class_addr {
         // address's, and which class they name is the fact a consumer
         // could not otherwise recover.
         impl HborShape for $name {
-            fn shape(types: &mut ShapeRegistry) -> TypeShape {
-                address_shape(types, Self::CLASS.shape_name(), core::any::type_name::<Self>())
-            }
+            const NODE: &'static ShapeNode = &ShapeNode::Named {
+                name: Self::CLASS.shape_name(),
+                shape: ADDRESS_BYTES,
+            };
         }
 
         impl TryFrom<Address> for $name {
@@ -739,9 +734,7 @@ macro_rules! position_addr {
 
         // As the class newtypes: the position is construction, the wire
         // is thirty-two bytes, and the no-alloc total path stays open.
-        impl HborInfallible for $name {
-            const MAX_ENCODED_LEN: usize = 32;
-        }
+        impl LengthFree for $name {}
 
         impl HborEncode for $name {
             fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
@@ -758,9 +751,10 @@ macro_rules! position_addr {
         }
 
         impl HborShape for $name {
-            fn shape(types: &mut ShapeRegistry) -> TypeShape {
-                address_shape(types, $shape_name, core::any::type_name::<Self>())
-            }
+            const NODE: &'static ShapeNode = &ShapeNode::Named {
+                name: $shape_name,
+                shape: ADDRESS_BYTES,
+            };
         }
     };
 }

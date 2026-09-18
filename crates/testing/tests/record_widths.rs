@@ -9,20 +9,21 @@
 
 use hyperscale_vm_effects::{PACKAGE_SLOT_BASE, SlotId, TestHasher, child_key};
 use hyperscale_vm_sdk::blueprint;
-use hyperscale_vm_sdk::hbor::to_vec;
+use hyperscale_vm_sdk::hbor::{Bytes, to_vec};
 use hyperscale_vm_testing::{Chain, PrincipalAddr, package, principal};
 
 const CALLER: PrincipalAddr = principal(0x71);
 
 #[blueprint]
 mod ledger {
+    use hyperscale_vm_sdk::hbor::Bytes;
     use hyperscale_vm_sdk::state::Cell;
 
     /// A record no event names, so its fields are the encoding's to
     /// carry rather than a stack buffer's to hold.
     #[record]
     struct Entry {
-        memo: Vec<u8>,
+        memo: Bytes<1014>,
         amount: u64,
     }
 
@@ -35,6 +36,7 @@ mod ledger {
     impl Ledger {
         /// File an entry whose width the caller chose.
         pub fn file(&mut self, memo: Vec<u8>, amount: u64) {
+            let memo = Bytes::new(memo).expect("a memo inside the record's cap");
             self.latest.set(Some(Entry { memo, amount }));
         }
     }
@@ -60,7 +62,13 @@ fn a_record_no_event_names_carries_a_length() {
             SlotId(PACKAGE_SLOT_BASE),
             &[]
         )),
-        Some(to_vec(&ledger::Entry { memo, amount: 7 }).expect("the record encodes")),
+        Some(
+            to_vec(&ledger::Entry {
+                memo: Bytes::new(memo).expect("inside the cap"),
+                amount: 7
+            })
+            .expect("the record encodes")
+        ),
         "the cell holds the record's own encoding, at whatever width it came to",
     );
 }

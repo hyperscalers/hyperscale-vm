@@ -2,19 +2,18 @@
 //!
 //! Three things hold the folds honest: the figures are constants, so a
 //! type's bound is stated beside its shape; they agree with the encoder,
-//! which is what charges the levels and writes the bytes; and where the
-//! recursive walk over a [`TypeShape`] answers, they answer the same.
+//! which is what charges the levels and writes the bytes; and the table a
+//! tree is declared into measures every node the same.
 
 use std::collections::BTreeMap;
 
 use hyperscale_hbor::node::{max_depth, max_encoded_len, min_encoded_len};
-use hyperscale_hbor::shape::{MAX_SHAPE_DEPTH, Resolution};
 use hyperscale_hbor::{
-    EncodeError, Hbor, HborBound, ShapeField, ShapeNode, ShapeTable, ShapeVariant, TypeShape,
-    to_vec, to_vec_with_depth,
+    Capped, EncodeError, Hbor, HborBound, HborShape, ShapeNode, ShapeTable, to_vec,
+    to_vec_with_depth,
 };
 
-#[derive(Debug, PartialEq, Eq, Hbor)]
+#[derive(Debug, PartialEq, Eq, Hbor, HborShape)]
 struct Record {
     a: u32,
     b: [u8; 3],
@@ -34,7 +33,7 @@ const RECORD: &ShapeNode = &ShapeNode::Named {
 
 /// The widest variant sits in the middle, so a fold that took the last
 /// variant, or the first, would be wrong.
-#[derive(Debug, PartialEq, Eq, Hbor)]
+#[derive(Debug, PartialEq, Eq, Hbor, HborShape)]
 enum Choice {
     Nothing,
     Wide { held: u128, more: u64 },
@@ -85,6 +84,23 @@ const _: () = {
     assert!(max_depth(LABEL) == 0);
 };
 
+/// The derive states the tree written out above, and the bound a type
+/// carries is the fold over it.
+const _: () = {
+    assert!(<Record as HborBound>::MAX_ENCODED_LEN == max_encoded_len(RECORD));
+    assert!(<Record as HborBound>::MAX_DEPTH == max_depth(RECORD));
+    assert!(<Choice as HborBound>::MAX_ENCODED_LEN == max_encoded_len(CHOICE));
+    assert!(<Choice as HborBound>::MAX_DEPTH == max_depth(CHOICE));
+    assert!(<Capped<Vec<u64>, 3> as HborBound>::MAX_ENCODED_LEN == max_encoded_len(THREE_WORDS));
+};
+
+#[test]
+fn the_derive_states_the_tree_the_type_is() {
+    assert_eq!(<Record as HborShape>::NODE, RECORD);
+    assert_eq!(<Choice as HborShape>::NODE, CHOICE);
+    assert_eq!(<Capped<Vec<u64>, 3> as HborShape>::NODE, THREE_WORDS);
+}
+
 /// The widest value of a type encodes to exactly the folded bound, and the
 /// encoder admits it at exactly the folded depth.
 #[test]
@@ -122,88 +138,18 @@ fn the_folds_are_what_the_encoder_charges() {
     assert!(to_vec_with_depth(&label, 0).is_ok());
 }
 
-/// The tree lowered to the recursive vocabulary, for the walk to answer
-/// over. A name becomes an entry in the table and a reference to it; a cap
-/// is dropped, because that vocabulary has nowhere to carry one.
-fn lowered(node: &ShapeNode, types: &mut ShapeTable) -> TypeShape {
-    match node {
-        ShapeNode::Bool => TypeShape::Bool,
-        ShapeNode::U8 => TypeShape::U8,
-        ShapeNode::U16 => TypeShape::U16,
-        ShapeNode::U32 => TypeShape::U32,
-        ShapeNode::U64 => TypeShape::U64,
-        ShapeNode::U128 => TypeShape::U128,
-        ShapeNode::I8 => TypeShape::I8,
-        ShapeNode::I16 => TypeShape::I16,
-        ShapeNode::I32 => TypeShape::I32,
-        ShapeNode::I64 => TypeShape::I64,
-        ShapeNode::I128 => TypeShape::I128,
-        ShapeNode::Text { .. } => TypeShape::Text,
-        ShapeNode::ByteArray(width) => {
-            TypeShape::ByteArray(u32::try_from(*width).expect("a test width fits"))
-        }
-        ShapeNode::Seq { element, .. } => TypeShape::Seq(Box::new(lowered(element, types))),
-        ShapeNode::Set { element, .. } => TypeShape::Set(Box::new(lowered(element, types))),
-        ShapeNode::Map { key, value, .. } => TypeShape::Map {
-            key: Box::new(lowered(key, types)),
-            value: Box::new(lowered(value, types)),
-        },
-        ShapeNode::Option(held) => TypeShape::Option(Box::new(lowered(held, types))),
-        ShapeNode::Tuple(elements) => {
-            TypeShape::Tuple(elements.iter().map(|e| lowered(e, types)).collect())
-        }
-        ShapeNode::Struct(fields) => TypeShape::Struct(
-            fields
-                .iter()
-                .map(|(name, shape)| ShapeField {
-                    name: (*name).to_owned(),
-                    shape: lowered(shape, types),
-                })
-                .collect(),
-        ),
-        ShapeNode::Enum(variants) => TypeShape::Enum(
-            variants
-                .iter()
-                .map(|(name, discriminant, content)| ShapeVariant {
-                    name: (*name).to_owned(),
-                    discriminant: *discriminant,
-                    content: lowered(content, types),
-                })
-                .collect(),
-        ),
-        ShapeNode::Named { name, shape } => {
-            let definition = lowered(shape, types);
-            types.insert((*name).to_owned(), definition);
-            TypeShape::Ref((*name).to_owned())
-        }
-    }
-}
-
-/// Where the recursive walk answers, the fold answers the same; where a
-/// run leaves the walk without a widest value, the fold has one.
+/// A tree declared into a table measures what the folds state: the two
+/// derivations — the constant beside the type, and the pass over the
+/// published array — answer the same for every node.
 #[test]
-fn the_folds_agree_with_the_recursive_walk() {
-    for (node, closed) in [
-        (RECORD, true),
-        (CHOICE, true),
-        (THREE_WORDS, false),
-        (PAIRS, false),
-        (LABEL, false),
-    ] {
-        let mut types = ShapeTable::new();
-        let shape = lowered(node, &mut types);
-        let mut walk = Resolution::of(&types);
-        assert_eq!(
-            walk.readable(&shape, MAX_SHAPE_DEPTH),
-            Ok(max_depth(node)),
-            "depth of {node:?}"
-        );
-        let most = walk.max_encoded_len(&shape, MAX_SHAPE_DEPTH).unwrap();
-        if closed {
-            assert_eq!(most, Some(max_encoded_len(node)), "width of {node:?}");
-        } else {
-            assert_eq!(most, None, "the walk has no width for {node:?}");
-        }
+fn the_table_measures_what_the_folds_state() {
+    for node in [RECORD, CHOICE, THREE_WORDS, PAIRS, LABEL] {
+        let mut table = ShapeTable::new();
+        let id = table.declare(node).unwrap();
+        assert_eq!(table.most(id), max_encoded_len(node), "width of {node:?}");
+        assert_eq!(table.least(id), min_encoded_len(node), "least of {node:?}");
+        assert_eq!(table.depth(id), max_depth(node), "depth of {node:?}");
+        assert!(table.matches(id, node));
     }
 }
 
@@ -212,47 +158,32 @@ fn the_folds_agree_with_the_recursive_walk() {
 /// the derive emits.
 #[test]
 fn a_generic_impl_composes_by_naming_its_parameter() {
-    trait Shape {
-        const NODE: &'static ShapeNode;
-    }
-    impl Shape for u8 {
-        const NODE: &'static ShapeNode = &ShapeNode::U8;
-    }
-    impl Shape for u64 {
-        const NODE: &'static ShapeNode = &ShapeNode::U64;
-    }
-    impl<T: Shape> Shape for Option<T> {
-        const NODE: &'static ShapeNode = &ShapeNode::Option(T::NODE);
-    }
-    impl<T: Shape> Shape for Box<T> {
-        const NODE: &'static ShapeNode = T::NODE;
-    }
-    struct Many<T, const N: usize>(std::marker::PhantomData<T>);
-    impl<T: Shape, const N: usize> Shape for Many<T, N> {
-        const NODE: &'static ShapeNode = &ShapeNode::Seq {
-            cap: N,
-            element: T::NODE,
-        };
-    }
-    struct Composed {
-        _a: u64,
-        _b: Option<Box<u8>>,
-        _c: Many<u64, 3>,
-    }
-    impl Shape for Composed {
-        const NODE: &'static ShapeNode = &ShapeNode::Struct(&[
-            ("a", <u64 as Shape>::NODE),
-            ("b", <Option<Box<u8>> as Shape>::NODE),
-            ("c", <Many<u64, 3> as Shape>::NODE),
-        ]);
-    }
-    impl HborBound for Composed {
-        const MAX_ENCODED_LEN: usize = max_encoded_len(Self::NODE);
-        const MAX_DEPTH: usize = max_depth(Self::NODE);
+    #[derive(Hbor, HborShape)]
+    struct Composed<T> {
+        a: u64,
+        b: Option<Box<T>>,
+        c: Capped<Vec<T>, 3>,
     }
     const _: () = {
-        assert!(<Composed as HborBound>::MAX_ENCODED_LEN == 8 + 2 + 25);
-        assert!(<Composed as HborBound>::MAX_DEPTH == 2);
+        assert!(<Composed<u8> as HborBound>::MAX_ENCODED_LEN == 8 + 2 + 4);
+        assert!(<Composed<u8> as HborBound>::MAX_DEPTH == 2);
+        assert!(<Composed<u64> as HborBound>::MAX_ENCODED_LEN == 8 + 9 + 25);
     };
-    assert_eq!(<Composed as HborBound>::MAX_ENCODED_LEN, 35);
+    assert_eq!(
+        <Composed<u8> as HborShape>::NODE,
+        &ShapeNode::Named {
+            name: "composed",
+            shape: &ShapeNode::Struct(&[
+                ("a", &ShapeNode::U64),
+                ("b", &ShapeNode::Option(&ShapeNode::U8)),
+                (
+                    "c",
+                    &ShapeNode::Seq {
+                        cap: 3,
+                        element: &ShapeNode::U8
+                    }
+                ),
+            ]),
+        }
+    );
 }

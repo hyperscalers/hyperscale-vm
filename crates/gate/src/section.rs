@@ -61,6 +61,23 @@ mod tests {
     use std::collections::BTreeMap;
 
     use hyperscale_hbor::{Capped, ShapeTable, TypeShape, to_vec_with_depth};
+
+    /// A table naming the empty shape under each of `names`.
+    fn units(names: &[String]) -> ShapeTable {
+        let mut types = ShapeTable::new();
+        let unit = types
+            .push(TypeShape::Tuple(Vec::new()))
+            .expect("the empty shape joins any table");
+        for name in names {
+            types
+                .push(TypeShape::Named {
+                    name: name.clone(),
+                    shape: unit,
+                })
+                .expect("one name over the empty shape");
+        }
+        types
+    }
     use hyperscale_vm_effects::{
         AbiParam, Clause, EdgeContent, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,
         MAX_EXPR_DEPTH, MAX_VALUE_DEPTH, METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType,
@@ -294,11 +311,7 @@ mod tests {
             .methods
             .insert("another".into(), MethodSignature::default());
         metadata.events = vec!["withdrawn".into(), "deposited".into()];
-        metadata.types = metadata
-            .events
-            .iter()
-            .map(|name| (name.clone(), TypeShape::Tuple(Vec::new())))
-            .collect();
+        metadata.types = units(&metadata.events);
         // A declared event has a method that may emit it; the empty
         // shape encodes to nothing, so the bound is the framing the
         // receipt keeps around each of the two.
@@ -513,10 +526,7 @@ mod tests {
         let events = |len: usize| {
             let named: Vec<String> = (0..len).map(|index| format!("e{index}")).collect();
             PackageMetadata {
-                types: named
-                    .iter()
-                    .map(|name| (name.clone(), TypeShape::Tuple(Vec::new())))
-                    .collect(),
+                types: units(&named),
                 events: named,
                 // A declared event has a method that may emit it, which
                 // the door checks beside the table's length.
@@ -556,10 +566,7 @@ mod tests {
             .map(|index| format!("{index}{}", "e".repeat(1024)))
             .collect();
         let over = PackageMetadata {
-            types: named
-                .iter()
-                .map(|name| (name.clone(), TypeShape::Tuple(Vec::new())))
-                .collect(),
+            types: units(&named),
             events: named,
             ..PackageMetadata::default()
         };

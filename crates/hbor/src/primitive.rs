@@ -14,7 +14,7 @@ use core::mem::size_of;
 use crate::decode::Decoder;
 use crate::encode::{Encoder, Sink};
 use crate::error::{DecodeError, EncodeError};
-use crate::{HborDecode, HborEncode, HborInfallible, HborWidth};
+use crate::{HborDecode, HborEncode, HborWidth, LengthFree};
 
 macro_rules! fixed_width_integer {
     ($($ty:ty),* $(,)?) => { $(
@@ -35,9 +35,7 @@ macro_rules! fixed_width_integer {
             }
         }
 
-        impl HborInfallible for $ty {
-            const MAX_ENCODED_LEN: usize = size_of::<$ty>();
-        }
+        impl LengthFree for $ty {}
     )* };
 }
 
@@ -47,9 +45,7 @@ impl HborWidth for bool {
     const MIN_ENCODED_LEN: usize = 1;
 }
 
-impl HborInfallible for bool {
-    const MAX_ENCODED_LEN: usize = 1;
-}
+impl LengthFree for bool {}
 
 impl HborEncode for bool {
     fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
@@ -76,9 +72,7 @@ impl HborWidth for () {
     const MIN_ENCODED_LEN: usize = 0;
 }
 
-impl HborInfallible for () {
-    const MAX_ENCODED_LEN: usize = 0;
-}
+impl LengthFree for () {}
 
 impl HborEncode for () {
     fn encode<S: Sink>(&self, _encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
@@ -111,9 +105,7 @@ impl<T: HborEncode> HborEncode for Option<T> {
     }
 }
 
-impl<T: HborInfallible> HborInfallible for Option<T> {
-    const MAX_ENCODED_LEN: usize = 1 + T::MAX_ENCODED_LEN;
-}
+impl<T: LengthFree> LengthFree for Option<T> {}
 
 impl<T: HborDecode> HborDecode for Option<T> {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
@@ -132,9 +124,7 @@ impl<T: HborWidth + ?Sized> HborWidth for Box<T> {
     const MIN_ENCODED_LEN: usize = T::MIN_ENCODED_LEN;
 }
 
-impl<T: HborInfallible + ?Sized> HborInfallible for Box<T> {
-    const MAX_ENCODED_LEN: usize = T::MAX_ENCODED_LEN;
-}
+impl<T: LengthFree + ?Sized> LengthFree for Box<T> {}
 
 impl<T: HborEncode + ?Sized> HborEncode for Box<T> {
     fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
@@ -156,9 +146,7 @@ impl<T: HborWidth + ?Sized> HborWidth for std::sync::Arc<T> {
     const MIN_ENCODED_LEN: usize = T::MIN_ENCODED_LEN;
 }
 
-impl<T: HborInfallible + ?Sized> HborInfallible for std::sync::Arc<T> {
-    const MAX_ENCODED_LEN: usize = T::MAX_ENCODED_LEN;
-}
+impl<T: LengthFree + ?Sized> LengthFree for std::sync::Arc<T> {}
 
 impl<T: HborEncode + ?Sized> HborEncode for std::sync::Arc<T> {
     fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
@@ -177,9 +165,7 @@ impl<T: HborDecode> HborDecode for std::sync::Arc<T> {
 // would have to build each value through a heap collection to stay safe —
 // paying an allocation on the hottest decode path in the system to serve a
 // case that does not occur. A generic impl is additive if one ever does.
-impl<const N: usize> HborInfallible for [u8; N] {
-    const MAX_ENCODED_LEN: usize = N;
-}
+impl<const N: usize> LengthFree for [u8; N] {}
 
 impl<const N: usize> HborWidth for [u8; N] {
     const MIN_ENCODED_LEN: usize = N;
@@ -204,9 +190,7 @@ macro_rules! tuple {
             const MIN_ENCODED_LEN: usize = 0 $(+ $name::MIN_ENCODED_LEN)+;
         }
 
-        impl<$($name: HborInfallible),+> HborInfallible for ($($name,)+) {
-            const MAX_ENCODED_LEN: usize = 0 $(+ $name::MAX_ENCODED_LEN)+;
-        }
+        impl<$($name: LengthFree),+> LengthFree for ($($name,)+) {}
 
         impl<$($name: HborEncode),+> HborEncode for ($($name,)+) {
             fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {

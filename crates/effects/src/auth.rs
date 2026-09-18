@@ -10,13 +10,14 @@
 //! judges that read it agree.
 
 use hyperscale_hbor::{
-    DecodeError, EncodeError, Hbor, HborShape, from_slice, from_slice_with_depth, to_vec,
+    Bytes, DecodeError, EncodeError, Hbor, HborShape, from_slice, from_slice_with_depth, to_vec,
     to_vec_with_depth,
 };
 use hyperscale_vm_types::Address;
 
 use crate::claim::Claim;
 use crate::rule::{ANYBODY_BYTES, StoredRule};
+use crate::types::MAX_VALUE_BYTES;
 
 /// A stored rule as the bytes it travels as.
 ///
@@ -31,7 +32,7 @@ use crate::rule::{ANYBODY_BYTES, StoredRule};
 /// the judging happens.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor, HborShape)]
 #[hbor(transparent)]
-pub struct RuleBytes(pub Vec<u8>);
+pub struct RuleBytes(pub Bytes<MAX_VALUE_BYTES>);
 
 impl RuleBytes {
     /// The canonical bytes, which is all a body may do with one: what
@@ -95,7 +96,7 @@ impl RuleBytes {
 /// what it was handed converts nothing here either.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor, HborShape)]
 #[hbor(transparent)]
-pub struct PrincipalRule(pub Vec<u8>);
+pub struct PrincipalRule(pub Bytes<MAX_VALUE_BYTES>);
 
 impl PrincipalRule {
     /// The bytes a cell holds, which is what a body does with one.
@@ -115,7 +116,7 @@ impl TryFrom<&StoredRule> for PrincipalRule {
     type Error = EncodeError;
 
     fn try_from(rule: &StoredRule) -> Result<Self, EncodeError> {
-        rule.to_bytes().map(Self)
+        RuleBytes::try_from(rule).map(|bytes| Self(bytes.0))
     }
 }
 
@@ -161,7 +162,7 @@ impl Authority {
     pub fn primary_only(primary: RuleBytes) -> Self {
         Self {
             primary,
-            confirmation: RuleBytes(ANYBODY_BYTES.to_vec()),
+            confirmation: RuleBytes(Bytes::from_array(ANYBODY_BYTES)),
         }
     }
 
@@ -233,11 +234,21 @@ fn admitted_by(rule: &StoredRule, keys: &[Claim]) -> bool {
         .is_some_and(|claims| claims.satisfied_by(keys))
 }
 
+/// A rule as the bytes a cell holds, where the encoding fits the value
+/// cap: the widest rule inside the vocabulary's caps does, and one past
+/// them is refused as a value too wide to store.
 impl TryFrom<&StoredRule> for RuleBytes {
     type Error = EncodeError;
 
     fn try_from(rule: &StoredRule) -> Result<Self, EncodeError> {
-        rule.to_bytes().map(Self)
+        let bytes = rule.to_bytes()?;
+        Bytes::new(bytes)
+            .map(Self)
+            .map_err(|overflow| EncodeError::BoundExceeded {
+                field: "rule",
+                actual: overflow.actual,
+                max: overflow.max,
+            })
     }
 }
 

@@ -303,7 +303,7 @@ const fn limb_sub(a: [u64; 4], b: [u64; 4]) -> ([u64; 4], bool) {
 /// Encoded as the width it is: a `u128` of subunits, with the tag erased,
 /// which is the same form its cell holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default, Hash, Hbor, HborShape)]
-#[hbor(transparent, infallible)]
+#[hbor(transparent, length_free)]
 pub struct Quantity(u128);
 
 impl Quantity {
@@ -1384,9 +1384,8 @@ macro_rules! rate_hbor {
         }
 
         impl<A, B> HborShape for $ty<A, B> {
-            fn shape(_: &mut hyperscale_hbor::ShapeRegistry) -> hyperscale_hbor::TypeShape {
-                hyperscale_hbor::TypeShape::ByteArray(32)
-            }
+            const NODE: &'static hyperscale_hbor::ShapeNode =
+                &hyperscale_hbor::ShapeNode::ByteArray(32);
         }
     };
 }

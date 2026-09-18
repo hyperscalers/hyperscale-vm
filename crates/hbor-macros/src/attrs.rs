@@ -22,14 +22,14 @@ pub struct TypeAttrs {
     /// What this type's merkle roots are for. Required by `HborMerkle`;
     /// inert under `Hbor` alone, which cannot know its sibling derive.
     pub(crate) merkle_domain: Option<LitStr>,
-    /// Claim that this type's encoding cannot fail.
+    /// Claim that this type's encoding carries no length.
     ///
     /// Asked for rather than inferred, because the shape a field is
     /// written in is not always the shape it has — an alias hiding a
     /// `Vec` reads as opaque here. Asking makes the emitted impl bound
     /// every field, so a field that carries a length is a compile error
     /// naming it rather than a claim nothing checks.
-    pub(crate) infallible: bool,
+    pub(crate) length_free: bool,
     /// Where the emitted impls find the codec.
     ///
     /// Defaults to `::hyperscale_hbor`, which is right for every crate
@@ -47,7 +47,7 @@ impl Default for TypeAttrs {
             signing_domain: None,
             signing_context: None,
             merkle_domain: None,
-            infallible: false,
+            length_free: false,
             crate_path: syn::parse_quote!(::hyperscale_hbor),
         }
     }
@@ -132,8 +132,8 @@ impl TypeAttrs {
                     out.merkle_domain = Some(meta.value()?.parse()?);
                     return Ok(());
                 }
-                if meta.path.is_ident("infallible") {
-                    out.infallible = true;
+                if meta.path.is_ident("length_free") {
+                    out.length_free = true;
                     return Ok(());
                 }
                 if meta.path.is_ident("crate") {
@@ -143,7 +143,7 @@ impl TypeAttrs {
                 Err(meta.error(
                     "unknown hbor attribute; a type takes `transparent`, `validate = path`, \
                      `signing_domain = \"...\"`, `signing_context = Ty`, \
-                     `merkle_domain = \"...\"`, `infallible`, or `crate = path`",
+                     `merkle_domain = \"...\"`, `length_free`, or `crate = path`",
                 ))
             })?;
         }

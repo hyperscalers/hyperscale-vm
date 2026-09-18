@@ -25,10 +25,10 @@
 //!   of `Ty` in ahead of the fields, and `signing_bytes` takes one: how a
 //!   message binds to the session it is for — a network id — without
 //!   carrying it as a field. Only beside `signing_domain`.
-//! - `#[hbor(infallible)]` — also emit `HborInfallible`, with
-//!   `MAX_ENCODED_LEN` summed from the fields' own bounds. The type must
-//!   hold only infallible fields; the no-alloc encoding path is what it
-//!   buys.
+//! - `#[hbor(length_free)]` — also emit `LengthFree`, holding every field
+//!   to it. The type must carry no length anywhere; what it buys is a
+//!   refusal on the field that does, where an encode into a stack buffer
+//!   would otherwise be diagnosed in the compiled body.
 //! - `#[hbor(crate = path)]` — the path generated code names the hbor
 //!   crate by, for a caller that reaches it through a re-export rather
 //!   than as a direct dependency.
@@ -114,10 +114,11 @@ pub fn hbor_merkle(input: TokenStream) -> TokenStream {
 /// have it.
 ///
 /// Read off the same declaration the codec is, so the description and the
-/// bytes cannot disagree. A struct or enum registers its definition under
-/// its kebab name and is referenced by it; a `transparent` wrapper is a
+/// bytes cannot disagree. A struct or enum states its node under its kebab
+/// name, composed of its fields' own nodes; a `transparent` wrapper is a
 /// name and not a layer, so it describes as the type it holds. A `skip`
-/// field is absent from both the wire and the shape.
+/// field is absent from both the wire and the shape. A type that reaches
+/// itself has no node to state, and rustc refuses the cycle on the impl.
 ///
 /// Opt-in, and read by nothing on the encode or decode path: a type that
 /// nobody needs to describe carries no shape at all.

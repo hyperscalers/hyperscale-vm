@@ -2,12 +2,9 @@
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
-pub use hyperscale_hbor::MAX_SHAPE_DEPTH;
-use hyperscale_hbor::{
-    Hbor, HborShape, ReadError, ShapeRegistry, ShapeTable, ShapeValue, TypeShape,
-};
+use hyperscale_hbor::{DecodeError, Hbor, HborShape, NodeId, ShapeNode, ShapeTable, ShapeValue};
 use hyperscale_vm_types::{
     AMOUNT_CELL_BYTES, Address, CallTarget, ComponentAddr, Event, MAX_SLOT_WIDTH, NativeAddr,
     PackageAddr, PrincipalAddr, ResourceAddr, SubstateKey,
@@ -82,28 +79,29 @@ pub enum PublishRefusal {
 /// The names the protocol's own types hold, under the shapes those types
 /// give them.
 ///
-/// Built by asking them rather than written down, so there is no second
-/// statement of what an address looks like for this one to drift from.
-static RESERVED_SHAPES: LazyLock<ShapeTable> = LazyLock::new(|| {
-    let mut registry = ShapeRegistry::new();
-    Address::shape(&mut registry);
-    PrincipalAddr::shape(&mut registry);
-    ComponentAddr::shape(&mut registry);
-    PackageAddr::shape(&mut registry);
-    ResourceAddr::shape(&mut registry);
-    NativeAddr::shape(&mut registry);
-    CallTarget::shape(&mut registry);
-    registry.into_types()
-});
+/// The types' own nodes rather than a second statement, so there is
+/// nothing here for what an address looks like to drift from.
+const RESERVED_SHAPES: &[&ShapeNode] = &[
+    Address::NODE,
+    PrincipalAddr::NODE,
+    ComponentAddr::NODE,
+    PackageAddr::NODE,
+    ResourceAddr::NODE,
+    NativeAddr::NODE,
+    CallTarget::NODE,
+];
 
-/// The shape the protocol pins `name` to, for a name it pins at all.
+/// The named node the protocol pins `name` to, for a name it pins at all.
 ///
 /// What makes a reserved name a fact rather than a convention: a package
 /// binding one to anything else is refused at the door, so a consumer
 /// that finds `address` in a package's types has found an address.
 #[must_use]
-pub fn reserved_shape(name: &str) -> Option<&'static TypeShape> {
-    RESERVED_SHAPES.get(name)
+pub fn reserved_shape(name: &str) -> Option<&'static ShapeNode> {
+    RESERVED_SHAPES
+        .iter()
+        .copied()
+        .find(|node| matches!(node, ShapeNode::Named { name: held, .. } if *held == name))
 }
 
 /// The shape of state a declared slot holds.
@@ -128,8 +126,9 @@ pub enum SlotKind {
 /// a number, nothing stored for a record.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 pub enum LeafForm {
-    /// One canonical encoding of this shape.
-    Value(TypeShape),
+    /// One canonical encoding of the shape at this node of the package's
+    /// [`types`](PackageMetadata::types).
+    Value(NodeId),
     /// The leaf's own bytes, delimited by the leaf and by nothing inside
     /// it.
     ///
@@ -152,10 +151,10 @@ pub struct SlotShape {
     pub element: LeafForm,
     /// The most bytes one leaf under the slot may hold.
     ///
-    /// Derived from the element's shape where the shape is closed, and
-    /// declared beside the field otherwise; zero is no width at all,
-    /// which the publish gate refuses. Held to [`MAX_SLOT_WIDTH`], and
-    /// what turns a declared entry cap into a declared byte count.
+    /// Derived from the element's shape, or declared beside the field
+    /// for a leaf holding its own bytes; zero is no width at all, which
+    /// the publish gate refuses. Held to [`MAX_SLOT_WIDTH`], and what
+    /// turns a declared entry cap into a declared byte count.
     pub width: u32,
     /// The resource a declared vault holds, where the field's
     /// `#[holds(..)]` states one — the same expression the field's
@@ -345,7 +344,7 @@ impl PackageMetadata {
     ///
     /// An event payload is guest bytes: the kernel bounds its length but
     /// does not hold it to its declared shape, so — unlike a state leaf the
-    /// encoder wrote — it need not be canonical. [`TypeShape::read`] does
+    /// encoder wrote — it need not be canonical. [`ShapeTable::read`] does
     /// not gate a set's or a map's key order, so a hand-written guest can
     /// emit an unsorted one that reads here to a value that would not
     /// re-encode to itself. Nothing today re-encodes or hashes a
@@ -354,14 +353,14 @@ impl PackageMetadata {
     ///
     /// # Errors
     ///
-    /// [`ReadError`] for a payload the declared shape does not describe.
+    /// [`DecodeError`] for a payload the declared shape does not describe.
     #[must_use]
-    pub fn read_event(&self, event: &Event) -> Option<Result<(&str, ShapeValue), ReadError>> {
+    pub fn read_event(&self, event: &Event) -> Option<Result<(&str, ShapeValue), DecodeError>> {
         let name = self.events.get(usize::try_from(event.event_type).ok()?)?;
-        let shape = self.types.get(name)?;
+        let shape = self.types.named(name)?;
         Some(
-            shape
-                .read(&event.payload, &self.types)
+            self.types
+                .read(shape, &event.payload)
                 .map(|value| (name.as_str(), value)),
         )
     }
@@ -378,13 +377,13 @@ impl PackageMetadata {
     ///
     /// # Errors
     ///
-    /// [`ReadError`] for bytes the declared shape does not describe.
+    /// [`DecodeError`] for bytes the declared shape does not describe.
     #[must_use]
     pub fn read_leaf(
         &self,
         slot: SlotId,
         leaf: &[u8],
-    ) -> Option<Result<Option<ShapeValue>, ReadError>> {
+    ) -> Option<Result<Option<ShapeValue>, DecodeError>> {
         Some(self.read_form(&self.state.get(&slot)?.element, leaf))
     }
 
@@ -399,21 +398,21 @@ impl PackageMetadata {
     ///
     /// # Errors
     ///
-    /// [`ReadError`] for bytes the declared shape does not describe.
+    /// [`DecodeError`] for bytes the declared shape does not describe.
     #[must_use]
     pub fn read_instance(
         &self,
         mark: &[u8],
         cell: &[u8],
-    ) -> Option<Result<Option<ShapeValue>, ReadError>> {
+    ) -> Option<Result<Option<ShapeValue>, DecodeError>> {
         let name = core::str::from_utf8(mark).ok()?;
-        Some(self.read_value(self.types.get(name)?, cell))
+        Some(self.read_value(self.types.named(name)?, cell))
     }
 
     /// One leaf, read against the form it holds.
-    fn read_form(&self, form: &LeafForm, leaf: &[u8]) -> Result<Option<ShapeValue>, ReadError> {
+    fn read_form(&self, form: &LeafForm, leaf: &[u8]) -> Result<Option<ShapeValue>, DecodeError> {
         match form {
-            LeafForm::Value(shape) => self.read_value(shape, leaf),
+            LeafForm::Value(shape) => self.read_value(*shape, leaf),
             // The substate frames these, so what it holds is the whole of
             // them and an empty one is no bytes at all.
             LeafForm::Bytes if leaf.is_empty() => Ok(None),
@@ -425,11 +424,11 @@ impl PackageMetadata {
     ///
     /// An empty leaf is the absence every element reads as its own zero:
     /// nothing stored for a record, and zero for a number.
-    fn read_value(&self, shape: &TypeShape, leaf: &[u8]) -> Result<Option<ShapeValue>, ReadError> {
+    fn read_value(&self, shape: NodeId, leaf: &[u8]) -> Result<Option<ShapeValue>, DecodeError> {
         if leaf.is_empty() {
             return Ok(None);
         }
-        shape.read(leaf, &self.types).map(Some)
+        self.types.read(shape, leaf).map(Some)
     }
 
     /// The method that makes a component of this package actual, and the
@@ -556,6 +555,8 @@ impl MetadataCache {
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_hbor::Bytes;
+
     use super::*;
     use crate::auth::{Authority, RuleBytes};
     use crate::vocabulary::AUTH;
@@ -571,7 +572,8 @@ mod tests {
     /// own gate.
     #[test]
     fn a_rule_at_the_argument_cap_fits_its_cell() {
-        let widest = RuleBytes(vec![0xAB; MAX_VALUE_BYTES]).in_cell();
+        let widest =
+            RuleBytes(Bytes::new(vec![0xAB; MAX_VALUE_BYTES]).expect("at the cap")).in_cell();
         assert_eq!(
             widest.len(),
             RULE_WIDTH as usize,
@@ -583,7 +585,7 @@ mod tests {
     /// bounded at exactly what the record of two at the cap encodes to.
     #[test]
     fn an_authority_at_the_argument_cap_fits_its_cell() {
-        let widest = RuleBytes(vec![0xAB; MAX_VALUE_BYTES]);
+        let widest = RuleBytes(Bytes::new(vec![0xAB; MAX_VALUE_BYTES]).expect("at the cap"));
         let authority = Authority {
             primary: widest.clone(),
             confirmation: widest,

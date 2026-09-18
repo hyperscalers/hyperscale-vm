@@ -1,49 +1,71 @@
 //! Describing a type to a consumer that does not have it.
 //!
 //! The encoding is schema-external: bytes carry content and nothing else,
-//! so a decoder without the type decodes nothing. A [`TypeShape`] is that
-//! type written down — enough to walk a payload and name what was read,
-//! and no more. It says how to decode, never how to render.
+//! so a decoder without the type decodes nothing. A shape is that type
+//! written down — enough to walk a payload and name what was read, and
+//! no more. It says how to decode, never how to render.
 //!
 //! Shapes compose the way the codec composes. [`HborShape`] is derived
-//! beside [`HborEncode`](crate::HborEncode) and builds a struct's shape
-//! from its fields' own impls, so the two cannot describe different
-//! bytes. Nothing on the codec path reads one.
+//! beside [`HborEncode`](crate::HborEncode) and states a struct's node
+//! from its fields' own, so the two cannot describe different bytes.
+//! Nothing on the codec path reads one.
 //!
-//! # Nominal and anonymous
+//! # Two forms
 //!
-//! A named type — a struct, an enum — registers its definition in a
-//! [`ShapeRegistry`] under its kebab name and is referenced as
-//! [`TypeShape::Ref`]. Everything else — `Option<T>`, a sequence, a
-//! tuple — is written inline where it is used. So a shape is a closed
-//! tree over one table, a type reached from two places is stored once,
-//! and a type that reaches itself terminates at its own name.
+//! What Rust states is a static tree: a type's [`ShapeNode`], holding its
+//! children by `'static` reference, which is the form a `const` can carry
+//! and a generic impl can compose. What a consumer decodes is a
+//! [`ShapeTable`]: one flat array of [`TypeShape`] nodes, each naming its
+//! children by index, built from the trees at publish. A child sits at a
+//! lower index than every node that names it, so a table is acyclic by
+//! the same fact that makes a tree finite, and one pass over it in index
+//! order measures every node off children already measured. A subtree
+//! two types share is written once.
 //!
-//! A `transparent` wrapper is a name and not a layer on the wire, and
-//! the shape follows the wire: it registers nothing and shapes as its
-//! inner type. A type whose *name* is what a consumer needs states its
-//! impl by hand.
+//! A name is an annotation on a node — [`TypeShape::Named`] — and not a
+//! layer on the wire: the folds pass straight through it, and it is what
+//! a consumer finds a type by. A `transparent` wrapper is a name the
+//! wire drops, so it carries none and describes as its inner type. A
+//! type whose *name* is what a consumer needs states its node by hand.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
+use std::fmt;
 
-use crate::{DEFAULT_MAX_DEPTH, DecodeError, Decoder, Hbor};
+use crate::decode::Decoder;
+use crate::encode::{Encoder, Sink};
+use crate::error::{DecodeError, EncodeError};
+use crate::node::{ShapeNode, max_depth, max_encoded_len};
+use crate::{
+    DEFAULT_MAX_DEPTH, Hbor, HborBound, HborDecode, HborEncode, HborWidth, bounded, varint,
+};
 
-/// Every type a consumer's shapes may reference, by name.
-pub type ShapeTable = BTreeMap<String, TypeShape>;
+/// A node's place in a [`ShapeTable`]: its index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+#[hbor(crate = crate, transparent)]
+pub struct NodeId(pub u32);
 
-/// The levels a shape may nest, resolved.
+impl NodeId {
+    fn at(index: usize) -> Self {
+        Self(u32::try_from(index).expect("a table shorter than u32"))
+    }
+
+    const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl fmt::Display for NodeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "#{}", self.0)
+    }
+}
+
+/// One node of a published shape, as a consumer without the type must
+/// read it.
 ///
-/// Generous against what a monomorphic record reaches and finite against
-/// what a hand-written one could claim. One number rather than a cap per
-/// consumer: the walk that resolves a reference is the walk that counts
-/// levels, so a reference cycle is refused by the same bound that
-/// refuses a type nested too far.
-pub const MAX_SHAPE_DEPTH: usize = 16;
-
-/// A type, as a consumer without it must read one.
-///
-/// The vocabulary is what the encoding admits and nothing beside it:
-/// there is no form here that no value can be written in.
+/// The vocabulary is what the encoding admits and nothing beside it, and
+/// every run carries the cap its type states: there is no form here that
+/// no value can be written in, and none whose widest value is unknown.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
 #[hbor(crate = crate)]
 pub enum TypeShape {
@@ -81,36 +103,53 @@ pub enum TypeShape {
     /// A signed 128-bit integer.
     #[hbor(discriminant = 10)]
     I128,
-    /// A length then that many bytes of UTF-8.
+    /// A length then at most `cap` bytes of UTF-8.
     ///
     /// Separate from a byte sequence because the validity is a decoding
-    /// fact: bytes that are not UTF-8 are not a value of this shape.
+    /// fact: bytes that are not UTF-8 are not a value of this shape. The
+    /// cap is bytes, not characters: it bounds the encoding.
     #[hbor(discriminant = 11)]
-    Text,
+    Text {
+        /// The most bytes the text may occupy after its length.
+        cap: u32,
+    },
     /// Exactly this many bytes, with no length field of its own.
     #[hbor(discriminant = 12)]
     ByteArray(u32),
-    /// A length then that many elements.
+    /// A length then at most `cap` elements.
     #[hbor(discriminant = 13)]
-    Seq(Box<Self>),
-    /// A length then that many elements, strictly ascending.
+    Seq {
+        /// The most elements a value may hold.
+        cap: u32,
+        /// What each element is.
+        element: NodeId,
+    },
+    /// A length then at most `cap` elements, strictly ascending.
     #[hbor(discriminant = 14)]
-    Set(Box<Self>),
-    /// A length then that many key-value pairs, keys strictly ascending.
+    Set {
+        /// The most elements a value may hold.
+        cap: u32,
+        /// What each element is.
+        element: NodeId,
+    },
+    /// A length then at most `cap` key-value pairs, keys strictly
+    /// ascending.
     #[hbor(discriminant = 15)]
     Map {
+        /// The most pairs a value may hold.
+        cap: u32,
         /// The key's shape.
-        key: Box<Self>,
+        key: NodeId,
         /// The value's shape.
-        value: Box<Self>,
+        value: NodeId,
     },
     /// `0`, or `1` followed by the payload.
     #[hbor(discriminant = 16)]
-    Option(Box<Self>),
+    Option(NodeId),
     /// Its elements in order, with nothing between them. Also what a
     /// tuple struct, a tuple variant, and a unit are.
     #[hbor(discriminant = 17)]
-    Tuple(Vec<Self>),
+    Tuple(Vec<NodeId>),
     /// Its fields in declaration order. The names are the whole reason a
     /// decoded position becomes a fact.
     #[hbor(discriminant = 18)]
@@ -118,9 +157,18 @@ pub enum TypeShape {
     /// A one-byte discriminant then that variant's content.
     #[hbor(discriminant = 19)]
     Enum(Vec<ShapeVariant>),
-    /// A named type's definition, held once in the [`ShapeTable`].
+    /// A declared type's name over its definition.
+    ///
+    /// Not a layer on the wire, and what a consumer finds the type by:
+    /// an address survives the encoding that erases it because its
+    /// thirty-two bytes sit under this.
     #[hbor(discriminant = 20)]
-    Ref(String),
+    Named {
+        /// The name the type publishes under.
+        name: String,
+        /// What the name stands for.
+        shape: NodeId,
+    },
 }
 
 /// One named field of a struct.
@@ -130,7 +178,7 @@ pub struct ShapeField {
     /// The field's name, as its author spelled it.
     pub name: String,
     /// What the field holds.
-    pub shape: TypeShape,
+    pub shape: NodeId,
 }
 
 /// One variant of an enum.
@@ -145,18 +193,34 @@ pub struct ShapeVariant {
     pub discriminant: u8,
     /// What follows the discriminant: a [`TypeShape::Struct`] for named
     /// fields, a [`TypeShape::Tuple`] otherwise — empty for a unit.
-    pub content: TypeShape,
+    pub content: NodeId,
 }
 
-/// Why a shape cannot be read.
+/// Why a node cannot join a table.
+///
+/// Every one of these is refused where a node is added — at publish, and
+/// at decode node by node — so a [`ShapeTable`] that exists is one every
+/// consumer can walk.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ShapeFault {
-    /// A reference to a type the table does not hold.
-    #[error("shape references type {0:?}, which is not declared")]
-    Unresolved(String),
-    /// The walk ran out of budget: a shape nested past the cap, or a
-    /// reference cycle, which are the same exhaustion seen twice.
-    #[error("shape nests past its cap, or references itself")]
+    /// A reference to a node the table does not hold before this one.
+    ///
+    /// A child sits below every node that names it, which is what makes
+    /// a table acyclic: a reference upward or outward is refused here,
+    /// and nothing afterwards can meet a cycle.
+    #[error("shape references node {0}, which the table does not hold before it")]
+    Unresolved(NodeId),
+    /// A node repeating one the table already holds.
+    ///
+    /// A subtree is written once, so a decoded table that spells one
+    /// twice is not the table its publisher built.
+    #[error("node {0} repeats an earlier node")]
+    Duplicate(NodeId),
+    /// A shape nesting past the levels a decoder follows.
+    ///
+    /// A shape deeper than the decoder's cap describes values no decoder
+    /// admits, and is refused for that reason and no other.
+    #[error("shape nests past the {DEFAULT_MAX_DEPTH} levels a decoder follows")]
     TooDeep,
     /// A sequence, set, or map over an element that occupies no bytes.
     ///
@@ -182,6 +246,28 @@ pub enum ShapeFault {
     /// where it is read.
     #[error("discriminant {0} selects two variants, so one of them is unreachable")]
     AmbiguousDiscriminant(u8),
+    /// Two types under one name.
+    ///
+    /// A consumer finds a type by its name, so a second definition under
+    /// it would leave the lookup with two answers. Two of a package's own
+    /// types reach one name only when their identifiers do.
+    #[error("{0:?} names two types, so finding one by it has two answers")]
+    NameTaken(String),
+}
+
+impl ShapeFault {
+    /// The fault as the decoder reports it, where a table is read.
+    const fn reason(&self) -> &'static str {
+        match self {
+            Self::Unresolved(_) => "shape references a node the table does not hold before it",
+            Self::Duplicate(_) => "shape table repeats a node",
+            Self::TooDeep => "shape nests past the levels a decoder follows",
+            Self::ZeroWidth => "shape runs over an element that carries no bytes",
+            Self::AmbiguousName(_) => "shape names two members of one type alike",
+            Self::AmbiguousDiscriminant(_) => "shape selects two variants by one discriminant",
+            Self::NameTaken(_) => "shape table names two types alike",
+        }
+    }
 }
 
 /// Every name in one composite its own.
@@ -199,213 +285,270 @@ fn distinct<'s>(names: impl Iterator<Item = &'s str>) -> Result<(), ShapeFault> 
     Ok(())
 }
 
-/// What one walk found: the frames it spent, the levels a value of the
-/// shape nests, and the fewest bytes it can occupy.
-#[derive(Clone, Copy, Debug)]
-struct Walked {
-    /// Frames spent on the deepest path, this one included. What a
-    /// budget bounds — and what a name has to fit in wherever it is
-    /// reached from, which is why it is kept beside the answer.
-    cost: usize,
-    /// The levels a value of the shape nests. A reference costs none:
-    /// the name is not on the wire.
+/// What one node measures: the levels a value of it nests, and the
+/// fewest and the most bytes one can occupy.
+///
+/// Every sum is saturating: a shape is data, so it may claim widths that
+/// add past what an address space holds, and a wrapped sum would
+/// understate what a run costs and let a claimed length past the bytes
+/// that must pay for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Measure {
+    /// The levels a value of the node nests, as the encoder charges
+    /// them. A name costs none: it is not on the wire.
     depth: usize,
-    /// The fewest bytes any value of the shape occupies.
-    ///
-    /// Every sum of one is saturating: a shape is data, so it may claim
-    /// widths that add past what an address space holds, and a wrapped
-    /// sum would understate what a run costs and let a claimed length
-    /// past the bytes that must pay for it.
+    /// The fewest bytes any value of the node occupies.
     least: usize,
-    /// The most bytes any value of the shape occupies, or `None` where
-    /// a run or a text can grow without bound.
-    ///
-    /// Saturating like `least`, and for the same reason; `None` is
-    /// what a run answers, and it swallows every sum it enters.
-    most: Option<usize>,
+    /// The most bytes any value of the node occupies.
+    most: usize,
 }
 
-impl Walked {
-    /// A scalar: one frame, no levels under it, and its own width.
+impl Measure {
+    /// A scalar: no levels under it, and its own width.
     const fn leaf(width: usize) -> Self {
         Self {
-            cost: 1,
             depth: 0,
             least: width,
-            most: Some(width),
+            most: width,
         }
     }
-}
 
-/// `a + b`, where either side unbounded is an unbounded sum.
-fn most_sum(a: Option<usize>, b: Option<usize>) -> Option<usize> {
-    Some(a?.saturating_add(b?))
-}
+    /// A run of at most `cap` elements each measuring `element`: a length
+    /// then the elements, one byte at its shortest, and one level down.
+    const fn run(cap: u32, element: Self) -> Result<Self, ShapeFault> {
+        if element.least == 0 {
+            return Err(ShapeFault::ZeroWidth);
+        }
+        let cap = cap as usize;
+        Ok(Self {
+            depth: element.depth + 1,
+            least: 1,
+            most: varint::encoded_len(cap).saturating_add(cap.saturating_mul(element.most)),
+        })
+    }
 
-/// A table walked with what each of its names resolved to kept.
-///
-/// A name is a place in the table and not a layer on the wire, so what
-/// it resolves to is the same wherever it is reached from — and holding
-/// that answer is what keeps a walk linear in the table. Without it the
-/// walk re-expands every reference at every occurrence, which a table of
-/// types referencing one another multiplies: eight names twenty fields
-/// wide is under a kilobyte of metadata and minutes of walking.
-///
-/// One resolution serves a whole table's worth of questions. Building
-/// one per question is the same exponent spelled another way.
-#[derive(Debug)]
-pub struct Resolution<'a> {
-    types: &'a ShapeTable,
-    /// Names walked and admitted. A name that faulted is absent, because
-    /// a fault ends the walk that met it and nothing asks twice.
-    resolved: BTreeMap<&'a str, Walked>,
-    /// A run element's minimum encoded length, kept by node identity for
-    /// the duration of one read. A run asks the same element node once per
-    /// occurrence in the payload, so without this a wide inline element is
-    /// re-walked per value — the same exponent `resolved` closes for names.
-    ///
-    /// Keyed by raw pointer, which is sound only while every keyed node is
-    /// alive: a read holds its whole shape tree borrowed, so the nodes
-    /// coexist and no address is reused. Populated and read exclusively
-    /// through [`cached_min_len`](Self::cached_min_len), reached only from
-    /// the read walk — never from the `pub` walkers, which a caller may
-    /// reuse across independent, short-lived shapes.
-    element_len: BTreeMap<*const TypeShape, usize>,
-}
-
-impl<'a> Resolution<'a> {
-    /// A resolution over `types`, with nothing resolved yet.
-    #[must_use]
-    pub const fn of(types: &'a ShapeTable) -> Self {
+    /// A composite's children, walked one level down: their widths sum,
+    /// and the level is spent only where there is a child to spend it
+    /// on.
+    fn under(children: impl Iterator<Item = Self>) -> Self {
+        let mut deepest = None::<usize>;
+        let mut least = 0usize;
+        let mut most = 0usize;
+        for child in children {
+            deepest = Some(deepest.map_or(child.depth, |seen| seen.max(child.depth)));
+            least = least.saturating_add(child.least);
+            most = most.saturating_add(child.most);
+        }
         Self {
-            types,
-            resolved: BTreeMap::new(),
-            element_len: BTreeMap::new(),
+            depth: deepest.map_or(0, |depth| depth + 1),
+            least,
+            most,
         }
     }
+}
 
-    /// The fewest bytes a run element can occupy, kept by node identity so
-    /// a wide element is walked once however many times the payload
-    /// repeats its collection. Reached only from the read walk, where the
-    /// whole shape tree is borrowed alive — so a pointer key names one
-    /// live node throughout, never a freed address a later shape reused.
-    fn cached_min_len(&mut self, element: &TypeShape) -> Result<usize, ShapeFault> {
-        let key: *const TypeShape = std::ptr::from_ref(element);
-        if let Some(least) = self.element_len.get(&key).copied() {
-            return Ok(least);
-        }
-        let least = self.min_encoded_len(element, MAX_SHAPE_DEPTH)?;
-        self.element_len.insert(key, least);
-        Ok(least)
-    }
+/// A package's shapes, as a consumer decodes them: one flat array of
+/// nodes, every child below the node that names it.
+///
+/// Built by adding nodes — from a type's static tree through
+/// [`declare`](Self::declare), or one at a time through
+/// [`push`](Self::push) — and each is measured as it joins, off children
+/// already measured, so every width, every depth and every fault is
+/// settled before the node exists. A table decoded off the wire goes
+/// through the same door node by node. So there is no table a consumer
+/// cannot walk, and what [`most`](Self::most), [`least`](Self::least)
+/// and [`depth`](Self::depth) answer is a field read.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ShapeTable {
+    nodes: Vec<TypeShape>,
+    measures: Vec<Measure>,
+}
 
-    /// The table this resolves against.
+impl ShapeTable {
+    /// An empty table.
     #[must_use]
-    pub const fn types(&self) -> &'a ShapeTable {
-        self.types
+    pub const fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            measures: Vec::new(),
+        }
     }
 
-    /// The decoder levels a value of `shape` spends, proving on the way
-    /// that a consumer can walk it at all.
+    /// The table holding `T`'s tree and nothing else, with the node
+    /// `T` describes as.
     ///
-    /// Three properties, one walk: every reference resolves inside the
-    /// table, no run is over an element carrying no bytes, and the whole
-    /// is finite. `budget` bounds the walk rather than the answer —
-    /// every descent spends one, including a reference hop that costs
-    /// the decoder nothing — so a cycle exhausts the same bound a type
-    /// nested too far does, and there is no second check to disagree
-    /// with this one.
+    /// # Panics
     ///
-    /// # Errors
-    ///
-    /// [`ShapeFault`] for a reference the table does not hold, a run
-    /// nothing pays for, or a walk past `budget`.
-    pub fn readable(&mut self, shape: &TypeShape, budget: usize) -> Result<usize, ShapeFault> {
-        self.walk(shape, budget).map(|walked| walked.depth)
+    /// On a tree the decoder could not follow, which a derived type
+    /// cannot state.
+    #[must_use]
+    pub fn of<T: HborShape>() -> (Self, NodeId) {
+        let mut table = Self::new();
+        let root = table
+            .declare(T::NODE)
+            .expect("a type's own tree is one a decoder follows");
+        (table, root)
     }
 
-    /// The fewest bytes any value of `shape` can occupy.
+    /// Whether the table holds no node.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    /// How many nodes the table holds.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Every node, in index order.
+    pub fn nodes(&self) -> impl Iterator<Item = (NodeId, &TypeShape)> {
+        self.nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node)| (NodeId::at(index), node))
+    }
+
+    /// The node at `id`, where the table holds one.
+    #[must_use]
+    pub fn get(&self, id: NodeId) -> Option<&TypeShape> {
+        self.nodes.get(id.index())
+    }
+
+    /// The node at `id`.
+    ///
+    /// # Panics
+    ///
+    /// On an id the table does not hold. Every id a table hands out is
+    /// its own; one carried in from elsewhere goes through
+    /// [`get`](Self::get) first.
+    fn node(&self, id: NodeId) -> &TypeShape {
+        self.get(id)
+            .unwrap_or_else(|| panic!("node {id} is not in this table"))
+    }
+
+    fn measure_of(&self, id: NodeId) -> Measure {
+        self.measures
+            .get(id.index())
+            .copied()
+            .unwrap_or_else(|| panic!("node {id} is not in this table"))
+    }
+
+    /// The most bytes any value of `id` can occupy.
+    ///
+    /// What sizes a leaf's width from its type alone.
+    ///
+    /// # Panics
+    ///
+    /// On an id the table does not hold.
+    #[must_use]
+    pub fn most(&self, id: NodeId) -> usize {
+        self.measure_of(id).most
+    }
+
+    /// The fewest bytes any value of `id` can occupy.
     ///
     /// What bounds a claimed length against the bytes that remain, on
-    /// the same terms [`HborWidth::MIN_ENCODED_LEN`](crate::HborWidth)
-    /// states for a type.
+    /// the same terms [`HborWidth::MIN_ENCODED_LEN`] states for a type.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// [`ShapeFault`], as [`readable`](Self::readable).
-    pub(crate) fn min_encoded_len(
-        &mut self,
-        shape: &TypeShape,
-        budget: usize,
-    ) -> Result<usize, ShapeFault> {
-        self.walk(shape, budget).map(|walked| walked.least)
+    /// On an id the table does not hold.
+    #[must_use]
+    pub fn least(&self, id: NodeId) -> usize {
+        self.measure_of(id).least
     }
 
-    /// The most bytes any value of `shape` can occupy, or `None` where
-    /// the shape holds a run or a text and so has no bound.
+    /// The levels a value of `id` nests, which is the decoder cap that
+    /// admits exactly its values.
     ///
-    /// What sizes a leaf's width from its type alone: a shape this
-    /// answers for needs no width declared beside it.
+    /// # Panics
     ///
-    /// # Errors
-    ///
-    /// [`ShapeFault`], as [`readable`](Self::readable).
-    pub fn max_encoded_len(
-        &mut self,
-        shape: &TypeShape,
-        budget: usize,
-    ) -> Result<Option<usize>, ShapeFault> {
-        self.walk(shape, budget).map(|walked| walked.most)
+    /// On an id the table does not hold.
+    #[must_use]
+    pub fn depth(&self, id: NodeId) -> usize {
+        self.measure_of(id).depth
     }
 
-    /// The levels a shape spends, the frames the walk spends reaching
-    /// them, and the fewest bytes it occupies, read off one another in
-    /// one pass.
-    fn walk(&mut self, shape: &TypeShape, budget: usize) -> Result<Walked, ShapeFault> {
-        let Some(remaining) = budget.checked_sub(1) else {
-            return Err(ShapeFault::TooDeep);
-        };
-        match shape {
-            // A length with nothing under it, and the one-byte scalars.
-            TypeShape::Bool | TypeShape::U8 | TypeShape::I8 => Ok(Walked::leaf(1)),
-            TypeShape::Text => Ok(Walked {
-                most: None,
-                ..Walked::leaf(1)
-            }),
-            TypeShape::U16 | TypeShape::I16 => Ok(Walked::leaf(2)),
-            TypeShape::U32 | TypeShape::I32 => Ok(Walked::leaf(4)),
-            TypeShape::U64 | TypeShape::I64 => Ok(Walked::leaf(8)),
-            TypeShape::U128 | TypeShape::I128 => Ok(Walked::leaf(16)),
-            TypeShape::ByteArray(width) => Ok(Walked::leaf(*width as usize)),
-            TypeShape::Seq(element) | TypeShape::Set(element) => self.run(element, remaining),
-            TypeShape::Map { key, value } => {
-                let key = self.walk(key, remaining)?;
-                let value = self.walk(value, remaining)?;
-                if key.least.saturating_add(value.least) == 0 {
-                    return Err(ShapeFault::ZeroWidth);
-                }
-                Ok(Walked {
-                    cost: 1 + key.cost.max(value.cost),
-                    depth: key.depth.max(value.depth) + 1,
+    /// The type published under `name`, where the table holds one.
+    #[must_use]
+    pub fn named(&self, name: &str) -> Option<NodeId> {
+        self.names()
+            .find_map(|(held, id)| (held == name).then_some(id))
+    }
+
+    /// Every published type, by name, in index order.
+    pub fn names(&self) -> impl Iterator<Item = (&str, NodeId)> {
+        self.nodes().filter_map(|(id, node)| match node {
+            TypeShape::Named { name, .. } => Some((name.as_str(), id)),
+            _ => None,
+        })
+    }
+
+    /// The child a reference names, where the table holds it below the
+    /// node being added.
+    fn held(&self, id: NodeId) -> Result<Measure, ShapeFault> {
+        self.measures
+            .get(id.index())
+            .copied()
+            .ok_or(ShapeFault::Unresolved(id))
+    }
+
+    /// What `node` would measure, off the children the table holds.
+    fn measure(&self, node: &TypeShape) -> Result<Measure, ShapeFault> {
+        Ok(match node {
+            TypeShape::Bool | TypeShape::U8 | TypeShape::I8 => Measure::leaf(1),
+            TypeShape::U16 | TypeShape::I16 => Measure::leaf(2),
+            TypeShape::U32 | TypeShape::I32 => Measure::leaf(4),
+            TypeShape::U64 | TypeShape::I64 => Measure::leaf(8),
+            TypeShape::U128 | TypeShape::I128 => Measure::leaf(16),
+            TypeShape::Text { cap } => {
+                let cap = *cap as usize;
+                Measure {
+                    depth: 0,
                     least: 1,
-                    most: None,
-                })
+                    most: varint::encoded_len(cap).saturating_add(cap),
+                }
+            }
+            TypeShape::ByteArray(width) => Measure::leaf(*width as usize),
+            TypeShape::Seq { cap, element } | TypeShape::Set { cap, element } => {
+                Measure::run(*cap, self.held(*element)?)?
+            }
+            TypeShape::Map { cap, key, value } => {
+                let key = self.held(*key)?;
+                let value = self.held(*value)?;
+                let pair = Measure {
+                    depth: key.depth.max(value.depth),
+                    least: key.least.saturating_add(value.least),
+                    most: key.most.saturating_add(value.most),
+                };
+                Measure::run(*cap, pair)?
             }
             // The discriminant byte, with `None` carrying nothing beside
             // it.
             TypeShape::Option(held) => {
-                let held = self.walk(held, remaining)?;
-                Ok(Walked {
-                    cost: 1 + held.cost,
+                let held = self.held(*held)?;
+                Measure {
                     depth: held.depth + 1,
                     least: 1,
-                    most: held.most.map(|most| most.saturating_add(1)),
-                })
+                    most: held.most.saturating_add(1),
+                }
             }
-            TypeShape::Tuple(elements) => self.under(elements.iter(), remaining),
+            TypeShape::Tuple(elements) => {
+                let mut children = Vec::with_capacity(elements.len());
+                for element in elements {
+                    children.push(self.held(*element)?);
+                }
+                Measure::under(children.into_iter())
+            }
             TypeShape::Struct(fields) => {
                 distinct(fields.iter().map(|field| field.name.as_str()))?;
-                self.under(fields.iter().map(|field| &field.shape), remaining)
+                let mut children = Vec::with_capacity(fields.len());
+                for field in fields {
+                    children.push(self.held(field.shape)?);
+                }
+                Measure::under(children.into_iter())
             }
             // The discriminant is a byte the enum writes itself; every
             // level below it belongs to the variant's own content, and
@@ -413,122 +556,462 @@ impl<'a> Resolution<'a> {
             TypeShape::Enum(variants) => {
                 distinct(variants.iter().map(|variant| variant.name.as_str()))?;
                 let mut selected = BTreeSet::new();
+                let mut deepest = 0usize;
+                let mut lightest = None::<usize>;
+                let mut widest = 0usize;
                 for variant in variants {
                     if !selected.insert(variant.discriminant) {
                         return Err(ShapeFault::AmbiguousDiscriminant(variant.discriminant));
                     }
+                    let content = self.held(variant.content)?;
+                    deepest = deepest.max(content.depth);
+                    lightest = Some(lightest.map_or(content.least, |seen| seen.min(content.least)));
+                    widest = widest.max(content.most);
                 }
-                let mut cost = 1usize;
-                let mut deepest = None::<usize>;
-                let mut lightest = None::<usize>;
-                let mut widest = Some(0usize);
-                for variant in variants {
-                    let walked = self.walk(&variant.content, remaining)?;
-                    cost = cost.max(1 + walked.cost);
-                    deepest =
-                        Some(deepest.map_or(walked.depth, |seen: usize| seen.max(walked.depth)));
-                    lightest =
-                        Some(lightest.map_or(walked.least, |seen: usize| seen.min(walked.least)));
-                    widest = match (widest, walked.most) {
-                        (Some(seen), Some(most)) => Some(seen.max(most)),
-                        _ => None,
-                    };
-                }
-                Ok(Walked {
-                    cost,
-                    depth: deepest.unwrap_or(0),
+                Measure {
+                    depth: deepest,
                     least: lightest.unwrap_or(0).saturating_add(1),
-                    most: widest.map(|most| most.saturating_add(1)),
-                })
+                    most: widest.saturating_add(1),
+                }
             }
-            // The hop is a frame of its own; the name is not on the wire,
-            // so the levels and the width are the resolved type's.
-            TypeShape::Ref(name) => {
-                let held = self.resolve(name, remaining)?;
-                Ok(Walked {
-                    cost: 1 + held.cost,
-                    ..held
-                })
+            TypeShape::Named { name, shape } => {
+                if self.named(name).is_some() {
+                    return Err(ShapeFault::NameTaken(name.clone()));
+                }
+                self.held(*shape)?
             }
-        }
-    }
-
-    /// A composite's children, walked one level down.
-    ///
-    /// A composite spends one level on them whether or not it has any:
-    /// the encoder charges the level before it knows.
-    fn under<'s>(
-        &mut self,
-        shapes: impl Iterator<Item = &'s TypeShape>,
-        remaining: usize,
-    ) -> Result<Walked, ShapeFault> {
-        let mut cost = 1usize;
-        let mut deepest = None::<usize>;
-        let mut least = 0usize;
-        let mut most = Some(0usize);
-        for shape in shapes {
-            let walked = self.walk(shape, remaining)?;
-            cost = cost.max(1 + walked.cost);
-            deepest = Some(deepest.map_or(walked.depth, |seen: usize| seen.max(walked.depth)));
-            least = least.saturating_add(walked.least);
-            most = most_sum(most, walked.most);
-        }
-        Ok(Walked {
-            cost,
-            depth: deepest.map_or(0, |depth| depth + 1),
-            least,
-            most,
         })
     }
 
-    /// A run: a length then its elements, one byte at its shortest, and
-    /// unbounded unless one element costs something.
-    fn run(&mut self, element: &TypeShape, remaining: usize) -> Result<Walked, ShapeFault> {
-        let walked = self.walk(element, remaining)?;
-        if walked.least == 0 {
-            return Err(ShapeFault::ZeroWidth);
-        }
-        Ok(Walked {
-            cost: 1 + walked.cost,
-            depth: walked.depth + 1,
-            least: 1,
-            most: None,
-        })
-    }
-
-    /// What `name` resolves to, walked once and kept.
+    /// Add `node`, or find it where the table already holds it.
     ///
-    /// The answer is the table's rather than this position's, so a
-    /// position with fewer frames left than the answer costs is too deep
-    /// for it — which is the same verdict walking it again would reach,
-    /// for none of the work. A name still being walked is absent from
-    /// the table of answers, so a cycle recurses until the budget it is
-    /// spending runs out.
+    /// Measured as it joins, off children the table holds — so every
+    /// reference resolves downward, no run is over an element carrying
+    /// no bytes, no name covers two members and no discriminant two
+    /// variants, and nothing nests past what a decoder follows. A node
+    /// equal to one already held is that node, found rather than added:
+    /// a subtree is written once.
     ///
     /// # Errors
     ///
-    /// [`ShapeFault::Unresolved`] for a name the table does not hold,
-    /// or whatever walking its shape faults with.
-    fn resolve(&mut self, name: &str, remaining: usize) -> Result<Walked, ShapeFault> {
-        if let Some(held) = self.resolved.get(name).copied() {
-            return if held.cost > remaining {
-                Err(ShapeFault::TooDeep)
-            } else {
-                Ok(held)
-            };
+    /// [`ShapeFault`] for a node the table cannot hold.
+    pub fn push(&mut self, node: TypeShape) -> Result<NodeId, ShapeFault> {
+        if let Some(index) = self.nodes.iter().position(|held| *held == node) {
+            return Ok(NodeId::at(index));
         }
-        let types = self.types;
-        let (declared, shape) = types
-            .get_key_value(name)
-            .ok_or_else(|| ShapeFault::Unresolved(name.to_owned()))?;
-        let walked = self.walk(shape, remaining)?;
-        self.resolved.insert(declared.as_str(), walked);
-        Ok(walked)
+        let measure = self.measure(&node)?;
+        if measure.depth > DEFAULT_MAX_DEPTH {
+            return Err(ShapeFault::TooDeep);
+        }
+        let id = NodeId::at(self.nodes.len());
+        self.nodes.push(node);
+        self.measures.push(measure);
+        Ok(id)
+    }
+
+    /// Add a type's static tree, and answer the node it describes as.
+    ///
+    /// Children first, so every node is added once its children are
+    /// held; a subtree the table already holds — a type reached from two
+    /// places, or a name reached twice — is found rather than written
+    /// again.
+    ///
+    /// # Errors
+    ///
+    /// [`ShapeFault`], as [`push`](Self::push).
+    ///
+    /// # Panics
+    ///
+    /// On a cap or a width past what the wire carries, which no type
+    /// the codec admits states.
+    pub fn declare(&mut self, node: &ShapeNode) -> Result<NodeId, ShapeFault> {
+        let wide = |width: usize| u32::try_from(width).expect("a width the wire carries");
+        let lowered = match node {
+            ShapeNode::Bool => TypeShape::Bool,
+            ShapeNode::U8 => TypeShape::U8,
+            ShapeNode::U16 => TypeShape::U16,
+            ShapeNode::U32 => TypeShape::U32,
+            ShapeNode::U64 => TypeShape::U64,
+            ShapeNode::U128 => TypeShape::U128,
+            ShapeNode::I8 => TypeShape::I8,
+            ShapeNode::I16 => TypeShape::I16,
+            ShapeNode::I32 => TypeShape::I32,
+            ShapeNode::I64 => TypeShape::I64,
+            ShapeNode::I128 => TypeShape::I128,
+            ShapeNode::Text { cap } => TypeShape::Text { cap: wide(*cap) },
+            ShapeNode::ByteArray(width) => TypeShape::ByteArray(wide(*width)),
+            ShapeNode::Seq { cap, element } => TypeShape::Seq {
+                cap: wide(*cap),
+                element: self.declare(element)?,
+            },
+            ShapeNode::Set { cap, element } => TypeShape::Set {
+                cap: wide(*cap),
+                element: self.declare(element)?,
+            },
+            ShapeNode::Map { cap, key, value } => TypeShape::Map {
+                cap: wide(*cap),
+                key: self.declare(key)?,
+                value: self.declare(value)?,
+            },
+            ShapeNode::Option(held) => TypeShape::Option(self.declare(held)?),
+            ShapeNode::Tuple(elements) => {
+                let mut ids = Vec::with_capacity(elements.len());
+                for element in *elements {
+                    ids.push(self.declare(element)?);
+                }
+                TypeShape::Tuple(ids)
+            }
+            ShapeNode::Struct(fields) => {
+                let mut declared = Vec::with_capacity(fields.len());
+                for (name, shape) in *fields {
+                    declared.push(ShapeField {
+                        name: (*name).to_owned(),
+                        shape: self.declare(shape)?,
+                    });
+                }
+                TypeShape::Struct(declared)
+            }
+            ShapeNode::Enum(variants) => {
+                let mut declared = Vec::with_capacity(variants.len());
+                for (name, discriminant, content) in *variants {
+                    declared.push(ShapeVariant {
+                        name: (*name).to_owned(),
+                        discriminant: *discriminant,
+                        content: self.declare(content)?,
+                    });
+                }
+                TypeShape::Enum(declared)
+            }
+            ShapeNode::Named { name, shape } => {
+                let shape = self.declare(shape)?;
+                // The name reached a second time is the same type reached
+                // a second way, and the same node.
+                if let Some(id) = self.named(name) {
+                    if self.node(id)
+                        == &(TypeShape::Named {
+                            name: (*name).to_owned(),
+                            shape,
+                        })
+                    {
+                        return Ok(id);
+                    }
+                    return Err(ShapeFault::NameTaken((*name).to_owned()));
+                }
+                TypeShape::Named {
+                    name: (*name).to_owned(),
+                    shape,
+                }
+            }
+        };
+        self.push(lowered)
+    }
+
+    /// Whether the node at `id` describes the same values `node` does.
+    ///
+    /// What holds a package's definition of a protocol name to the
+    /// protocol's own: the two are compared shape for shape, name for
+    /// name, cap for cap.
+    ///
+    /// # Panics
+    ///
+    /// On an id the table does not hold.
+    #[must_use]
+    pub fn matches(&self, id: NodeId, node: &ShapeNode) -> bool {
+        let same_cap = |cap: u32, stated: usize| cap as usize == stated;
+        match (self.node(id), node) {
+            (TypeShape::Bool, ShapeNode::Bool)
+            | (TypeShape::U8, ShapeNode::U8)
+            | (TypeShape::U16, ShapeNode::U16)
+            | (TypeShape::U32, ShapeNode::U32)
+            | (TypeShape::U64, ShapeNode::U64)
+            | (TypeShape::U128, ShapeNode::U128)
+            | (TypeShape::I8, ShapeNode::I8)
+            | (TypeShape::I16, ShapeNode::I16)
+            | (TypeShape::I32, ShapeNode::I32)
+            | (TypeShape::I64, ShapeNode::I64)
+            | (TypeShape::I128, ShapeNode::I128) => true,
+            (TypeShape::Text { cap }, ShapeNode::Text { cap: stated }) => same_cap(*cap, *stated),
+            (TypeShape::ByteArray(width), ShapeNode::ByteArray(stated)) => {
+                same_cap(*width, *stated)
+            }
+            (
+                TypeShape::Seq { cap, element },
+                ShapeNode::Seq {
+                    cap: stated,
+                    element: held,
+                },
+            )
+            | (
+                TypeShape::Set { cap, element },
+                ShapeNode::Set {
+                    cap: stated,
+                    element: held,
+                },
+            ) => same_cap(*cap, *stated) && self.matches(*element, held),
+            (
+                TypeShape::Map { cap, key, value },
+                ShapeNode::Map {
+                    cap: stated,
+                    key: held_key,
+                    value: held_value,
+                },
+            ) => {
+                same_cap(*cap, *stated)
+                    && self.matches(*key, held_key)
+                    && self.matches(*value, held_value)
+            }
+            (TypeShape::Option(held), ShapeNode::Option(stated)) => self.matches(*held, stated),
+            (TypeShape::Tuple(elements), ShapeNode::Tuple(stated)) => {
+                elements.len() == stated.len()
+                    && elements
+                        .iter()
+                        .zip(*stated)
+                        .all(|(element, held)| self.matches(*element, held))
+            }
+            (TypeShape::Struct(fields), ShapeNode::Struct(stated)) => {
+                fields.len() == stated.len()
+                    && fields.iter().zip(*stated).all(|(field, (name, held))| {
+                        field.name == *name && self.matches(field.shape, held)
+                    })
+            }
+            (TypeShape::Enum(variants), ShapeNode::Enum(stated)) => {
+                variants.len() == stated.len()
+                    && variants.iter().zip(*stated).all(
+                        |(variant, (name, discriminant, content))| {
+                            variant.name == *name
+                                && variant.discriminant == *discriminant
+                                && self.matches(variant.content, content)
+                        },
+                    )
+            }
+            (
+                TypeShape::Named { name, shape },
+                ShapeNode::Named {
+                    name: stated,
+                    shape: held,
+                },
+            ) => name == stated && self.matches(*shape, held),
+            _ => false,
+        }
+    }
+
+    /// Read one complete value of the node at `root` from `bytes`.
+    ///
+    /// What a consumer holding a package's metadata and a payload does
+    /// with the two. The bytes must be exactly one value: anything left
+    /// over is a payload the shape does not describe.
+    ///
+    /// Checked is everything the shape can know — every width, every
+    /// length minimal, under its cap and payable by the bytes that
+    /// remain, text valid UTF-8, every discriminant declared, no byte
+    /// unaccounted for, and no member of a set or key of a map encoded
+    /// twice: under canonicity one value has one encoding, so two members
+    /// with the same bytes are one member, which the type-erased reader
+    /// can see without knowing the type. Not checked is the ascent of
+    /// those keys: that order is the element type's own, and a shape
+    /// carries structure rather than a comparison. A reader rejecting on
+    /// a guess at it would refuse payloads the chain accepted.
+    ///
+    /// So `read` is not a canonicity gate, where the codec is: two byte
+    /// strings differing only in the order of a set's or a map's members
+    /// both read here, to values that keep the wire's order and so
+    /// compare unequal. A caller that needs one byte string per value —
+    /// because it hashes the bytes, or trusts what it read to re-encode
+    /// identically — must hold that itself, or read only bytes the codec
+    /// already wrote. The package-metadata readers that read state leaves
+    /// do the latter: a leaf is bytes the encoder wrote canonically. An
+    /// event payload is not — it is guest bytes the kernel bounds in
+    /// length but does not canonicalize — so a reader that hashes or
+    /// re-encodes one canonicalizes it first.
+    ///
+    /// Nesting is bounded by the table: every node joined it measured,
+    /// and none nests past what a decoder follows, so this walk recurses
+    /// exactly as deep as the shape and no deeper however many elements
+    /// a value holds.
+    ///
+    /// # Errors
+    ///
+    /// [`DecodeError`] for bytes the node does not describe.
+    ///
+    /// # Panics
+    ///
+    /// On an id the table does not hold.
+    pub fn read(&self, root: NodeId, bytes: &[u8]) -> Result<ShapeValue, DecodeError> {
+        let mut decoder = Decoder::new(bytes, DEFAULT_MAX_DEPTH);
+        let value = self.read_from(root, &mut decoder)?;
+        decoder.finish()?;
+        Ok(value)
+    }
+
+    /// Read one value of the node at `id`, leaving whatever follows it
+    /// for the caller.
+    fn read_from(&self, id: NodeId, decoder: &mut Decoder<'_>) -> Result<ShapeValue, DecodeError> {
+        // Every width the encoding fixes, read as the little-endian run
+        // it is.
+        macro_rules! fixed {
+            ($ty:ty, $variant:ident) => {{
+                let bytes = decoder.read_array::<{ ::core::mem::size_of::<$ty>() }>()?;
+                Ok(ShapeValue::$variant(<$ty>::from_le_bytes(bytes)))
+            }};
+        }
+        match self.node(id) {
+            TypeShape::Bool => match decoder.read_u8()? {
+                0 => Ok(ShapeValue::Bool(false)),
+                1 => Ok(ShapeValue::Bool(true)),
+                other => Err(DecodeError::InvalidBool(other)),
+            },
+            TypeShape::U8 => fixed!(u8, U8),
+            TypeShape::U16 => fixed!(u16, U16),
+            TypeShape::U32 => fixed!(u32, U32),
+            TypeShape::U64 => fixed!(u64, U64),
+            TypeShape::U128 => fixed!(u128, U128),
+            TypeShape::I8 => fixed!(i8, I8),
+            TypeShape::I16 => fixed!(i16, I16),
+            TypeShape::I32 => fixed!(i32, I32),
+            TypeShape::I64 => fixed!(i64, I64),
+            TypeShape::I128 => fixed!(i128, I128),
+            TypeShape::Text { cap } => {
+                bounded::decode_bounded_string(decoder, *cap as usize).map(ShapeValue::Text)
+            }
+            TypeShape::ByteArray(width) => Ok(ShapeValue::ByteArray(
+                decoder.read_slice(*width as usize)?.to_vec(),
+            )),
+            TypeShape::Seq { cap, element } => self
+                .read_run(decoder, *element, *cap, false)
+                .map(ShapeValue::Seq),
+            TypeShape::Set { cap, element } => self
+                .read_run(decoder, *element, *cap, true)
+                .map(ShapeValue::Set),
+            TypeShape::Map { cap, key, value } => self.read_map(decoder, *key, *value, *cap),
+            TypeShape::Option(held) => match decoder.read_u8()? {
+                0 => Ok(ShapeValue::Option(None)),
+                1 => self
+                    .read_from(*held, decoder)
+                    .map(|read| ShapeValue::Option(Some(Box::new(read)))),
+                other => Err(DecodeError::InvalidDiscriminant(other)),
+            },
+            TypeShape::Tuple(elements) => {
+                let mut read = Vec::with_capacity(elements.len());
+                for element in elements {
+                    read.push(self.read_from(*element, decoder)?);
+                }
+                Ok(ShapeValue::Tuple(read))
+            }
+            TypeShape::Struct(fields) => {
+                let mut read = Vec::with_capacity(fields.len());
+                for field in fields {
+                    let value = self.read_from(field.shape, decoder)?;
+                    read.push((field.name.clone(), value));
+                }
+                Ok(ShapeValue::Struct(read))
+            }
+            TypeShape::Enum(variants) => {
+                let discriminant = decoder.read_u8()?;
+                let variant = variants
+                    .iter()
+                    .find(|variant| variant.discriminant == discriminant)
+                    .ok_or(DecodeError::InvalidDiscriminant(discriminant))?;
+                Ok(ShapeValue::Variant {
+                    name: variant.name.clone(),
+                    discriminant,
+                    content: Box::new(self.read_from(variant.content, decoder)?),
+                })
+            }
+            TypeShape::Named { shape, .. } => self.read_from(*shape, decoder),
+        }
+    }
+
+    /// A run of at most `cap` elements; `distinct` refuses one encoded
+    /// twice.
+    fn read_run(
+        &self,
+        decoder: &mut Decoder<'_>,
+        element: NodeId,
+        cap: u32,
+        distinct: bool,
+    ) -> Result<Vec<ShapeValue>, DecodeError> {
+        let len = run_length(decoder, self.least(element), cap)?;
+        let mut read = Vec::with_capacity(decoder.reserve_hint::<ShapeValue>(len));
+        let mut spans = Vec::new();
+        for _ in 0..len {
+            let start = decoder.position();
+            read.push(self.read_from(element, decoder)?);
+            if distinct {
+                spans.push(decoder.consumed(start));
+            }
+        }
+        refuse_duplicates(spans)?;
+        Ok(read)
+    }
+
+    /// The pairs of a map, at most `cap` of them and no key encoded
+    /// twice.
+    fn read_map(
+        &self,
+        decoder: &mut Decoder<'_>,
+        key: NodeId,
+        value: NodeId,
+        cap: u32,
+    ) -> Result<ShapeValue, DecodeError> {
+        let pair = self.least(key).saturating_add(self.least(value));
+        let len = run_length(decoder, pair, cap)?;
+        let mut pairs = Vec::with_capacity(decoder.reserve_hint::<(ShapeValue, ShapeValue)>(len));
+        let mut spans = Vec::with_capacity(pairs.capacity());
+        for _ in 0..len {
+            let start = decoder.position();
+            let read = self.read_from(key, decoder)?;
+            spans.push(decoder.consumed(start));
+            pairs.push((read, self.read_from(value, decoder)?));
+        }
+        refuse_duplicates(spans)?;
+        Ok(ShapeValue::Map(pairs))
+    }
+}
+
+/// How many elements a run claims, bounded by what the bytes could pay
+/// for and by the cap the node states.
+///
+/// The element's own minimum is what makes the first bound real, and the
+/// cap is the type's own: a claimed length is refused on either before
+/// anything is allocated for it.
+fn run_length(decoder: &mut Decoder<'_>, least: usize, cap: u32) -> Result<usize, DecodeError> {
+    bounded::check(decoder.read_len(least)?, cap as usize)
+}
+
+impl HborWidth for ShapeTable {
+    const MIN_ENCODED_LEN: usize = 1;
+}
+
+impl HborEncode for ShapeTable {
+    fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
+        self.nodes.encode(encoder)
+    }
+}
+
+/// Read node by node through the same door a published table was built
+/// through, so a table that decodes is one every consumer can walk — and
+/// the one its publisher built, down to each subtree written once.
+impl HborDecode for ShapeTable {
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
+        let nodes: Vec<TypeShape> = decoder.nested()?;
+        let mut table = Self::new();
+        for (index, node) in nodes.into_iter().enumerate() {
+            let expected = NodeId::at(index);
+            let id = table
+                .push(node)
+                .map_err(|fault| DecodeError::FailedValidation(fault.reason()))?;
+            if id != expected {
+                return Err(DecodeError::FailedValidation(
+                    ShapeFault::Duplicate(expected).reason(),
+                ));
+            }
+        }
+        Ok(table)
     }
 }
 
 /// A value read against a shape: what a consumer holding the bytes and
-/// the [`TypeShape`] gets back.
+/// the [`ShapeTable`] gets back.
 ///
 /// One variant per form the vocabulary admits, so a reader walks the
 /// value the way it would have walked the shape. Field and variant names
@@ -586,18 +1069,6 @@ pub enum ShapeValue {
     },
 }
 
-/// Why a payload could not be read against a shape.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum ReadError {
-    /// The shape itself cannot be walked, whatever the bytes are.
-    #[error(transparent)]
-    Unreadable(#[from] ShapeFault),
-    /// The bytes are malformed, truncated, non-canonical, or longer than
-    /// the shape accounts for.
-    #[error(transparent)]
-    Malformed(#[from] DecodeError),
-}
-
 /// Refuse a set or map that encodes one member twice.
 ///
 /// Byte equality is the oracle: the encoding is canonical, so equal
@@ -612,321 +1083,33 @@ fn refuse_duplicates(mut spans: Vec<&[u8]>) -> Result<(), DecodeError> {
     Ok(())
 }
 
-impl TypeShape {
-    /// Read one complete value of this shape from `bytes`.
-    ///
-    /// What a consumer holding a package's metadata and a payload does
-    /// with the two. The bytes must be exactly one value: anything left
-    /// over is a payload the shape does not describe.
-    ///
-    /// Checked is everything the shape can know — every width, every
-    /// length minimal and payable by the bytes that remain, text valid
-    /// UTF-8, every discriminant declared, no byte unaccounted for, and
-    /// no member of a set or key of a map encoded twice: under canonicity
-    /// one value has one encoding, so two members with the same bytes
-    /// are one member, which the type-erased reader can see without
-    /// knowing the type. Not checked is the ascent of those keys: that
-    /// order is the element type's own, and a shape carries structure
-    /// rather than a comparison. A reader rejecting on a guess at it
-    /// would refuse payloads the chain accepted.
-    ///
-    /// So `read` is not a canonicity gate, where the codec is: two byte
-    /// strings differing only in the order of a set's or a map's members
-    /// both read here, to values that keep the wire's order and so
-    /// compare unequal. A caller that needs
-    /// one byte string per value — because it hashes the bytes, or trusts
-    /// what it read to re-encode identically — must hold that itself, or
-    /// read only bytes the codec already wrote. The package-metadata
-    /// readers that read state leaves do the latter: a leaf is bytes the
-    /// encoder wrote canonically. An event payload is not — it is guest
-    /// bytes the kernel bounds in length but does not canonicalize — so a
-    /// reader that hashes or re-encodes one canonicalizes it first.
-    ///
-    /// Nesting is bounded by [`Resolution::readable`], which runs first:
-    /// a shape within the cap bounds this walk's own recursion, because
-    /// a value nests exactly as deep as the shape describing it however
-    /// many elements it holds. The resolution it leaves behind is what
-    /// the run lengths below are bounded against, so a name the payload
-    /// reaches a thousand times is walked once.
-    ///
-    /// # Errors
-    ///
-    /// [`ReadError`] for a shape that cannot be walked, or bytes it does
-    /// not describe.
-    pub fn read(&self, bytes: &[u8], types: &ShapeTable) -> Result<ShapeValue, ReadError> {
-        let mut resolution = Resolution::of(types);
-        resolution.readable(self, MAX_SHAPE_DEPTH)?;
-        let mut decoder = Decoder::new(bytes, DEFAULT_MAX_DEPTH);
-        let value = self.read_from(&mut decoder, &mut resolution)?;
-        decoder.finish()?;
-        Ok(value)
-    }
-
-    /// Read one value, leaving whatever follows it for the caller.
-    ///
-    /// Total over a shape [`Resolution::readable`] has passed, and safe
-    /// over one it has not: an unresolved reference is an error here
-    /// rather than a panic, because a reader is handed metadata it did
-    /// not write.
-    fn read_from(
-        &self,
-        decoder: &mut Decoder<'_>,
-        resolution: &mut Resolution<'_>,
-    ) -> Result<ShapeValue, ReadError> {
-        // Every width the encoding fixes, read as the little-endian run
-        // it is.
-        macro_rules! fixed {
-            ($ty:ty, $variant:ident) => {{
-                let bytes = decoder.read_array::<{ ::core::mem::size_of::<$ty>() }>()?;
-                Ok(ShapeValue::$variant(<$ty>::from_le_bytes(bytes)))
-            }};
-        }
-        match self {
-            Self::Bool => match decoder.read_u8()? {
-                0 => Ok(ShapeValue::Bool(false)),
-                1 => Ok(ShapeValue::Bool(true)),
-                other => Err(DecodeError::InvalidBool(other).into()),
-            },
-            Self::U8 => fixed!(u8, U8),
-            Self::U16 => fixed!(u16, U16),
-            Self::U32 => fixed!(u32, U32),
-            Self::U64 => fixed!(u64, U64),
-            Self::U128 => fixed!(u128, U128),
-            Self::I8 => fixed!(i8, I8),
-            Self::I16 => fixed!(i16, I16),
-            Self::I32 => fixed!(i32, I32),
-            Self::I64 => fixed!(i64, I64),
-            Self::I128 => fixed!(i128, I128),
-            Self::Text => {
-                let len = decoder.read_len(1)?;
-                let bytes = decoder.read_slice(len)?;
-                core::str::from_utf8(bytes)
-                    .map(|text| ShapeValue::Text(text.to_owned()))
-                    .map_err(|_| DecodeError::InvalidUtf8.into())
-            }
-            Self::ByteArray(width) => Ok(ShapeValue::ByteArray(
-                decoder.read_slice(*width as usize)?.to_vec(),
-            )),
-            Self::Seq(element) => {
-                Self::read_run(decoder, resolution, element, false).map(ShapeValue::Seq)
-            }
-            Self::Set(element) => {
-                Self::read_run(decoder, resolution, element, true).map(ShapeValue::Set)
-            }
-            Self::Map { key, value } => Self::read_map(decoder, resolution, key, value),
-            Self::Option(held) => match decoder.read_u8()? {
-                0 => Ok(ShapeValue::Option(None)),
-                1 => held
-                    .read_from(decoder, resolution)
-                    .map(|read| ShapeValue::Option(Some(Box::new(read)))),
-                other => Err(DecodeError::InvalidDiscriminant(other).into()),
-            },
-            Self::Tuple(elements) => {
-                let mut read = Vec::with_capacity(elements.len());
-                for element in elements {
-                    read.push(element.read_from(decoder, resolution)?);
-                }
-                Ok(ShapeValue::Tuple(read))
-            }
-            Self::Struct(fields) => {
-                let mut read = Vec::with_capacity(fields.len());
-                for field in fields {
-                    let value = field.shape.read_from(decoder, resolution)?;
-                    read.push((field.name.clone(), value));
-                }
-                Ok(ShapeValue::Struct(read))
-            }
-            Self::Enum(variants) => {
-                let discriminant = decoder.read_u8()?;
-                let variant = variants
-                    .iter()
-                    .find(|variant| variant.discriminant == discriminant)
-                    .ok_or(DecodeError::InvalidDiscriminant(discriminant))?;
-                Ok(ShapeValue::Variant {
-                    name: variant.name.clone(),
-                    discriminant,
-                    content: Box::new(variant.content.read_from(decoder, resolution)?),
-                })
-            }
-            Self::Ref(name) => resolution
-                .types()
-                .get(name)
-                .ok_or_else(|| ShapeFault::Unresolved(name.clone()))?
-                .read_from(decoder, resolution),
-        }
-    }
-
-    /// A run of `element`s; `distinct` refuses one encoded twice.
-    fn read_run(
-        decoder: &mut Decoder<'_>,
-        resolution: &mut Resolution<'_>,
-        element: &Self,
-        distinct: bool,
-    ) -> Result<Vec<ShapeValue>, ReadError> {
-        let len = Self::run_length(decoder, resolution, element)?;
-        let mut read = Vec::with_capacity(decoder.reserve_hint::<ShapeValue>(len));
-        let mut spans = Vec::new();
-        for _ in 0..len {
-            let start = decoder.position();
-            read.push(element.read_from(decoder, resolution)?);
-            if distinct {
-                spans.push(decoder.consumed(start));
-            }
-        }
-        refuse_duplicates(spans)?;
-        Ok(read)
-    }
-
-    /// The pairs of a map, no key encoded twice.
-    fn read_map(
-        decoder: &mut Decoder<'_>,
-        resolution: &mut Resolution<'_>,
-        key: &Self,
-        value: &Self,
-    ) -> Result<ShapeValue, ReadError> {
-        let pair = resolution
-            .cached_min_len(key)?
-            .saturating_add(resolution.cached_min_len(value)?);
-        if pair == 0 {
-            return Err(ShapeFault::ZeroWidth.into());
-        }
-        let len = decoder.read_len(pair)?;
-        let mut pairs = Vec::with_capacity(decoder.reserve_hint::<(ShapeValue, ShapeValue)>(len));
-        let mut spans = Vec::with_capacity(pairs.capacity());
-        for _ in 0..len {
-            let start = decoder.position();
-            let read = key.read_from(decoder, resolution)?;
-            spans.push(decoder.consumed(start));
-            pairs.push((read, value.read_from(decoder, resolution)?));
-        }
-        refuse_duplicates(spans)?;
-        Ok(ShapeValue::Map(pairs))
-    }
-
-    /// How many elements a run claims, bounded by what the bytes could
-    /// pay for.
-    ///
-    /// The element's own minimum is what makes that bound real: a
-    /// claimed length is refused before anything is allocated for it.
-    fn run_length(
-        decoder: &mut Decoder<'_>,
-        resolution: &mut Resolution<'_>,
-        element: &Self,
-    ) -> Result<usize, ReadError> {
-        let least = resolution.cached_min_len(element)?;
-        if least == 0 {
-            return Err(ShapeFault::ZeroWidth.into());
-        }
-        Ok(decoder.read_len(least)?)
-    }
-}
-
 /// A type that can describe itself to a consumer that does not have it.
 ///
 /// Derived rather than written, so a shape and an encoding are one
 /// derivation from one declaration. Nothing should ever author one by
 /// hand except where the name is the point — the address family — and
 /// there the hand impl is what carries the name the wire drops.
-pub trait HborShape {
-    /// Register this type and everything it names in `types`, and return
-    /// the shape a value of it has.
-    ///
-    /// A nominal type registers its definition and returns a
-    /// [`TypeShape::Ref`] to it; anything else returns its shape inline
-    /// and registers nothing.
-    fn shape(types: &mut ShapeRegistry) -> TypeShape;
-}
-
-/// The table under construction, and who owns each name in it.
 ///
-/// Names are what a shape references and what a consumer looks a type up
-/// by, so two types cannot share one. The Rust path of whoever claimed a
-/// name is kept beside it for exactly as long as it takes to say so.
-#[derive(Clone, Debug, Default)]
-pub struct ShapeRegistry {
-    types: ShapeTable,
-    owners: BTreeMap<String, &'static str>,
-    building: BTreeSet<String>,
+/// A type that reaches itself has no node: its constant would name
+/// itself, which rustc refuses as a cycle on the impl. Such a type still
+/// derives the codec; it has no finite widest value, so it has no shape
+/// and no [`HborBound`].
+pub trait HborShape {
+    /// This type's shape: a node whose children are other types' nodes.
+    const NODE: &'static ShapeNode;
 }
 
-impl ShapeRegistry {
-    /// An empty registry.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Register `owner`'s definition under `name`, and reference it.
-    ///
-    /// The name is reserved before `define` runs, so a type that reaches
-    /// itself finds its own name and closes the cycle rather than
-    /// recurring forever. A name already held by the same owner is that
-    /// same type reached a second way, and its definition is not rebuilt.
-    ///
-    /// `owner` is the claimant's Rust path, which the derive supplies as
-    /// [`core::any::type_name`].
-    ///
-    /// # Panics
-    ///
-    /// If `name` is already held by a different type. A reference
-    /// resolves by name, so two types under one would make it ambiguous
-    /// — and shapes are built where a package is built, so this is a
-    /// build failure naming the collision rather than anything a chain
-    /// can reach.
-    pub fn nominal(
-        &mut self,
-        name: &str,
-        owner: &'static str,
-        define: impl FnOnce(&mut Self) -> TypeShape,
-    ) -> TypeShape {
-        if let Some(held) = self.owners.get(name) {
-            assert!(
-                *held == owner,
-                "`{name}` already names `{held}`, so `{owner}` would be unreachable under it"
-            );
-        } else {
-            self.owners.insert(name.to_owned(), owner);
-            self.building.insert(name.to_owned());
-            let defined = define(self);
-            self.building.remove(name);
-            self.types.insert(name.to_owned(), defined);
-        }
-        TypeShape::Ref(name.to_owned())
-    }
-
-    /// The types registered so far.
-    #[must_use]
-    pub const fn types(&self) -> &ShapeTable {
-        &self.types
-    }
-
-    /// The finished table.
-    ///
-    /// # Panics
-    ///
-    /// If a definition is still being built, which only a caller holding
-    /// the registry inside its own `define` could arrange.
-    #[must_use]
-    pub fn into_types(self) -> ShapeTable {
-        assert!(self.building.is_empty(), "a definition is still open");
-        self.types
-    }
-}
-
-/// The shape of `T`, and everything `T` names, as a table on its own.
-#[must_use]
-pub fn shape_of<T: HborShape>() -> (TypeShape, ShapeTable) {
-    let mut registry = ShapeRegistry::new();
-    let shape = T::shape(&mut registry);
-    (shape, registry.into_types())
+/// Every shaped type states a bound, folded off its node: a shape
+/// without one would be a leaf nothing can price.
+impl<T: HborShape> HborBound for T {
+    const MAX_ENCODED_LEN: usize = max_encoded_len(T::NODE);
+    const MAX_DEPTH: usize = max_depth(T::NODE);
 }
 
 macro_rules! primitive {
     ($($ty:ty => $shape:ident),+ $(,)?) => {
         $(impl HborShape for $ty {
-            fn shape(_: &mut ShapeRegistry) -> TypeShape {
-                TypeShape::$shape
-            }
+            const NODE: &'static ShapeNode = &ShapeNode::$shape;
         })+
     };
 }
@@ -935,68 +1118,34 @@ primitive! {
     bool => Bool,
     u8 => U8, u16 => U16, u32 => U32, u64 => U64, u128 => U128,
     i8 => I8, i16 => I16, i32 => I32, i64 => I64, i128 => I128,
-    String => Text,
 }
 
 impl HborShape for () {
-    fn shape(_: &mut ShapeRegistry) -> TypeShape {
-        TypeShape::Tuple(Vec::new())
-    }
+    const NODE: &'static ShapeNode = &ShapeNode::Tuple(&[]);
 }
 
 impl<const N: usize> HborShape for [u8; N] {
-    fn shape(_: &mut ShapeRegistry) -> TypeShape {
-        TypeShape::ByteArray(u32::try_from(N).unwrap_or(u32::MAX))
-    }
+    const NODE: &'static ShapeNode = &ShapeNode::ByteArray(N);
 }
 
 impl<T: HborShape> HborShape for Option<T> {
-    fn shape(types: &mut ShapeRegistry) -> TypeShape {
-        TypeShape::Option(Box::new(T::shape(types)))
-    }
-}
-
-impl<T: HborShape> HborShape for Vec<T> {
-    fn shape(types: &mut ShapeRegistry) -> TypeShape {
-        TypeShape::Seq(Box::new(T::shape(types)))
-    }
-}
-
-impl<T: HborShape> HborShape for BTreeSet<T> {
-    fn shape(types: &mut ShapeRegistry) -> TypeShape {
-        TypeShape::Set(Box::new(T::shape(types)))
-    }
-}
-
-impl<K: HborShape, V: HborShape> HborShape for BTreeMap<K, V> {
-    fn shape(types: &mut ShapeRegistry) -> TypeShape {
-        TypeShape::Map {
-            key: Box::new(K::shape(types)),
-            value: Box::new(V::shape(types)),
-        }
-    }
+    const NODE: &'static ShapeNode = &ShapeNode::Option(T::NODE);
 }
 
 // A box and an arc are names for a place: they encode as their contents
 // and charge no level, so they describe as their contents too.
 impl<T: HborShape + ?Sized> HborShape for Box<T> {
-    fn shape(types: &mut ShapeRegistry) -> TypeShape {
-        T::shape(types)
-    }
+    const NODE: &'static ShapeNode = T::NODE;
 }
 
 impl<T: HborShape + ?Sized> HborShape for std::sync::Arc<T> {
-    fn shape(types: &mut ShapeRegistry) -> TypeShape {
-        T::shape(types)
-    }
+    const NODE: &'static ShapeNode = T::NODE;
 }
 
 macro_rules! tuple {
     ($($name:ident),+) => {
         impl<$($name: HborShape),+> HborShape for ($($name,)+) {
-            fn shape(types: &mut ShapeRegistry) -> TypeShape {
-                TypeShape::Tuple(::std::vec![$($name::shape(types)),+])
-            }
+            const NODE: &'static ShapeNode = &ShapeNode::Tuple(&[$($name::NODE),+]);
         }
     };
 }
@@ -1008,73 +1157,107 @@ tuple!(A, B, C, D);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::node::min_encoded_len;
     use crate::{assert_canonical_at_depth, from_slice_with_depth, to_vec, to_vec_with_depth};
 
     /// Every form the vocabulary admits, in one table, so a round-trip
     /// covers the whole of it rather than the forms a real type reaches.
-    fn every_form() -> ShapeTable {
-        let leaf = TypeShape::Enum(vec![
+    fn every_form() -> (ShapeTable, NodeId, NodeId) {
+        let mut table = ShapeTable::new();
+        let mut push = |node| table.push(node).expect("a form the table holds");
+        let unit = push(TypeShape::Tuple(Vec::new()));
+        let i8 = push(TypeShape::I8);
+        let boolean = push(TypeShape::Bool);
+        let pair = push(TypeShape::Tuple(vec![i8, boolean]));
+        let text = push(TypeShape::Text { cap: 300 });
+        let named_text = push(TypeShape::Struct(vec![ShapeField {
+            name: "text".into(),
+            shape: text,
+        }]));
+        let leaf = push(TypeShape::Enum(vec![
             ShapeVariant {
                 name: "nothing".into(),
                 discriminant: 0,
-                content: TypeShape::Tuple(Vec::new()),
+                content: unit,
             },
             ShapeVariant {
                 name: "pair".into(),
                 discriminant: 7,
-                content: TypeShape::Tuple(vec![TypeShape::I8, TypeShape::Bool]),
+                content: pair,
             },
             ShapeVariant {
                 name: "named".into(),
                 discriminant: 9,
-                content: TypeShape::Struct(vec![ShapeField {
-                    name: "text".into(),
-                    shape: TypeShape::Text,
-                }]),
+                content: named_text,
             },
-        ]);
-        let whole = TypeShape::Struct(vec![
+        ]));
+        let leaf = push(TypeShape::Named {
+            name: "leaf".into(),
+            shape: leaf,
+        });
+        let widths = [
+            TypeShape::U8,
+            TypeShape::U16,
+            TypeShape::U32,
+            TypeShape::U64,
+            TypeShape::U128,
+            TypeShape::I16,
+            TypeShape::I32,
+            TypeShape::I64,
+            TypeShape::I128,
+        ]
+        .into_iter()
+        .map(&mut push)
+        .collect();
+        let widths = push(TypeShape::Tuple(widths));
+        let fixed = push(TypeShape::ByteArray(32));
+        let maybe = push(TypeShape::Option(leaf));
+        let byte = push(TypeShape::U8);
+        let many = push(TypeShape::Seq {
+            cap: 4,
+            element: byte,
+        });
+        let word = push(TypeShape::U64);
+        let distinct = push(TypeShape::Set {
+            cap: 2,
+            element: word,
+        });
+        let by_key = push(TypeShape::Map {
+            cap: 3,
+            key: text,
+            value: leaf,
+        });
+        let whole = push(TypeShape::Struct(vec![
             ShapeField {
                 name: "widths".into(),
-                shape: TypeShape::Tuple(vec![
-                    TypeShape::U8,
-                    TypeShape::U16,
-                    TypeShape::U32,
-                    TypeShape::U64,
-                    TypeShape::U128,
-                    TypeShape::I16,
-                    TypeShape::I32,
-                    TypeShape::I64,
-                    TypeShape::I128,
-                ]),
+                shape: widths,
             },
             ShapeField {
                 name: "fixed".into(),
-                shape: TypeShape::ByteArray(32),
+                shape: fixed,
             },
             ShapeField {
                 name: "maybe".into(),
-                shape: TypeShape::Option(Box::new(TypeShape::Ref("leaf".into()))),
+                shape: maybe,
             },
             ShapeField {
                 name: "many".into(),
-                shape: TypeShape::Seq(Box::new(TypeShape::U8)),
+                shape: many,
             },
             ShapeField {
                 name: "distinct".into(),
-                shape: TypeShape::Set(Box::new(TypeShape::U64)),
+                shape: distinct,
             },
             ShapeField {
                 name: "by_key".into(),
-                shape: TypeShape::Map {
-                    key: Box::new(TypeShape::Text),
-                    value: Box::new(TypeShape::Ref("leaf".into())),
-                },
+                shape: by_key,
             },
-        ]);
-        [("leaf".to_owned(), leaf), ("whole".to_owned(), whole)]
-            .into_iter()
-            .collect()
+        ]));
+        let whole = push(TypeShape::Named {
+            name: "whole".into(),
+            shape: whole,
+        });
+        (table, leaf, whole)
     }
 
     /// A shape's wire discriminants, pinned the way every other wire
@@ -1082,7 +1265,7 @@ mod tests {
     /// every instance address derived from one, folds these bytes.
     #[test]
     fn every_shape_keeps_its_wire_discriminant() {
-        let leaf = || Box::new(TypeShape::Bool);
+        let leaf = NodeId(0);
         let forms = [
             (0, TypeShape::Bool),
             (1, TypeShape::U8),
@@ -1095,22 +1278,41 @@ mod tests {
             (8, TypeShape::I32),
             (9, TypeShape::I64),
             (10, TypeShape::I128),
-            (11, TypeShape::Text),
+            (11, TypeShape::Text { cap: 1 }),
             (12, TypeShape::ByteArray(1)),
-            (13, TypeShape::Seq(leaf())),
-            (14, TypeShape::Set(leaf())),
+            (
+                13,
+                TypeShape::Seq {
+                    cap: 1,
+                    element: leaf,
+                },
+            ),
+            (
+                14,
+                TypeShape::Set {
+                    cap: 1,
+                    element: leaf,
+                },
+            ),
             (
                 15,
                 TypeShape::Map {
-                    key: leaf(),
-                    value: leaf(),
+                    cap: 1,
+                    key: leaf,
+                    value: leaf,
                 },
             ),
-            (16, TypeShape::Option(leaf())),
+            (16, TypeShape::Option(leaf)),
             (17, TypeShape::Tuple(vec![])),
             (18, TypeShape::Struct(vec![])),
             (19, TypeShape::Enum(vec![])),
-            (20, TypeShape::Ref("leaf".into())),
+            (
+                20,
+                TypeShape::Named {
+                    name: "leaf".into(),
+                    shape: leaf,
+                },
+            ),
         ];
         assert_eq!(forms.len(), 21, "one row per variant");
         for (byte, shape) in forms {
@@ -1128,57 +1330,96 @@ mod tests {
     /// the reader's to judge.
     #[test]
     fn a_duplicate_member_is_refused_and_an_unsorted_one_is_not() {
-        let types = ShapeTable::default();
-        let set = TypeShape::Set(Box::new(TypeShape::U8));
-        assert!(set.read(&[2, 5, 3], &types).is_ok());
+        let mut table = ShapeTable::new();
+        let byte = table.push(TypeShape::U8).unwrap();
+        let set = table
+            .push(TypeShape::Set {
+                cap: 8,
+                element: byte,
+            })
+            .unwrap();
+        assert!(table.read(set, &[2, 5, 3]).is_ok());
+        assert_eq!(table.read(set, &[2, 5, 5]), Err(DecodeError::UnsortedKeys));
+        let map = table
+            .push(TypeShape::Map {
+                cap: 8,
+                key: byte,
+                value: byte,
+            })
+            .unwrap();
+        assert!(table.read(map, &[2, 5, 0, 3, 0]).is_ok());
         assert_eq!(
-            set.read(&[2, 5, 5], &types),
-            Err(ReadError::Malformed(DecodeError::UnsortedKeys))
-        );
-        let map = TypeShape::Map {
-            key: Box::new(TypeShape::U8),
-            value: Box::new(TypeShape::U8),
-        };
-        assert!(map.read(&[2, 5, 0, 3, 0], &types).is_ok());
-        assert_eq!(
-            map.read(&[2, 5, 0, 5, 1], &types),
-            Err(ReadError::Malformed(DecodeError::UnsortedKeys))
+            table.read(map, &[2, 5, 0, 5, 1]),
+            Err(DecodeError::UnsortedKeys)
         );
         // A sequence is a sequence: repeats are what it holds.
-        let seq = TypeShape::Seq(Box::new(TypeShape::U8));
-        assert!(seq.read(&[2, 5, 5], &types).is_ok());
+        let seq = table
+            .push(TypeShape::Seq {
+                cap: 8,
+                element: byte,
+            })
+            .unwrap();
+        assert!(table.read(seq, &[2, 5, 5]).is_ok());
+    }
+
+    /// A claimed length past the node's cap is refused before anything
+    /// is allocated for it, whatever the bytes could pay for.
+    #[test]
+    fn a_run_past_its_cap_is_refused() {
+        let mut table = ShapeTable::new();
+        let byte = table.push(TypeShape::U8).unwrap();
+        let seq = table
+            .push(TypeShape::Seq {
+                cap: 2,
+                element: byte,
+            })
+            .unwrap();
+        assert!(table.read(seq, &[2, 5, 5]).is_ok());
+        assert_eq!(
+            table.read(seq, &[3, 5, 5, 5]),
+            Err(DecodeError::BoundExceeded { max: 2, actual: 3 })
+        );
+        let text = table.push(TypeShape::Text { cap: 2 }).unwrap();
+        assert!(table.read(text, b"\x02ab").is_ok());
+        assert_eq!(
+            table.read(text, b"\x03abc"),
+            Err(DecodeError::BoundExceeded { max: 2, actual: 3 })
+        );
     }
 
     #[test]
     fn every_form_round_trips_canonically() {
-        let types = every_form();
-        let bytes = to_vec_with_depth(&types, 32).expect("encodes");
-        let read: ShapeTable = from_slice_with_depth(&bytes, 32).expect("decodes");
-        assert_eq!(read, types);
-        assert_canonical_at_depth(&types, 32);
+        let (table, _, _) = every_form();
+        let bytes = to_vec_with_depth(&table, 8).expect("encodes");
+        let read: ShapeTable = from_slice_with_depth(&bytes, 8).expect("decodes");
+        assert_eq!(read, table);
+        assert_canonical_at_depth(&table, 8);
     }
 
     #[test]
     fn depth_counts_the_levels_a_decoder_spends() {
-        let types = every_form();
-        let mut resolution = Resolution::of(&types);
+        let (table, leaf, whole) = every_form();
         // A variant's content is a struct or a tuple, and the level goes
         // to its fields; the discriminant is a byte the enum writes.
-        assert_eq!(resolution.readable(&types["leaf"], 16), Ok(1));
-        // The map's own level, the reference its value holds, and that
+        assert_eq!(table.depth(leaf), 1);
+        // The map's own level, the name its value holds, and that
         // leaf's own — the deepest field is what the record costs.
-        assert_eq!(resolution.readable(&types["whole"], 16), Ok(3));
+        assert_eq!(table.depth(whole), 3);
     }
 
     #[test]
     fn an_empty_composite_still_spends_its_level() {
-        let types = ShapeTable::new();
-        let mut resolution = Resolution::of(&types);
-        assert_eq!(resolution.readable(&TypeShape::Tuple(Vec::new()), 8), Ok(0));
-        assert_eq!(
-            resolution.readable(&TypeShape::Seq(Box::new(TypeShape::U8)), 8),
-            Ok(1)
-        );
+        let mut table = ShapeTable::new();
+        let unit = table.push(TypeShape::Tuple(Vec::new())).unwrap();
+        assert_eq!(table.depth(unit), 0);
+        let byte = table.push(TypeShape::U8).unwrap();
+        let bytes = table
+            .push(TypeShape::Seq {
+                cap: 1,
+                element: byte,
+            })
+            .unwrap();
+        assert_eq!(table.depth(bytes), 1);
     }
 
     /// A name is what turns a decoded position into a fact, so one name
@@ -1188,167 +1429,164 @@ mod tests {
     /// Neither is a shape a declaration can spell: Rust names a type's
     /// members once each, and the codec refuses a discriminant collision
     /// where the variant is written. A shape is data, so the refusals
-    /// move to where it is read.
+    /// move to where it joins a table.
     #[test]
     fn one_name_over_two_members_is_a_fault() {
-        let types = ShapeTable::new();
+        let mut table = ShapeTable::new();
+        let byte = table.push(TypeShape::U8).unwrap();
         let named = |name: &str| ShapeField {
             name: name.to_owned(),
-            shape: TypeShape::U8,
+            shape: byte,
         };
         assert_eq!(
-            Resolution::of(&types).readable(
-                &TypeShape::Struct(vec![named("amount"), named("amount")]),
-                8
-            ),
+            table.push(TypeShape::Struct(vec![named("amount"), named("amount")])),
             Err(ShapeFault::AmbiguousName("amount".into()))
         );
-        assert_eq!(
-            Resolution::of(&types)
-                .readable(&TypeShape::Struct(vec![named("amount"), named("fee")]), 8),
-            Ok(1)
+        assert!(
+            table
+                .push(TypeShape::Struct(vec![named("amount"), named("fee")]))
+                .is_ok()
         );
 
+        let unit = table.push(TypeShape::Tuple(Vec::new())).unwrap();
         let variant = |name: &str, discriminant| ShapeVariant {
             name: name.to_owned(),
             discriminant,
-            content: TypeShape::Tuple(Vec::new()),
+            content: unit,
         };
         assert_eq!(
-            Resolution::of(&types).readable(
-                &TypeShape::Enum(vec![variant("left", 0), variant("left", 1)]),
-                8
-            ),
+            table.push(TypeShape::Enum(vec![
+                variant("left", 0),
+                variant("left", 1)
+            ])),
             Err(ShapeFault::AmbiguousName("left".into()))
         );
         assert_eq!(
-            Resolution::of(&types).readable(
-                &TypeShape::Enum(vec![variant("left", 0), variant("right", 0)]),
-                8
-            ),
+            table.push(TypeShape::Enum(vec![
+                variant("left", 0),
+                variant("right", 0)
+            ])),
             Err(ShapeFault::AmbiguousDiscriminant(0))
         );
-        assert_eq!(
-            Resolution::of(&types).readable(
-                &TypeShape::Enum(vec![variant("left", 0), variant("right", 7)]),
-                8
-            ),
-            Ok(0)
+        assert!(
+            table
+                .push(TypeShape::Enum(vec![
+                    variant("left", 0),
+                    variant("right", 7)
+                ]))
+                .is_ok()
         );
     }
 
+    /// A reference resolves downward or not at all: to a node the table
+    /// does not hold, or to the node being added, is the same refusal.
     #[test]
     fn a_reference_to_nothing_is_a_fault() {
-        let types = ShapeTable::new();
+        let mut table = ShapeTable::new();
         assert_eq!(
-            Resolution::of(&types).readable(&TypeShape::Ref("absent".into()), 8),
-            Err(ShapeFault::Unresolved("absent".into()))
+            table.push(TypeShape::Option(NodeId(0))),
+            Err(ShapeFault::Unresolved(NodeId(0)))
         );
+        let byte = table.push(TypeShape::U8).unwrap();
+        assert_eq!(
+            table.push(TypeShape::Option(NodeId(7))),
+            Err(ShapeFault::Unresolved(NodeId(7)))
+        );
+        assert!(table.push(TypeShape::Option(byte)).is_ok());
     }
 
+    /// Two types cannot share a name, because a consumer finds one by it.
     #[test]
-    fn a_cycle_and_a_deep_nest_exhaust_one_bound() {
-        let named = |name: &str, holds: &str| {
-            (
-                name.to_owned(),
-                TypeShape::Struct(vec![ShapeField {
-                    name: holds.to_owned(),
-                    shape: TypeShape::Option(Box::new(TypeShape::Ref(holds.to_owned()))),
-                }]),
-            )
+    fn two_types_under_one_name_is_a_fault() {
+        let mut table = ShapeTable::new();
+        let byte = table.push(TypeShape::U8).unwrap();
+        let word = table.push(TypeShape::U64).unwrap();
+        let named = |shape| TypeShape::Named {
+            name: "thing".into(),
+            shape,
         };
-        let cyclic: ShapeTable = [named("a", "b"), named("b", "a")].into_iter().collect();
+        let first = table.push(named(byte)).unwrap();
+        // The same type reached a second way is the same node.
+        assert_eq!(table.push(named(byte)), Ok(first));
         assert_eq!(
-            Resolution::of(&cyclic).readable(&cyclic["a"], 16),
+            table.push(named(word)),
+            Err(ShapeFault::NameTaken("thing".into()))
+        );
+        assert_eq!(table.named("thing"), Some(first));
+    }
+
+    /// A shape deeper than a decoder follows describes values no decoder
+    /// admits.
+    #[test]
+    fn a_shape_past_the_decoders_cap_is_a_fault() {
+        let mut table = ShapeTable::new();
+        let mut held = table.push(TypeShape::U8).unwrap();
+        for _ in 0..DEFAULT_MAX_DEPTH {
+            held = table.push(TypeShape::Option(held)).unwrap();
+        }
+        assert_eq!(table.depth(held), DEFAULT_MAX_DEPTH);
+        assert_eq!(
+            table.push(TypeShape::Option(held)),
             Err(ShapeFault::TooDeep)
         );
-
-        let deep = (0..8).fold(TypeShape::U8, |inner, _| TypeShape::Seq(Box::new(inner)));
-        let empty = ShapeTable::new();
-        let mut resolution = Resolution::of(&empty);
-        assert_eq!(resolution.readable(&deep, 4), Err(ShapeFault::TooDeep));
-        assert_eq!(resolution.readable(&deep, 16), Ok(8));
     }
 
-    /// A name reached from many places is walked once, so a table of
-    /// types referencing one another costs what it holds rather than
-    /// what its references multiply out to.
-    ///
-    /// Eight names twenty fields wide, each field naming the next: the
-    /// walk that re-expands every reference visits twenty to the seventh
-    /// nodes for under a kilobyte of table, which is what makes the
-    /// answer being kept the difference between a bounded door and an
-    /// unbounded one.
+    /// A table that decodes is the one its publisher built: a node that
+    /// reaches upward, or repeats an earlier one, is refused as the bytes
+    /// are read.
     #[test]
-    fn a_name_reached_from_everywhere_is_walked_once() {
-        const NAMES: usize = 8;
-        const WIDTH: usize = 20;
-        let types: ShapeTable = (0..NAMES)
-            .map(|level| {
-                let held = if level + 1 == NAMES {
-                    TypeShape::U8
-                } else {
-                    TypeShape::Ref(format!("t{}", level + 1))
-                };
-                let fields = (0..WIDTH)
-                    .map(|field| ShapeField {
-                        name: format!("f{field}"),
-                        shape: held.clone(),
-                    })
-                    .collect();
-                (format!("t{level}"), TypeShape::Struct(fields))
-            })
-            .collect();
-
-        let mut resolution = Resolution::of(&types);
-        assert_eq!(resolution.readable(&types["t0"], 16), Ok(NAMES));
-        // Every name but the one the walk started from, which is reached
-        // as a shape rather than through a reference.
-        assert_eq!(resolution.resolved.len(), NAMES - 1);
+    fn a_decoded_table_passes_through_the_same_door() {
+        let upward = vec![TypeShape::Option(NodeId(1)), TypeShape::U8];
+        let bytes = to_vec(&upward).unwrap();
+        assert!(matches!(
+            from_slice_with_depth::<ShapeTable>(&bytes, 8),
+            Err(DecodeError::FailedValidation(_))
+        ));
+        let repeated = vec![TypeShape::U8, TypeShape::U8];
+        let bytes = to_vec(&repeated).unwrap();
+        assert!(matches!(
+            from_slice_with_depth::<ShapeTable>(&bytes, 8),
+            Err(DecodeError::FailedValidation(_))
+        ));
+        let ordered = vec![TypeShape::U8, TypeShape::Option(NodeId(0))];
+        let bytes = to_vec(&ordered).unwrap();
+        let table = from_slice_with_depth::<ShapeTable>(&bytes, 8).unwrap();
+        assert_eq!(table.most(NodeId(1)), 2);
     }
 
-    /// A run element reached once per occurrence in the payload is walked
-    /// once. The read walk asks `cached_min_len` for each collection it
-    /// meets, and a wide element answered from the cache costs nothing per
-    /// repeat — where re-walking it would be the payload-times-shape
-    /// quadratic the memo closes.
+    /// A tree declared into a table measures what its folds state, node
+    /// for node, and a subtree reached twice is written once.
     #[test]
-    fn a_run_element_is_walked_once_per_node() {
-        let empty = ShapeTable::new();
-        let element = TypeShape::Tuple(vec![TypeShape::U8; 50]);
-        let mut resolution = Resolution::of(&empty);
-        assert_eq!(resolution.cached_min_len(&element).unwrap(), 50);
-        assert_eq!(resolution.element_len.len(), 1);
-        for _ in 0..1000 {
-            assert_eq!(resolution.cached_min_len(&element).unwrap(), 50);
-        }
-        // A thousand more asks against the same node add no entries and no
-        // walk: the answer is the node's, kept.
-        assert_eq!(resolution.element_len.len(), 1);
-    }
-
-    #[test]
-    fn a_name_is_defined_once_and_a_cycle_closes_on_it() {
-        let mut types = ShapeRegistry::new();
-        let outer = types.nominal("node", "Node", |types| {
-            TypeShape::Struct(vec![ShapeField {
-                name: "next".into(),
-                // Reaching the same name mid-definition finds the
-                // reservation and returns a reference to it.
-                shape: TypeShape::Option(Box::new(types.nominal("node", "Node", |_| {
-                    unreachable!("the name is reserved before its body is built")
-                }))),
-            }])
-        });
-        assert_eq!(outer, TypeShape::Ref("node".into()));
-        assert_eq!(types.into_types().len(), 1);
-    }
-
-    #[test]
-    #[should_panic(expected = "already names")]
-    fn two_types_under_one_name_is_a_build_failure() {
-        let mut types = ShapeRegistry::new();
-        types.nominal("thing", "one::Thing", |_| TypeShape::U8);
-        types.nominal("thing", "two::Thing", |_| TypeShape::Text);
+    fn a_declared_tree_measures_as_its_folds_and_shares_its_subtrees() {
+        const ELEMENT: &ShapeNode = &ShapeNode::Named {
+            name: "element",
+            shape: &ShapeNode::Struct(&[("a", &ShapeNode::U8), ("b", &ShapeNode::U64)]),
+        };
+        const ROOT: &ShapeNode = &ShapeNode::Named {
+            name: "root",
+            shape: &ShapeNode::Struct(&[
+                ("one", ELEMENT),
+                ("two", &ShapeNode::Option(ELEMENT)),
+                (
+                    "many",
+                    &ShapeNode::Seq {
+                        cap: 3,
+                        element: ELEMENT,
+                    },
+                ),
+            ]),
+        };
+        let mut table = ShapeTable::new();
+        let root = table.declare(ROOT).unwrap();
+        assert_eq!(table.most(root), max_encoded_len(ROOT));
+        assert_eq!(table.least(root), min_encoded_len(ROOT));
+        assert_eq!(table.depth(root), max_depth(ROOT));
+        let element = table.named("element").unwrap();
+        assert_eq!(table.most(element), max_encoded_len(ELEMENT));
+        // u8, u64, the struct, its name, the option, the sequence, the
+        // root's struct and its name: eight nodes for three mentions.
+        assert_eq!(table.len(), 8);
+        assert!(table.matches(root, ROOT));
+        assert!(!table.matches(element, ROOT));
     }
 }

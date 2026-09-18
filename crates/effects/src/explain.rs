@@ -48,7 +48,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use hyperscale_hbor::{ShapeField, ShapeVariant, TypeShape};
+use hyperscale_hbor::{NodeId, ShapeTable, TypeShape};
 use hyperscale_vm_types::{
     Address, AddressClass, EffectTarget, Moves, Presence, SubstateKey, UnmetCondition,
 };
@@ -969,7 +969,7 @@ impl<'a> Names<'a> {
                     "  {:>5}  {name} — {}, {}, at most {width} bytes{holding}",
                     slot.0,
                     slot_kind(*kind),
-                    leaf_form(element)
+                    leaf_form(&self.metadata.types, element)
                 );
             }
         }
@@ -989,10 +989,16 @@ impl<'a> Names<'a> {
         }
         name_table("events", &self.metadata.events, out);
         name_table("errors", &self.metadata.errors, out);
-        if !self.metadata.types.is_empty() {
+        let mut named: Vec<(&str, NodeId)> = self.metadata.types.names().collect();
+        named.sort_unstable();
+        if !named.is_empty() {
             out.push_str("types\n");
-            for (name, shape) in &self.metadata.types {
-                let _ = writeln!(out, "  {name} = {}", shape_of(shape));
+            for (name, id) in named {
+                let definition = match self.metadata.types.get(id) {
+                    Some(TypeShape::Named { shape, .. }) => shape_of(&self.metadata.types, *shape),
+                    _ => "?".to_owned(),
+                };
+                let _ = writeln!(out, "  {name} = {definition}");
             }
         }
     }
@@ -1945,21 +1951,27 @@ fn value_text(value: &Value) -> String {
 }
 
 /// What one leaf of a slot holds.
-fn leaf_form(form: &LeafForm) -> String {
+fn leaf_form(types: &ShapeTable, form: &LeafForm) -> String {
     match form {
         // An instance family's entry: the id is the entry's own order
         // key, so the leaf has nothing left to hold.
-        LeafForm::Value(TypeShape::Tuple(parts)) if parts.is_empty() => {
+        LeafForm::Value(shape) if matches!(types.get(*shape), Some(TypeShape::Tuple(parts)) if parts.is_empty()) => {
             "holding nothing".to_owned()
         }
-        LeafForm::Value(shape) => format!("holding {}", shape_of(shape)),
+        LeafForm::Value(shape) => format!("holding {}", shape_of(types, *shape)),
         LeafForm::Bytes => "holding its own bytes".to_owned(),
     }
 }
 
 /// A type, in the vocabulary the encoding admits.
-fn shape_of(shape: &TypeShape) -> String {
-    match shape {
+///
+/// A run carries its cap behind it, and a name stands for the type it
+/// names: the definition is on the type's own line.
+fn shape_of(types: &ShapeTable, id: NodeId) -> String {
+    let Some(node) = types.get(id) else {
+        return "?".to_owned();
+    };
+    match node {
         TypeShape::Bool => "bool".to_owned(),
         TypeShape::U8 => "u8".to_owned(),
         TypeShape::U16 => "u16".to_owned(),
@@ -1971,39 +1983,42 @@ fn shape_of(shape: &TypeShape) -> String {
         TypeShape::I32 => "i32".to_owned(),
         TypeShape::I64 => "i64".to_owned(),
         TypeShape::I128 => "i128".to_owned(),
-        TypeShape::Text => "text".to_owned(),
+        TypeShape::Text { cap } => format!("text≤{cap}"),
         TypeShape::ByteArray(width) => format!("[u8; {width}]"),
-        TypeShape::Seq(element) => format!("[{}]", shape_of(element)),
-        TypeShape::Set(element) => format!("set[{}]", shape_of(element)),
-        TypeShape::Map { key, value } => format!("map[{} → {}]", shape_of(key), shape_of(value)),
-        TypeShape::Option(inner) => format!("{}?", shape_of(inner)),
+        TypeShape::Seq { cap, element } => format!("[{}]≤{cap}", shape_of(types, *element)),
+        TypeShape::Set { cap, element } => format!("set[{}]≤{cap}", shape_of(types, *element)),
+        TypeShape::Map { cap, key, value } => format!(
+            "map[{} → {}]≤{cap}",
+            shape_of(types, *key),
+            shape_of(types, *value)
+        ),
+        TypeShape::Option(inner) => format!("{}?", shape_of(types, *inner)),
         TypeShape::Tuple(fields) => {
-            let rendered: Vec<String> = fields.iter().map(shape_of).collect();
+            let rendered: Vec<String> = fields.iter().map(|id| shape_of(types, *id)).collect();
             format!("({})", rendered.join(", "))
         }
         TypeShape::Struct(fields) => {
             let rendered: Vec<String> = fields
                 .iter()
-                .map(|ShapeField { name, shape }| format!("{name}: {}", shape_of(shape)))
+                .map(|field| format!("{}: {}", field.name, shape_of(types, field.shape)))
                 .collect();
             format!("{{ {} }}", rendered.join(", "))
         }
         TypeShape::Enum(variants) => {
             let rendered: Vec<String> = variants
                 .iter()
-                .map(
-                    |ShapeVariant {
-                         name,
-                         discriminant,
-                         content,
-                     }| {
-                        format!("{discriminant} {name}{}", shape_of(content))
-                    },
-                )
+                .map(|variant| {
+                    format!(
+                        "{} {}{}",
+                        variant.discriminant,
+                        variant.name,
+                        shape_of(types, variant.content)
+                    )
+                })
                 .collect();
             format!("< {} >", rendered.join(" | "))
         }
-        TypeShape::Ref(name) => name.clone(),
+        TypeShape::Named { name, .. } => name.clone(),
     }
 }
 
@@ -2249,12 +2264,16 @@ mod tests {
             errors: vec!["underfunded".to_owned()],
             ..PackageMetadata::default()
         };
+        let amount = metadata
+            .types
+            .push(TypeShape::U128)
+            .expect("a scalar joins any table");
         metadata.state.insert(
             package_slot(0),
             SlotShape {
                 name: "entries".to_owned(),
                 kind: SlotKind::Ordered,
-                element: LeafForm::Value(TypeShape::U128),
+                element: LeafForm::Value(amount),
                 width: 16,
                 denomination: None,
             },

@@ -8,14 +8,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_hbor::shape::{MAX_SHAPE_DEPTH, Resolution};
 use hyperscale_hbor::{
-    DecodeError, Hbor, HborInfallible, HborShape, ReadError, ShapeFault, ShapeField, ShapeTable,
-    ShapeValue, ShapeVariant, TypeShape, shape_of, to_vec,
+    Capped, DecodeError, Hbor, HborBound, HborShape, LengthFree, ShapeField, ShapeTable,
+    ShapeValue, ShapeVariant, Text, TypeShape, to_vec,
 };
 
 #[derive(Debug, PartialEq, Eq, Hbor, HborShape)]
-#[hbor(infallible)]
+#[hbor(length_free)]
 struct Closed {
     a: u32,
     b: [u8; 3],
@@ -23,32 +22,29 @@ struct Closed {
     d: (bool, u16),
 }
 
-/// A shape holding no run and no text has a widest value, and it is the
-/// figure the derive states for the type; a shape holding one has none.
+/// The width a type states is the width its published shape measures,
+/// with or without a run in it: every shape has a widest value.
 #[test]
-fn a_closed_shape_derives_the_width_the_type_states() {
-    let (shape, types) = shape_of::<Closed>();
-    assert_eq!(
-        Resolution::of(&types).max_encoded_len(&shape, MAX_SHAPE_DEPTH),
-        Ok(Some(<Closed as HborInfallible>::MAX_ENCODED_LEN))
-    );
-    let (shape, types) = shape_of::<Unit>();
-    assert_eq!(
-        Resolution::of(&types).max_encoded_len(&shape, MAX_SHAPE_DEPTH),
-        Ok(Some(0))
-    );
-    for (shape, types) in [shape_of::<Everything>(), shape_of::<Positional>()] {
-        assert_eq!(
-            Resolution::of(&types).max_encoded_len(&shape, MAX_SHAPE_DEPTH),
-            Ok(None)
-        );
+fn a_shape_measures_the_width_the_type_states() {
+    fn agree<T: HborShape>() {
+        let (table, root) = ShapeTable::of::<T>();
+        assert_eq!(table.most(root), <T as HborBound>::MAX_ENCODED_LEN);
+        assert_eq!(table.depth(root), <T as HborBound>::MAX_DEPTH);
     }
+    fn length_free<T: LengthFree>() {}
+    agree::<Closed>();
+    agree::<Unit>();
+    agree::<Everything>();
+    agree::<Positional>();
+    let (table, root) = ShapeTable::of::<Unit>();
+    assert_eq!(table.most(root), 0);
+    length_free::<Closed>();
 }
 
 #[derive(Debug, PartialEq, Eq, Hbor, HborShape)]
 struct Inner {
     tag: u8,
-    label: String,
+    label: Text<16>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hbor, HborShape)]
@@ -74,23 +70,24 @@ enum Choice {
 #[derive(Debug, PartialEq, Eq, Hbor, HborShape)]
 struct Everything {
     fixed: [u8; 4],
-    many: Vec<u16>,
-    distinct: BTreeSet<u64>,
-    by_key: BTreeMap<String, Choice>,
+    many: Capped<Vec<u16>, 4>,
+    distinct: Capped<BTreeSet<u64>, 4>,
+    by_key: Capped<BTreeMap<Text<8>, Choice>, 4>,
     picked: Choice,
     wrapped: Wrapped,
     #[hbor(skip)]
     local: u8,
 }
 
-/// A named type is an entry under its kebab name, referenced by it.
+/// A named type is a node under its kebab name, and what it names is
+/// found by the name.
 #[test]
-fn a_declared_type_is_registered_and_referenced() {
-    let (shape, types) = shape_of::<Everything>();
-    assert_eq!(shape, TypeShape::Ref("everything".into()));
-    let mut names: Vec<&str> = types.keys().map(String::as_str).collect();
+fn a_declared_type_is_named_and_found_by_its_name() {
+    let (table, root) = ShapeTable::of::<Everything>();
+    assert_eq!(table.named("everything"), Some(root));
+    let mut names: Vec<&str> = table.names().map(|(name, _)| name).collect();
     names.sort_unstable();
-    // `Wrapped` is transparent, so it is a name and not an entry.
+    // `Wrapped` is transparent, so it is a name and not a node.
     assert_eq!(names, ["choice", "everything", "inner"]);
 }
 
@@ -98,42 +95,61 @@ fn a_declared_type_is_registered_and_referenced() {
 /// neither carries a field name because neither has one.
 #[test]
 fn positional_and_unit_declare_tuples() {
-    let (_, types) = shape_of::<Positional>();
-    assert_eq!(
-        types["positional"],
-        TypeShape::Tuple(vec![TypeShape::Ref("inner".into()), TypeShape::U64])
-    );
-    let (_, types) = shape_of::<Unit>();
-    assert_eq!(types["unit"], TypeShape::Tuple(Vec::new()));
+    let (mut table, root) = ShapeTable::of::<Positional>();
+    let Some(TypeShape::Named { shape, .. }) = table.get(root) else {
+        panic!("a struct is named");
+    };
+    let shape = *shape;
+    let inner = table.named("inner").unwrap();
+    let word = table.push(TypeShape::U64).unwrap();
+    assert_eq!(table.get(shape), Some(&TypeShape::Tuple(vec![inner, word])));
+    let (table, root) = ShapeTable::of::<Unit>();
+    let Some(TypeShape::Named { shape, .. }) = table.get(root) else {
+        panic!("a struct is named");
+    };
+    assert_eq!(table.get(*shape), Some(&TypeShape::Tuple(Vec::new())));
 }
 
 /// A variant carries the byte the wire carries, pinned or positional, and
 /// its content is the form its fields take.
 #[test]
 fn variants_carry_their_names_and_their_discriminants() {
-    let (_, types) = shape_of::<Choice>();
+    let (mut table, root) = ShapeTable::of::<Choice>();
+    let Some(TypeShape::Named { shape, .. }) = table.get(root) else {
+        panic!("an enum is named");
+    };
+    let shape = *shape;
+    let unit = table.push(TypeShape::Tuple(Vec::new())).unwrap();
+    let word = table.push(TypeShape::U32).unwrap();
+    let boolean = table.push(TypeShape::Bool).unwrap();
+    let pair = table.push(TypeShape::Tuple(vec![word, boolean])).unwrap();
+    let inner = table.named("inner").unwrap();
+    let maybe = table.push(TypeShape::Option(inner)).unwrap();
+    let named = table
+        .push(TypeShape::Struct(vec![ShapeField {
+            name: "held".into(),
+            shape: maybe,
+        }]))
+        .unwrap();
     assert_eq!(
-        types["choice"],
-        TypeShape::Enum(vec![
+        table.get(shape),
+        Some(&TypeShape::Enum(vec![
             ShapeVariant {
                 name: "nothing".into(),
                 discriminant: 0,
-                content: TypeShape::Tuple(Vec::new()),
+                content: unit,
             },
             ShapeVariant {
                 name: "pair".into(),
                 discriminant: 1,
-                content: TypeShape::Tuple(vec![TypeShape::U32, TypeShape::Bool]),
+                content: pair,
             },
             ShapeVariant {
                 name: "named".into(),
                 discriminant: 9,
-                content: TypeShape::Struct(vec![ShapeField {
-                    name: "held".into(),
-                    shape: TypeShape::Option(Box::new(TypeShape::Ref("inner".into()))),
-                }]),
+                content: named,
             },
-        ])
+        ]))
     );
 }
 
@@ -141,8 +157,11 @@ fn variants_carry_their_names_and_their_discriminants() {
 /// transparent wrapper is a name on neither.
 #[test]
 fn the_shape_holds_what_the_wire_holds() {
-    let (_, types) = shape_of::<Everything>();
-    let TypeShape::Struct(fields) = &types["everything"] else {
+    let (table, root) = ShapeTable::of::<Everything>();
+    let Some(TypeShape::Named { shape, .. }) = table.get(root) else {
+        panic!("a struct is named");
+    };
+    let Some(TypeShape::Struct(fields)) = table.get(*shape) else {
         panic!("a struct describes as a struct");
     };
     let named: Vec<&str> = fields.iter().map(|field| field.name.as_str()).collect();
@@ -150,7 +169,7 @@ fn the_shape_holds_what_the_wire_holds() {
         named,
         ["fixed", "many", "distinct", "by_key", "picked", "wrapped"]
     );
-    assert_eq!(fields[5].shape, TypeShape::U64);
+    assert_eq!(table.get(fields[5].shape), Some(&TypeShape::U64));
 }
 
 /// The whole point, end to end: a consumer holding the shape and the
@@ -159,29 +178,32 @@ fn the_shape_holds_what_the_wire_holds() {
 fn a_value_reads_back_against_its_own_shape() {
     let value = Everything {
         fixed: [1, 2, 3, 4],
-        many: vec![7, 8],
-        distinct: [4, 9].into_iter().collect(),
-        by_key: [
-            ("a".to_owned(), Choice::Nothing),
-            (
-                "b".to_owned(),
-                Choice::Named {
-                    held: Some(Inner {
-                        tag: 3,
-                        label: "in".to_owned(),
-                    }),
-                },
-            ),
-        ]
-        .into_iter()
-        .collect(),
+        many: Capped::new(vec![7, 8]).unwrap(),
+        distinct: Capped::new([4, 9].into_iter().collect()).unwrap(),
+        by_key: Capped::new(
+            [
+                (Text::try_from("a").unwrap(), Choice::Nothing),
+                (
+                    Text::try_from("b").unwrap(),
+                    Choice::Named {
+                        held: Some(Inner {
+                            tag: 3,
+                            label: Text::try_from("in").unwrap(),
+                        }),
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        )
+        .unwrap(),
         picked: Choice::Pair(11, true),
         wrapped: Wrapped(12),
         local: 200,
     };
     let bytes = to_vec(&value).expect("encodes");
-    let (shape, types) = shape_of::<Everything>();
-    let ShapeValue::Struct(fields) = shape.read(&bytes, &types).expect("reads") else {
+    let (table, root) = ShapeTable::of::<Everything>();
+    let ShapeValue::Struct(fields) = table.read(root, &bytes).expect("reads") else {
         panic!("a struct reads as a struct");
     };
     let named: Vec<&str> = fields.iter().map(|(name, _)| name.as_str()).collect();
@@ -215,72 +237,49 @@ fn a_value_reads_back_against_its_own_shape() {
 fn a_payload_the_shape_does_not_describe_is_refused() {
     let value = Inner {
         tag: 3,
-        label: "in".to_owned(),
+        label: Text::try_from("in").unwrap(),
     };
     let bytes = to_vec(&value).expect("encodes");
-    let (shape, types) = shape_of::<Inner>();
-    assert!(shape.read(&bytes, &types).is_ok());
+    let (table, root) = ShapeTable::of::<Inner>();
+    assert!(table.read(root, &bytes).is_ok());
 
     // A byte too many is a second payload, not a value to ignore.
     let mut trailing = bytes.clone();
     trailing.push(0);
     assert!(matches!(
-        shape.read(&trailing, &types),
-        Err(ReadError::Malformed(DecodeError::TrailingBytes { .. }))
+        table.read(root, &trailing),
+        Err(DecodeError::TrailingBytes { .. })
     ));
 
     // A byte too few runs the reader off the end.
-    assert!(matches!(
-        shape.read(&bytes[..bytes.len() - 1], &types),
-        Err(ReadError::Malformed(_))
-    ));
+    assert!(table.read(root, &bytes[..bytes.len() - 1]).is_err());
 
     // A discriminant no variant declares is refused where the typed
     // decoder refuses one.
-    let (choice, types) = shape_of::<Choice>();
+    let (table, root) = ShapeTable::of::<Choice>();
     assert!(matches!(
-        choice.read(&[200], &types),
-        Err(ReadError::Malformed(DecodeError::InvalidDiscriminant(200)))
+        table.read(root, &[200]),
+        Err(DecodeError::InvalidDiscriminant(200))
     ));
 }
 
-/// A run over an element that carries no bytes is a claimed length no
-/// input pays for, so the reader refuses the shape rather than
-/// allocating against it.
-///
-/// The codec refuses the same thing at compile time, where a `Vec<()>`
-/// is unwritable; a shape is data, so the refusal happens when it is
-/// read.
+/// A capped run's derived width is the bytes its widest value encodes
+/// to, and a claim past the cap is refused where the typed decoder
+/// refuses one.
 #[test]
-fn a_run_over_nothing_is_refused_before_it_allocates() {
-    let types = ShapeTable::new();
-    let nothing = TypeShape::Seq(Box::new(TypeShape::Tuple(Vec::new())));
+fn a_capped_run_is_priced_and_bounded_at_its_cap() {
+    let widest = Capped::<Vec<u16>, 4>::new(vec![1, 2, 3, 4]).unwrap();
+    let (table, root) = ShapeTable::of::<Capped<Vec<u16>, 4>>();
+    let bytes = to_vec(&widest).unwrap();
+    assert_eq!(bytes.len(), table.most(root));
     assert_eq!(
-        nothing.read(&[0xFF, 0xFF, 0xFF, 0x7F], &types),
-        Err(ReadError::Unreadable(ShapeFault::ZeroWidth))
+        bytes.len(),
+        <Capped<Vec<u16>, 4> as HborBound>::MAX_ENCODED_LEN
     );
-    // A zero-width array is the same claim spelled another way.
-    let empty_array = TypeShape::Seq(Box::new(TypeShape::ByteArray(0)));
+    assert!(table.read(root, &bytes).is_ok());
+    let five = to_vec(&vec![1u16; 5]).unwrap();
     assert_eq!(
-        empty_array.read(&[1], &types),
-        Err(ReadError::Unreadable(ShapeFault::ZeroWidth))
-    );
-    // An element that costs something bounds the claim by the bytes.
-    let counted = TypeShape::Seq(Box::new(TypeShape::U64));
-    assert!(matches!(
-        counted.read(&[9, 0, 0], &types),
-        Err(ReadError::Malformed(DecodeError::LengthExceedsInput { .. }))
-    ));
-}
-
-/// A shape a consumer cannot follow is refused before any byte is read.
-#[test]
-fn an_unfollowable_shape_is_refused_before_the_bytes() {
-    let types = ShapeTable::new();
-    assert_eq!(
-        TypeShape::Ref("absent".into()).read(&[], &types),
-        Err(ReadError::Unreadable(ShapeFault::Unresolved(
-            "absent".into()
-        )))
+        table.read(root, &five),
+        Err(DecodeError::BoundExceeded { max: 4, actual: 5 })
     );
 }

@@ -569,10 +569,10 @@ pub const fn never<L>() -> Rule<L> {
 /// recursive, and the deterministic profile wants an acyclic call graph.
 /// The bytes are pinned against the encoder by test, so the constant
 /// cannot drift from what the vocabulary would produce.
-pub const NOBODY_BYTES: &[u8] = &[1, 1, 0];
+pub const NOBODY_BYTES: [u8; 3] = [1, 1, 0];
 
 /// [`always()`]'s canonical bytes, as a constant, on the same terms.
-pub const ANYBODY_BYTES: &[u8] = &[1, 0, 0];
+pub const ANYBODY_BYTES: [u8; 3] = [1, 0, 0];
 
 impl<L> Rule<L> {
     /// Whether the tree sits inside the caps a stored rule is decoded
@@ -1037,10 +1037,10 @@ mod tests {
     fn the_closed_rule_constant_is_what_the_encoder_writes() {
         let closed: StoredRule = never();
         assert_eq!(closed.to_bytes().unwrap(), NOBODY_BYTES);
-        assert_eq!(StoredRule::from_slice(NOBODY_BYTES).unwrap(), closed);
+        assert_eq!(StoredRule::from_slice(&NOBODY_BYTES).unwrap(), closed);
         let open: StoredRule = always();
         assert_eq!(open.to_bytes().unwrap(), ANYBODY_BYTES);
-        assert_eq!(StoredRule::from_slice(ANYBODY_BYTES).unwrap(), open);
+        assert_eq!(StoredRule::from_slice(&ANYBODY_BYTES).unwrap(), open);
     }
 
     /// The algebra's top and bottom are the threshold over nothing, and

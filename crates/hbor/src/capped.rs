@@ -28,7 +28,8 @@ use std::ops::{Deref, Index, IndexMut};
 use crate::decode::Decoder;
 use crate::encode::{Encoder, Sink};
 use crate::error::{DecodeError, EncodeError};
-use crate::shape::{HborShape, ShapeRegistry, TypeShape};
+use crate::node::ShapeNode;
+use crate::shape::HborShape;
 use crate::varint::MAX_LENGTH;
 use crate::{HborDecode, HborEncode, HborWidth, bounded};
 
@@ -266,6 +267,22 @@ impl<T, const N: usize> Capped<Vec<T>, N> {
         self.0.push(item);
         Ok(())
     }
+
+    /// Insert `item` at `index`, shifting what follows, where the cap
+    /// has room for it.
+    ///
+    /// # Errors
+    ///
+    /// [`Overflow`] where the list is already at `N`.
+    ///
+    /// # Panics
+    ///
+    /// As `Vec::insert`, past the end.
+    pub fn insert(&mut self, index: usize, item: T) -> Result<(), Overflow> {
+        within(self.0.len() + 1, N)?;
+        self.0.insert(index, item);
+        Ok(())
+    }
 }
 
 impl<T: Ord, const N: usize> Capped<BTreeSet<T>, N> {
@@ -463,24 +480,25 @@ impl<C: CappedDecode, const N: usize> HborDecode for Capped<C, N> {
 }
 
 impl<T: HborShape, const N: usize> HborShape for Capped<Vec<T>, N> {
-    fn shape(types: &mut ShapeRegistry) -> TypeShape {
-        TypeShape::Seq(Box::new(T::shape(types)))
-    }
+    const NODE: &'static ShapeNode = &ShapeNode::Seq {
+        cap: N,
+        element: T::NODE,
+    };
 }
 
 impl<T: HborShape, const N: usize> HborShape for Capped<BTreeSet<T>, N> {
-    fn shape(types: &mut ShapeRegistry) -> TypeShape {
-        TypeShape::Set(Box::new(T::shape(types)))
-    }
+    const NODE: &'static ShapeNode = &ShapeNode::Set {
+        cap: N,
+        element: T::NODE,
+    };
 }
 
 impl<K: HborShape, V: HborShape, const N: usize> HborShape for Capped<BTreeMap<K, V>, N> {
-    fn shape(types: &mut ShapeRegistry) -> TypeShape {
-        TypeShape::Map {
-            key: Box::new(K::shape(types)),
-            value: Box::new(V::shape(types)),
-        }
-    }
+    const NODE: &'static ShapeNode = &ShapeNode::Map {
+        cap: N,
+        key: K::NODE,
+        value: V::NODE,
+    };
 }
 
 /// A byte string of at most `N` bytes.
@@ -663,9 +681,10 @@ impl<const N: usize> HborDecode for Bytes<N> {
 }
 
 impl<const N: usize> HborShape for Bytes<N> {
-    fn shape(_: &mut ShapeRegistry) -> TypeShape {
-        TypeShape::Seq(Box::new(TypeShape::U8))
-    }
+    const NODE: &'static ShapeNode = &ShapeNode::Seq {
+        cap: N,
+        element: &ShapeNode::U8,
+    };
 }
 
 /// UTF-8 text of at most `N` bytes.
@@ -770,7 +789,5 @@ impl<const N: usize> HborDecode for Text<N> {
 }
 
 impl<const N: usize> HborShape for Text<N> {
-    fn shape(_: &mut ShapeRegistry) -> TypeShape {
-        TypeShape::Text
-    }
+    const NODE: &'static ShapeNode = &ShapeNode::Text { cap: N };
 }

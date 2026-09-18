@@ -12,7 +12,7 @@ use hyperscale_vm_effects::{
     resource_record_key,
 };
 use hyperscale_vm_sdk::blueprint;
-use hyperscale_vm_sdk::hbor::{ShapeField, ShapeValue, TypeShape, to_vec};
+use hyperscale_vm_sdk::hbor::{ShapeNode, ShapeValue, Text, to_vec};
 use hyperscale_vm_testing::{Chain, PrincipalAddr, account, package, principal};
 use hyperscale_vm_types::{Outcome, Presence, UnmetCondition};
 
@@ -20,6 +20,7 @@ const FOUNDER: PrincipalAddr = principal(0x31);
 
 #[blueprint]
 mod issuer {
+    use hyperscale_vm_sdk::hbor::Text;
     use hyperscale_vm_sdk::state::{Cell, NfBucket};
 
     /// The issuer comes up holding this badge's one instance, which
@@ -32,7 +33,7 @@ mod issuer {
     #[resource(non_fungible, grants(mint = self))]
     struct Seat {
         operator: u64,
-        label: String,
+        label: Text<16>,
     }
 
     #[resource(display_digits = 6)]
@@ -76,7 +77,7 @@ mod issuer {
                 id,
                 Seat {
                     operator,
-                    label: "back-row".to_owned(),
+                    label: Text::try_from("back-row").expect("a label inside its cap"),
                 },
             );
             if let Some(seat) = Seat::at(id) {
@@ -91,7 +92,7 @@ mod issuer {
                 7,
                 Seat {
                     operator,
-                    label: "front-row".to_owned(),
+                    label: Text::try_from("front-row").expect("a label inside its cap"),
                 },
             )
         }
@@ -213,7 +214,7 @@ fn a_fielded_mint_files_the_record_its_mark_declares() {
         filed,
         to_vec(&issuer::Seat {
             operator: 42,
-            label: "front-row".to_owned(),
+            label: Text::try_from("front-row").expect("a label inside its cap"),
         })
         .expect("the record encodes"),
         "the cell holds the record's own encoding, not a presence byte",
@@ -263,14 +264,17 @@ fn a_marks_material_is_the_name_its_schema_is_declared_under() {
     let metadata = issuer::blueprint().metadata();
     assert_eq!(issuer::SEASON_PASS, b"season-pass");
     let name = core::str::from_utf8(issuer::SEASON_PASS).expect("a mark is its name");
-    assert_eq!(
-        metadata.types.get(name),
-        Some(&TypeShape::Struct(vec![ShapeField {
-            name: "season".to_owned(),
-            shape: TypeShape::U64,
-        }])),
-        "the two renderings of `SeasonPass` disagree",
-    );
+    let declared = metadata
+        .types
+        .named(name)
+        .expect("the two renderings of `SeasonPass` disagree");
+    assert!(metadata.types.matches(
+        declared,
+        &ShapeNode::Named {
+            name: "season-pass",
+            shape: &ShapeNode::Struct(&[("season", &ShapeNode::U64)]),
+        }
+    ));
 }
 
 /// A record no event reaches is in the table all the same: it is a cell
@@ -278,13 +282,17 @@ fn a_marks_material_is_the_name_its_schema_is_declared_under() {
 #[test]
 fn a_record_no_event_names_still_declares_its_shape() {
     let metadata = issuer::blueprint().metadata();
-    assert_eq!(
-        metadata.types["holding"],
-        TypeShape::Struct(vec![ShapeField {
-            name: "since".to_owned(),
-            shape: TypeShape::U64,
-        }])
-    );
+    let holding = metadata
+        .types
+        .named("holding")
+        .expect("a record declares its shape");
+    assert!(metadata.types.matches(
+        holding,
+        &ShapeNode::Named {
+            name: "holding",
+            shape: &ShapeNode::Struct(&[("since", &ShapeNode::U64)]),
+        }
+    ));
     assert!(
         metadata.events.is_empty(),
         "nothing here is reachable from an event",

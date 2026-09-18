@@ -32,7 +32,8 @@
 //! An accepted value's footprint is the value's own, and that can exceed its
 //! encoding by a per-type constant — half a million one-byte empty vectors
 //! decode into megabytes of `Vec` headers. The wire cannot bound that
-//! constant; message-size limits and `#[hbor(max = N)]` caps are what do.
+//! constant; message-size limits and the caps [`Capped`], [`Bytes`] and
+//! [`Text`] carry are what do.
 //!
 //! Sequences over zero-width elements — `Vec<()>`, a set of unit markers —
 //! are refused at compile time: their length is a count no input can pay
@@ -51,7 +52,9 @@
 //! Schema *derivation* is [`shape`], an opt-in derive that writes a type
 //! down for a consumer that does not have it. It sits beside the codec
 //! rather than inside it: nothing on the encode or decode path reads a
-//! shape, and a payload means what it meant without one.
+//! shape, and a payload means what it meant without one. What the shape
+//! does answer for the type itself is its bound — [`HborBound`], folded
+//! off the static tree — which is what sizes a buffer or a leaf.
 
 pub mod bounded;
 pub mod canonical;
@@ -80,8 +83,7 @@ pub use hyperscale_hbor_macros::{Hbor, HborMerkle, HborShape};
 pub use merkle::Chunked;
 pub use node::{HborBound, ShapeNode};
 pub use shape::{
-    HborShape, MAX_SHAPE_DEPTH, ReadError, Resolution, ShapeFault, ShapeField, ShapeRegistry,
-    ShapeTable, ShapeValue, ShapeVariant, TypeShape, shape_of,
+    HborShape, NodeId, ShapeFault, ShapeField, ShapeTable, ShapeValue, ShapeVariant, TypeShape,
 };
 pub use signing::{HborSigned, HborSignedWith};
 pub use varint::MAX_LENGTH;
@@ -148,33 +150,26 @@ pub trait HborDecode: HborWidth + Sized {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError>;
 }
 
-/// A type whose encoding cannot fail.
+/// A type whose encoding carries no length.
 ///
 /// Encoding fails three ways — a length past what the length field can
-/// express, a declared [`max`](hyperscale_hbor_macros::Hbor) bound, and
-/// nesting past the encoder's cap — and all three come from a length. A
-/// type that carries none is fixed width end to end, so writing it down
-/// is arithmetic on a buffer and there is nothing to refuse.
+/// express, a cap the type holds, and nesting past the encoder's cap —
+/// and every one of them is a length somewhere in the value. A type that
+/// carries none is fixed width end to end, so writing it down is
+/// arithmetic on a buffer and there is nothing to refuse.
 ///
-/// The point of saying so in the type system is that a caller can then
-/// encode *without an error arm*. Where that matters is a contract method
-/// marked total: a body that can fault cannot carry the mark, and a mark
-/// that a panicking encoder took away would be a protocol property lost
-/// to an implementation detail.
+/// A marker with no members: what it says is where a length is not,
+/// and the compiler says it on the field. Where that matters is a
+/// contract method marked total, whose events encode into a stack buffer
+/// sized by [`HborBound::MAX_ENCODED_LEN`]; the bound is what sizes the
+/// buffer, and this is what puts a stray collection's diagnosis on the
+/// declaration rather than in a scan of the compiled body.
 ///
-/// Granted by `#[derive(Hbor)]` to a struct or enum whose every field is
-/// itself infallible, and by hand below to the fixed-width primitives.
-/// A `Vec`, a `String`, a map or a set is not, and neither is anything
-/// holding one — which is a bound the compiler reports rather than a
-/// property anyone has to remember.
-pub trait HborInfallible: HborEncode {
-    /// The most bytes this type's encoding can occupy.
-    ///
-    /// A bound rather than a width, because `Option<T>` is one byte or
-    /// one more than `T` — so a type holding one has no single length,
-    /// and what a caller can size a buffer from is the larger.
-    const MAX_ENCODED_LEN: usize;
-}
+/// Granted by `#[derive(Hbor)]` under `#[hbor(length_free)]` to a struct
+/// or enum whose every field carries it, and by hand below to the
+/// fixed-width primitives. A `Vec`, a `String`, a map or a set is not,
+/// capped or otherwise, and neither is anything holding one.
+pub trait LengthFree: HborEncode {}
 
 /// Encode `value` into `out`, returning the bytes written.
 ///
@@ -183,12 +178,12 @@ pub trait HborInfallible: HborEncode {
 /// would be a failure the totality scan reads as a trap.
 ///
 /// The empty slice is unreachable for a buffer of at least
-/// [`HborInfallible::MAX_ENCODED_LEN`] bytes — the bound is the statement
+/// [`HborBound::MAX_ENCODED_LEN`] bytes — the bound is the statement
 /// that the value fits and the encode has nothing to report. Written as a
 /// fallback rather than an unwrap because an unwrap is a panic, and a
 /// panic is what the whole path exists to avoid.
 #[must_use]
-pub fn to_slice_infallible<'b, T: HborInfallible + ?Sized>(
+pub fn to_slice_infallible<'b, T: HborEncode + HborBound + ?Sized>(
     value: &T,
     out: &'b mut [u8],
 ) -> &'b [u8] {

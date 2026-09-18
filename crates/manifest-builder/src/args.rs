@@ -140,7 +140,7 @@ impl Arg for StoredRule {
 impl sealed::Sealed for RuleBytes {}
 impl Arg for RuleBytes {
     fn bind(self, _builder: &mut GraphBuilder) -> GraphArg {
-        GraphArg::Literal(Value::Bytes(self.0))
+        GraphArg::Literal(Value::Bytes(self.0.into()))
     }
 }
 
@@ -150,7 +150,7 @@ impl Arg for RuleBytes {
 impl sealed::Sealed for PrincipalRule {}
 impl Arg for PrincipalRule {
     fn bind(self, _builder: &mut GraphBuilder) -> GraphArg {
-        GraphArg::Literal(Value::Bytes(self.0))
+        GraphArg::Literal(Value::Bytes(self.0.into()))
     }
 }
 

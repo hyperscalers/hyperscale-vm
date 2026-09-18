@@ -410,7 +410,11 @@ impl GrantedBehaviour {
 /// so an entry that changed would be a different resource.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor, HborShape)]
 #[hbor(transparent, validate = ascending_behaviours)]
-pub struct ResourceGrants(Vec<(GrantedBehaviour, RuleBytes)>);
+pub struct ResourceGrants(Capped<Vec<(GrantedBehaviour, RuleBytes)>, MAX_GRANTS>);
+
+/// The most entries a granted set holds: one per behaviour, each at most
+/// once.
+const MAX_GRANTS: usize = GrantedBehaviour::ALL.len();
 
 /// The list's canonical-order rule: behaviours strictly ascending.
 fn ascending_behaviours(rules: &ResourceGrants) -> Result<(), &'static str> {
@@ -426,7 +430,7 @@ impl ResourceGrants {
     /// The empty set, which grants nothing and denies every behaviour.
     #[must_use]
     pub const fn new() -> Self {
-        Self(Vec::new())
+        Self(Capped::empty())
     }
 
     /// What is granted for `behaviour`, where anything is. An absent
@@ -463,10 +467,18 @@ impl ResourceGrants {
     }
 
     /// Grant `entry` for `behaviour`, replacing what was there.
+    ///
+    /// # Panics
+    ///
+    /// Never: the cap is one entry per behaviour and a behaviour already
+    /// granted is replaced in place, so a new entry always has room.
     pub fn set(&mut self, behaviour: GrantedBehaviour, entry: RuleBytes) {
         match self.0.binary_search_by_key(&behaviour, |(b, _)| *b) {
             Ok(index) => self.0[index].1 = entry,
-            Err(index) => self.0.insert(index, (behaviour, entry)),
+            Err(index) => self
+                .0
+                .insert(index, (behaviour, entry))
+                .expect("one entry per behaviour is inside the cap"),
         }
     }
 

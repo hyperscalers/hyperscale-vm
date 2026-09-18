@@ -145,7 +145,14 @@ fn an_enum_record_declares_its_variants_and_encodes() {
     use hyperscale_vm_sdk::hbor::{TypeShape, from_slice, to_vec};
 
     let metadata = shapes::blueprint().metadata();
-    let TypeShape::Enum(variants) = &metadata.types["kind"] else {
+    let kind = metadata
+        .types
+        .named("kind")
+        .expect("the record declares it");
+    let Some(TypeShape::Named { shape, .. }) = metadata.types.get(kind) else {
+        panic!("a record declares under its name");
+    };
+    let Some(TypeShape::Enum(variants)) = metadata.types.get(*shape) else {
         panic!("an enum record declares an enum shape");
     };
     assert_eq!(
@@ -2067,7 +2074,8 @@ fn a_framed_scalar_cell_speaks_presence() {
             "{method} states its presence requirement: {effects:?}"
         );
     }
-    // A framed `u64` describes as the scalar it is: no wrapper shape
-    // reaches the registry the way a declared record's would.
-    assert!(metadata.types.is_empty());
+    // A framed `u64` describes as the scalar it is: the frame is the
+    // cell's, so no name reaches the type table the way a declared
+    // record's would.
+    assert_eq!(metadata.types.names().count(), 0);
 }

@@ -56,8 +56,7 @@ pub fn event_emitters(events: &[(syn::Ident, String)], role: Role) -> Vec<syn::I
                     /// through its fields — and the widths are the
                     /// event's to state.
                     pub fn emit(&self) {
-                        use ::hyperscale_vm_sdk::hbor::HborInfallible as _;
-                        let mut buf = [0u8; <Self as ::hyperscale_vm_sdk::hbor::HborInfallible>
+                        let mut buf = [0u8; <Self as ::hyperscale_vm_sdk::hbor::HborBound>
                             ::MAX_ENCODED_LEN];
                         let payload =
                             ::hyperscale_vm_sdk::hbor::to_slice_infallible(self, &mut buf);
@@ -240,7 +239,7 @@ pub fn encode_declared(items: &mut [syn::Item]) -> (Vec<syn::Item>, Vec<syn::Ide
         // what a stack buffer could.
         if emitted.contains(&ident.to_string()) {
             attrs.push(syn::parse_quote!(
-                #[hbor(crate = ::hyperscale_vm_sdk::hbor, infallible)]
+                #[hbor(crate = ::hyperscale_vm_sdk::hbor, length_free)]
             ));
         } else {
             attrs.push(syn::parse_quote!(#[hbor(crate = ::hyperscale_vm_sdk::hbor)]));
@@ -264,13 +263,10 @@ pub fn encode_declared(items: &mut [syn::Item]) -> (Vec<syn::Item>, Vec<syn::Ide
             ));
             records.push(syn::parse_quote!(
                 impl ::hyperscale_vm_sdk::state::LeafShape for #ident {
-                    fn leaf_form(
-                        types: &mut ::hyperscale_vm_sdk::hbor::ShapeRegistry,
-                    ) -> ::hyperscale_vm_sdk::LeafForm {
-                        ::hyperscale_vm_sdk::LeafForm::Value(
-                            <Self as ::hyperscale_vm_sdk::hbor::HborShape>::shape(types),
-                        )
-                    }
+                    const LEAF: ::hyperscale_vm_sdk::state::LeafContent =
+                        ::hyperscale_vm_sdk::state::LeafContent::Value(
+                            <Self as ::hyperscale_vm_sdk::hbor::HborShape>::NODE,
+                        );
                 }
             ));
             stored_types.push(ident);

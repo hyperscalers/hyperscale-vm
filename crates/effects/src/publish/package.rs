@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_hbor::{Resolution, ShapeFault};
+use hyperscale_hbor::ShapeFault;
 use hyperscale_vm_types::{
     EVENT_FRAME_BYTES, MAX_ERROR_CODES, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_TYPES, MAX_SLOT_WIDTH,
 };
@@ -17,7 +17,7 @@ use hyperscale_vm_types::{
 use super::bounds::{PlacedBounds, check_signature_bounds};
 use crate::dsl::{Clause, TargetExpr, slot_of};
 use crate::instance::MAX_CONFIG_FIELDS;
-use crate::metadata::{LeafForm, MAX_SHAPE_DEPTH, PackageMetadata, reserved_shape};
+use crate::metadata::{LeafForm, PackageMetadata, reserved_shape};
 use crate::types::SlotId;
 use crate::{KERNEL_SLOT_BASE, PACKAGE_SLOT_BASE};
 
@@ -58,22 +58,6 @@ pub enum MetadataError {
         /// What its events derive to.
         derived: usize,
     },
-    /// An event whose shape has no widest encoding — an open shape,
-    /// which the infallible-encoding bound on an event's payload is
-    /// what otherwise keeps out.
-    #[error("event {name} has no widest encoding, so nothing bounds what a call emitting it costs")]
-    EventShapeOpen {
-        /// The event whose shape is open.
-        name: String,
-    },
-    /// An event's shape faulted on the walk that measures it.
-    #[error("event {name}: {source}")]
-    Event {
-        /// The event whose shape faulted.
-        name: String,
-        /// The fault.
-        source: ShapeFault,
-    },
     /// An error table longer than the index a declined code can carry.
     #[error("error table names {0} codes, past the {MAX_ERROR_CODES} a declined code can reach")]
     ErrorTable(usize),
@@ -105,8 +89,8 @@ pub enum MetadataError {
         /// What it declared.
         width: u32,
     },
-    /// A slot whose declared width is not the width its closed shape
-    /// derives, so one of the two is wrong.
+    /// A slot whose declared width is not the width its shape derives,
+    /// so one of the two is wrong.
     #[error("slot {slot:?} declares {width} bytes, but its shape holds at most {derived}")]
     SlotWidthDisagrees {
         /// The slot whose two statements differ.
@@ -115,15 +99,6 @@ pub enum MetadataError {
         width: u32,
         /// What its shape derives.
         derived: u32,
-    },
-    /// A declared type whose shape cannot be read.
-    #[error("type {name:?}: {source}")]
-    Type {
-        /// The type whose shape is refused.
-        name: String,
-        /// What cannot be read about it.
-        #[source]
-        source: ShapeFault,
     },
     /// An event named with no shape declared for it.
     ///
@@ -185,7 +160,8 @@ pub enum MetadataError {
         /// The method that says it holds bytes.
         plain: String,
     },
-    /// A declared slot whose element cannot be read.
+    /// A declared slot whose element names a node the package's types do
+    /// not hold.
     #[error("slot {slot:?}: {source}")]
     Slot {
         /// The slot whose element is refused.
@@ -251,7 +227,6 @@ const fn check_table_caps(metadata: &PackageMetadata) -> Result<(), MetadataErro
 /// nothing, and a bound with no event behind it is a charge for
 /// something the package cannot do.
 fn check_event_bounds(metadata: &PackageMetadata) -> Result<(), MetadataError> {
-    let mut resolved = Resolution::of(&metadata.types);
     let mut emits = false;
     for (name, signature) in &metadata.methods {
         // Every index names an event the package declares: one past the
@@ -274,11 +249,10 @@ fn check_event_bounds(metadata: &PackageMetadata) -> Result<(), MetadataError> {
         }
         emits |= !signature.emits.is_empty();
 
-        // An event encodes infallibly into a stack buffer, so its shape
-        // is closed and the widest encoding is a figure the table
-        // already holds. The author names the events; the bytes are
-        // derived, and a declaration that disagrees is refused on the
-        // terms a slot's width is.
+        // An event's widest encoding is a figure its shape measures. The
+        // author names the events; the bytes are derived, and a
+        // declaration that disagrees is refused on the terms a slot's
+        // width is.
         //
         // Each event's framing counts beside its payload, because the
         // receipt carries both: the figure bounds what crosses, which is
@@ -289,22 +263,13 @@ fn check_event_bounds(metadata: &PackageMetadata) -> Result<(), MetadataError> {
             let shape =
                 metadata
                     .types
-                    .get(event)
+                    .named(event)
                     .ok_or_else(|| MetadataError::EventWithoutShape {
                         name: event.clone(),
                     })?;
-            let most = resolved
-                .max_encoded_len(shape, MAX_SHAPE_DEPTH)
-                .map_err(|source| MetadataError::Event {
-                    name: event.clone(),
-                    source,
-                })?
-                .ok_or_else(|| MetadataError::EventShapeOpen {
-                    name: event.clone(),
-                })?;
             derived = derived
                 .saturating_add(EVENT_FRAME_BYTES)
-                .saturating_add(most);
+                .saturating_add(metadata.types.most(shape));
         }
         if derived > MAX_EVENT_BYTES_PER_TX {
             return Err(MetadataError::EventBytesTooHigh(derived));
@@ -325,23 +290,19 @@ fn check_event_bounds(metadata: &PackageMetadata) -> Result<(), MetadataError> {
 }
 
 /// Whether the tables, read together, say one thing: every event has a
-/// shape and one name, every declared shape resolves, and every slot
-/// sits in the package band holding something readable.
+/// shape and one name, every reserved name means what the protocol says,
+/// and every slot sits in the package band holding something readable.
 fn check_table_agreement(metadata: &PackageMetadata) -> Result<(), MetadataError> {
     let mut named = BTreeSet::new();
     for name in &metadata.events {
-        if !metadata.types.contains_key(name) {
+        if metadata.types.named(name).is_none() {
             return Err(MetadataError::EventWithoutShape { name: name.clone() });
         }
         if !named.insert(name.as_str()) {
             return Err(MetadataError::EventNamedTwice { name: name.clone() });
         }
     }
-    // One resolution for the whole metadata: a name two shapes reach is
-    // one answer, and asking the table per shape would be the same walk
-    // multiplied by the number of shapes that ask.
-    let mut resolved = Resolution::of(&metadata.types);
-    check_types(&mut resolved)?;
+    check_types(metadata)?;
     for (slot, declared) in &metadata.state {
         if !(PACKAGE_SLOT_BASE..KERNEL_SLOT_BASE).contains(&slot.0) {
             return Err(MetadataError::SlotOutsideBand { slot: *slot });
@@ -355,25 +316,19 @@ fn check_table_agreement(metadata: &PackageMetadata) -> Result<(), MetadataError
         let derived = match &declared.element {
             LeafForm::Bytes => None,
             LeafForm::Value(shape) => {
-                resolved
-                    .readable(shape, MAX_SHAPE_DEPTH)
-                    .map_err(|source| MetadataError::Slot {
+                if metadata.types.get(*shape).is_none() {
+                    return Err(MetadataError::Slot {
                         slot: *slot,
-                        source,
-                    })?;
-                resolved
-                    .max_encoded_len(shape, MAX_SHAPE_DEPTH)
-                    .map_err(|source| MetadataError::Slot {
-                        slot: *slot,
-                        source,
-                    })?
-                    .and_then(|most| u32::try_from(most).ok())
+                        source: ShapeFault::Unresolved(*shape),
+                    });
+                }
+                Some(u32::try_from(metadata.types.most(*shape)).unwrap_or(u32::MAX))
             }
         };
-        // A closed shape derives its width, which may be nothing at all
-        // for a leaf whose entry is its own key; the declared figure has
-        // to be that one, or a body could write past what the type
-        // holds. An open shape has to declare one, and zero is no
+        // A shape derives its width, which may be nothing at all for a
+        // leaf whose entry is its own key; the declared figure has to be
+        // that one, or a body could write past what the type holds. A
+        // leaf holding its own bytes has to declare one, and zero is no
         // declaration.
         match derived {
             Some(derived) if derived != declared.width => {
@@ -544,24 +499,18 @@ fn numbered(target: &TargetExpr) -> Option<Numbered> {
     })
 }
 
-/// Every declared shape readable, and every reserved name meaning what
-/// the protocol says it means.
+/// Every reserved name meaning what the protocol says it means.
 ///
-/// The first is what stops a wallet meeting a shape it cannot walk: a
-/// reference to nothing, or a nest past what a decoder will follow. The
-/// second is what makes `address` a fact — a package may declare any type
-/// it likes and may not declare one under the protocol's name for
-/// something else.
-fn check_types(resolved: &mut Resolution<'_>) -> Result<(), MetadataError> {
-    for (name, shape) in resolved.types() {
-        resolved
-            .readable(shape, MAX_SHAPE_DEPTH)
-            .map_err(|source| MetadataError::Type {
-                name: name.clone(),
-                source,
-            })?;
-        if reserved_shape(name).is_some_and(|reserved| reserved != shape) {
-            return Err(MetadataError::ReservedType { name: name.clone() });
+/// What makes `address` a fact — a package may declare any type it likes
+/// and may not declare one under the protocol's name for something else.
+/// That every declared shape is readable needs no check here: a table
+/// that exists was measured node by node as it was built or decoded.
+fn check_types(metadata: &PackageMetadata) -> Result<(), MetadataError> {
+    for (name, id) in metadata.types.names() {
+        if reserved_shape(name).is_some_and(|reserved| !metadata.types.matches(id, reserved)) {
+            return Err(MetadataError::ReservedType {
+                name: name.to_owned(),
+            });
         }
     }
     Ok(())
@@ -569,15 +518,13 @@ fn check_types(resolved: &mut Resolution<'_>) -> Result<(), MetadataError> {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_hbor::{Capped, ShapeFault, ShapeField, ShapeTable, TypeShape};
+    use hyperscale_hbor::{Capped, NodeId, ShapeFault, ShapeNode, ShapeTable, TypeShape};
     use hyperscale_vm_types::Moves;
 
     use super::super::fixtures::{a_resource, one_clause, own_interval, own_point};
     use super::*;
     use crate::dsl::ModeExpr;
-    use crate::metadata::{
-        LeafForm, MAX_SHAPE_DEPTH, PackageMetadata, SlotKind, SlotShape, reserved_shape,
-    };
+    use crate::metadata::{LeafForm, PackageMetadata, SlotKind, SlotShape, reserved_shape};
     use crate::signature::MethodSignature;
     use crate::types::SlotId;
     use crate::vocabulary::VAULT;
@@ -612,71 +559,24 @@ mod tests {
         .collect()
     }
 
-    /// One entry's table, for a shape whose whole content is its own.
+    /// One type's table: `shape` under `name`.
     fn one(name: &str, shape: TypeShape) -> ShapeTable {
-        std::iter::once((name.to_owned(), shape)).collect()
+        let mut types = ShapeTable::new();
+        let shape = types.push(shape).expect("a form the table holds");
+        types
+            .push(TypeShape::Named {
+                name: name.to_owned(),
+                shape,
+            })
+            .expect("one name over one shape");
+        types
     }
 
-    #[test]
-    fn a_shape_reaching_outside_the_package_is_refused() {
-        let types = one(
-            "holder",
-            TypeShape::Struct(vec![ShapeField {
-                name: "held".into(),
-                shape: TypeShape::Ref("elsewhere".into()),
-            }]),
-        );
-        assert_eq!(
-            check_metadata(&declaring(types)),
-            Err(MetadataError::Type {
-                name: "holder".into(),
-                source: ShapeFault::Unresolved("elsewhere".into()),
-            })
-        );
-    }
-
-    #[test]
-    fn a_shape_past_the_cap_is_refused_and_one_at_it_is_not() {
-        let nested =
-            |levels| (0..levels).fold(TypeShape::U8, |inner, _| TypeShape::Option(Box::new(inner)));
-        // The walk spends its budget on the shape's own levels, so the
-        // deepest admissible type is one shallower than the cap.
-        assert_eq!(
-            check_metadata(&declaring(one("deep", nested(MAX_SHAPE_DEPTH - 1)))),
-            Ok(())
-        );
-        assert_eq!(
-            check_metadata(&declaring(one("deep", nested(MAX_SHAPE_DEPTH)))),
-            Err(MetadataError::Type {
-                name: "deep".into(),
-                source: ShapeFault::TooDeep,
-            })
-        );
-    }
-
-    /// A cycle is refused by the bound a deep nest is refused by, because
-    /// it is the same walk running out of the same budget.
-    #[test]
-    fn a_reference_cycle_is_refused() {
-        let holding = |held: &str| {
-            TypeShape::Struct(vec![ShapeField {
-                name: "next".into(),
-                shape: TypeShape::Option(Box::new(TypeShape::Ref(held.to_owned()))),
-            }])
-        };
-        let types = [
-            ("first".to_owned(), holding("second")),
-            ("second".to_owned(), holding("first")),
-        ]
-        .into_iter()
-        .collect();
-        assert!(matches!(
-            check_metadata(&declaring(types)),
-            Err(MetadataError::Type {
-                source: ShapeFault::TooDeep,
-                ..
-            })
-        ));
+    /// A table holding `shape` unnamed, and the node it sits at.
+    fn holding_shape(shape: TypeShape) -> (ShapeTable, NodeId) {
+        let mut types = ShapeTable::new();
+        let id = types.push(shape).expect("a form the table holds");
+        (types, id)
     }
 
     /// An event's name is a promise its payload opens; a name with no
@@ -723,12 +623,12 @@ mod tests {
         );
     }
 
-    /// A slot's element is judged where a declared type is: it names a
-    /// type the same table holds, and a slot reaching outside it would
-    /// be a leaf nobody could read.
+    /// A slot's element names a node the same table holds, and a slot
+    /// reaching outside it would be a leaf nobody could read.
     #[test]
     fn a_slot_reaching_a_type_the_package_lacks_is_refused() {
-        let holding = |element| PackageMetadata {
+        let holding = |types, element| PackageMetadata {
+            types,
             state: std::iter::once((
                 SlotId(17),
                 SlotShape {
@@ -743,24 +643,43 @@ mod tests {
             ..PackageMetadata::default()
         };
         assert_eq!(
-            check_metadata(&holding(LeafForm::Value(TypeShape::Ref("absent".into())))),
+            check_metadata(&holding(ShapeTable::new(), LeafForm::Value(NodeId(3)))),
             Err(MetadataError::Slot {
                 slot: SlotId(17),
-                source: ShapeFault::Unresolved("absent".into()),
+                source: ShapeFault::Unresolved(NodeId(3)),
             })
         );
+        let (types, word) = holding_shape(TypeShape::U64);
+        assert_eq!(
+            check_metadata(&holding(types, LeafForm::Value(word))),
+            Ok(())
+        );
         // Bytes name no type, so there is nothing for them to reach.
-        assert_eq!(check_metadata(&holding(LeafForm::Bytes)), Ok(()));
+        assert_eq!(
+            check_metadata(&holding(ShapeTable::new(), LeafForm::Bytes)),
+            Ok(())
+        );
     }
 
     /// A slot's width is what turns a declared entry cap into a byte
-    /// count, so a slot that states none is refused; a closed shape
-    /// derives its own, including a leaf that holds nothing, and a
-    /// declaration that disagrees with the derivation is one of two
-    /// figures wrong; and no leaf is wider than a leaf may be.
+    /// count, so a slot holding its own bytes that states none is
+    /// refused; a shape derives its own, including a leaf that holds
+    /// nothing, and a declaration that disagrees with the derivation is
+    /// one of two figures wrong; and no leaf is wider than a leaf may be.
     #[test]
     fn a_slot_is_held_to_one_width() {
+        let mut types = ShapeTable::new();
+        let byte = types.push(TypeShape::U8).unwrap();
+        let bytes = types
+            .push(TypeShape::Seq {
+                cap: 63,
+                element: byte,
+            })
+            .unwrap();
+        let word = types.push(TypeShape::U64).unwrap();
+        let unit = types.push(TypeShape::Tuple(Vec::new())).unwrap();
         let holding = |element, width| PackageMetadata {
+            types: types.clone(),
             state: std::iter::once((
                 SlotId(17),
                 SlotShape {
@@ -787,28 +706,27 @@ mod tests {
                 width: MAX_SLOT_WIDTH + 1,
             })
         );
-        let open = LeafForm::Value(TypeShape::Seq(Box::new(TypeShape::U8)));
+        // A run derives its width from its cap: sixty-three bytes behind
+        // one byte of length.
         assert_eq!(
-            check_metadata(&holding(open.clone(), 0)),
-            Err(MetadataError::SlotWidthUndeclared { slot })
+            check_metadata(&holding(LeafForm::Value(bytes), 0)),
+            Err(MetadataError::SlotWidthDisagrees {
+                slot,
+                width: 0,
+                derived: 64,
+            })
         );
-        assert_eq!(check_metadata(&holding(open, 64)), Ok(()));
+        assert_eq!(check_metadata(&holding(LeafForm::Value(bytes), 64)), Ok(()));
         assert_eq!(
-            check_metadata(&holding(LeafForm::Value(TypeShape::U64), 9)),
+            check_metadata(&holding(LeafForm::Value(word), 9)),
             Err(MetadataError::SlotWidthDisagrees {
                 slot,
                 width: 9,
                 derived: 8,
             })
         );
-        assert_eq!(
-            check_metadata(&holding(LeafForm::Value(TypeShape::U64), 8)),
-            Ok(())
-        );
-        assert_eq!(
-            check_metadata(&holding(LeafForm::Value(TypeShape::Tuple(Vec::new())), 0)),
-            Ok(())
-        );
+        assert_eq!(check_metadata(&holding(LeafForm::Value(word), 8)), Ok(()));
+        assert_eq!(check_metadata(&holding(LeafForm::Value(unit), 0)), Ok(()));
     }
 
     /// The state table is what a package declares, and the protocol's
@@ -816,13 +734,15 @@ mod tests {
     /// where the authoring macro refuses the field.
     #[test]
     fn a_slot_outside_the_package_band_is_refused() {
+        let (types, word) = holding_shape(TypeShape::U64);
         let at = |slot| PackageMetadata {
+            types: types.clone(),
             state: std::iter::once((
                 SlotId(slot),
                 SlotShape {
                     name: "held".into(),
                     kind: SlotKind::Cell,
-                    element: LeafForm::Value(TypeShape::U64),
+                    element: LeafForm::Value(word),
                     width: 8,
                     denomination: None,
                 },
@@ -919,20 +839,18 @@ mod tests {
     #[test]
     fn a_reserved_name_over_a_foreign_shape_is_refused() {
         let pinned = reserved_shape("resource-address").expect("the protocol pins it");
+        assert!(matches!(pinned, ShapeNode::Named { .. }));
+        let mut types = ShapeTable::new();
+        types.declare(pinned).expect("the protocol's own shape");
+        assert_eq!(check_metadata(&declaring(types)), Ok(()));
+        let text = TypeShape::Text { cap: 8 };
         assert_eq!(
-            check_metadata(&declaring(one("resource-address", pinned.clone()))),
-            Ok(())
-        );
-        assert_eq!(
-            check_metadata(&declaring(one("resource-address", TypeShape::Text))),
+            check_metadata(&declaring(one("resource-address", text.clone()))),
             Err(MetadataError::ReservedType {
                 name: "resource-address".into(),
             })
         );
         // A name the protocol does not hold is the package's own to spend.
-        assert_eq!(
-            check_metadata(&declaring(one("outcome", TypeShape::Text))),
-            Ok(())
-        );
+        assert_eq!(check_metadata(&declaring(one("outcome", text))), Ok(()));
     }
 }

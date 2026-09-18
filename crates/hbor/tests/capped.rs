@@ -10,8 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use hyperscale_hbor::{
-    Bytes, Capped, DecodeError, Hbor, Overflow, Text, assert_canonical, from_slice,
-    from_slice_with_depth, shape_of, to_vec,
+    Bytes, Capped, DecodeError, Hbor, HborShape, Overflow, ShapeNode, Text, assert_canonical,
+    from_slice, from_slice_with_depth, to_vec,
 };
 
 type Words = Capped<Vec<u32>, 3>;
@@ -183,14 +183,39 @@ fn a_value_past_the_cap_cannot_be_built() {
     assert!(Text::<6>::try_from("日本").is_ok());
 }
 
-/// A capped type describes as the bare type it encodes as.
+/// A capped type describes as the run it encodes as, under its cap.
 #[test]
-fn a_capped_type_shapes_as_its_bare_form() {
-    assert_eq!(shape_of::<Words>(), shape_of::<Vec<u32>>());
-    assert_eq!(shape_of::<Members>(), shape_of::<BTreeSet<u8>>());
-    assert_eq!(shape_of::<Rows>(), shape_of::<BTreeMap<u8, u16>>());
-    assert_eq!(shape_of::<Bytes<4>>(), shape_of::<Vec<u8>>());
-    assert_eq!(shape_of::<Text<5>>(), shape_of::<String>());
+fn a_capped_type_shapes_as_a_run_under_its_cap() {
+    assert_eq!(
+        Words::NODE,
+        &ShapeNode::Seq {
+            cap: 3,
+            element: &ShapeNode::U32
+        }
+    );
+    assert_eq!(
+        Members::NODE,
+        &ShapeNode::Set {
+            cap: 2,
+            element: &ShapeNode::U8
+        }
+    );
+    assert_eq!(
+        Rows::NODE,
+        &ShapeNode::Map {
+            cap: 2,
+            key: &ShapeNode::U8,
+            value: &ShapeNode::U16
+        }
+    );
+    assert_eq!(
+        Bytes::<4>::NODE,
+        &ShapeNode::Seq {
+            cap: 4,
+            element: &ShapeNode::U8
+        }
+    );
+    assert_eq!(Text::<5>::NODE, &ShapeNode::Text { cap: 5 });
 }
 
 /// A capped run charges the level its bare form charges, and text none.

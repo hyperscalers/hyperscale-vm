@@ -2,8 +2,8 @@ state
   the protocol's own — vault, auth, nf-vault
      16  refused — a leaf per key, holding [u8; 1], at most 1 bytes
      17  quarantine — a leaf per key, holding u128, at most 16 bytes
-     18  recovery — one leaf, holding [u8], at most 4098 bytes
-     19  veto — one leaf, holding [u8], at most 4098 bytes
+     18  recovery — one leaf, holding [u8]≤4096, at most 4098 bytes
+     19  veto — one leaf, holding [u8]≤4096, at most 4098 bytes
      20  proposal — one leaf, holding proposal, at most 12312 bytes
      21  delay_ms — one leaf, holding u64, at most 8 bytes
      22  serials — one leaf, holding u64, at most 8 bytes
@@ -23,7 +23,7 @@ types
   enacted = { serial: u64 }
   proposal = { serial: u64, effective_at_ms: u64, replaces: replacement }
   proposed = { serial: u64, effective_at_ms: u64 }
-  replacement = < 0 factors{ primary: [u8], confirmation: [u8], frozen: [u8]? } | 1 roles{ recovery: [u8], veto: [u8], delay_ms: u64 } >
+  replacement = < 0 factors{ primary: [u8]≤4096, confirmation: [u8]≤4096, frozen: [u8]≤4096? } | 1 roles{ recovery: [u8]≤4096, veto: [u8]≤4096, delay_ms: u64 } >
   withdrawn = { amount: u128 }
 
 accept(resource-address) — infallible

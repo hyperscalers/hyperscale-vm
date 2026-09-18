@@ -49,7 +49,7 @@
 //! clause follows from calling one.
 
 use hyperscale_hbor::{
-    DEFAULT_MAX_DEPTH, Hbor, HborDecode, HborEncode, HborShape, ShapeRegistry, TypeShape,
+    Bytes, DEFAULT_MAX_DEPTH, Hbor, HborDecode, HborEncode, HborShape, ShapeNode,
     from_slice_with_depth, to_vec_with_depth,
 };
 /// The record a resource's cell holds, in the shape a client reads.
@@ -58,7 +58,7 @@ use hyperscale_hbor::{
 /// `create` on the record handle states at most a display width, and the
 /// kind comes from the mark's own declaration.
 pub use hyperscale_vm_effects::ResourceRecord;
-use hyperscale_vm_effects::{AUTHORITY_WIRE_DEPTH, Authority, LeafForm, RECORD_WIRE_DEPTH};
+use hyperscale_vm_effects::{AUTHORITY_WIRE_DEPTH, Authority, RECORD_WIRE_DEPTH};
 /// The stored-authority vocabulary, named where a body's words live.
 ///
 /// A rule parameter is [`RuleBytes`] — the same type a cell holds, so a
@@ -212,7 +212,20 @@ impl<K, V> Table<K, V> {
 /// kernel's rather than a body's to read and write.
 pub trait LeafShape {
     /// What one leaf holds.
-    fn leaf_form(types: &mut ShapeRegistry) -> LeafForm;
+    const LEAF: LeafContent;
+}
+
+/// What one leaf holds, as the type holding it states.
+///
+/// A value's leaf is its shape, which the declaration publishes under
+/// the package's types; a byte leaf holds its own bytes, delimited by
+/// the substate and by nothing inside it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LeafContent {
+    /// One canonical encoding of this shape.
+    Value(&'static ShapeNode),
+    /// The leaf's own bytes, and no encoding around them.
+    Bytes,
 }
 
 /// A value a declared cell or entry can hold.
@@ -314,9 +327,7 @@ impl Record for u64 {
 }
 
 impl LeafShape for u128 {
-    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(TypeShape::U128)
-    }
+    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::U128);
 }
 
 /// How a rule crosses as an argument: the bytes themselves, since a
@@ -332,12 +343,18 @@ impl LeafShape for u128 {
 /// of a rule cell produces and a bare `Cell<RuleBytes>` would hold bytes
 /// no gate could read.
 impl Cellular for RuleBytes {
+    /// # Panics
+    ///
+    /// On a cell wider than a rule argument may be. Only the package
+    /// owning the cell writes it, and it writes what it was handed under
+    /// that cap, so wider bytes are a defect in state rather than in the
+    /// call that found them.
     fn from_cell(cell: &[u8]) -> Self {
-        Self(cell.to_vec())
+        Self(Bytes::try_from(cell).expect("a rule cell inside the argument cap"))
     }
 
     fn to_cell(&self) -> Vec<u8> {
-        self.0.clone()
+        self.0.to_vec()
     }
 }
 
@@ -348,12 +365,16 @@ impl Cellular for RuleBytes {
 /// nothing, and says at the call site that the narrowing was the
 /// parameter's rather than the cell's.
 impl Cellular for PrincipalRule {
+    /// # Panics
+    ///
+    /// As [`RuleBytes::from_cell`](Cellular::from_cell): on a cell wider
+    /// than a rule argument may be.
     fn from_cell(cell: &[u8]) -> Self {
-        Self(cell.to_vec())
+        Self(Bytes::try_from(cell).expect("a rule cell inside the argument cap"))
     }
 
     fn to_cell(&self) -> Vec<u8> {
-        self.0.clone()
+        self.0.to_vec()
     }
 }
 
@@ -385,9 +406,7 @@ impl Cellular for u128 {
 }
 
 impl LeafShape for OrderKey {
-    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(TypeShape::U128)
-    }
+    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::U128);
 }
 
 /// The same sixteen little-endian bytes the packed integer is, because a
@@ -404,9 +423,7 @@ impl Cellular for OrderKey {
 }
 
 impl LeafShape for Quantity {
-    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(TypeShape::U128)
-    }
+    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::U128);
 }
 
 impl Cellular for Quantity {
@@ -423,9 +440,7 @@ impl Cellular for Quantity {
 }
 
 impl<A, B> LeafShape for Fixed<A, B> {
-    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(TypeShape::ByteArray(32))
-    }
+    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::ByteArray(32));
 }
 
 impl<A, B> Cellular for Fixed<A, B> {
@@ -464,9 +479,7 @@ impl<A, B> Cellular for Fixed<A, B> {
 }
 
 impl<A, B> LeafShape for SignedFixed<A, B> {
-    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(TypeShape::ByteArray(32))
-    }
+    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::ByteArray(32));
 }
 
 /// The same thirty-two little-endian bytes an unsigned rate has, read as
@@ -488,9 +501,7 @@ impl<A, B> Cellular for SignedFixed<A, B> {
 }
 
 impl LeafShape for UnitFixed {
-    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(TypeShape::U128)
-    }
+    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::U128);
 }
 
 impl Cellular for UnitFixed {
@@ -528,9 +539,7 @@ impl Cellular for UnitFixed {
 }
 
 impl LeafShape for u64 {
-    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(TypeShape::U64)
-    }
+    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::U64);
 }
 
 impl Cellular for u64 {
@@ -550,9 +559,7 @@ impl Cellular for u64 {
 }
 
 impl LeafShape for bool {
-    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(TypeShape::ByteArray(1))
-    }
+    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::ByteArray(1));
 }
 
 /// One byte, and only ever one of two.
@@ -593,9 +600,7 @@ impl Cellular for bool {
 }
 
 impl LeafShape for Address {
-    fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(Self::shape(types))
-    }
+    const LEAF: LeafContent = LeafContent::Value(<Self as HborShape>::NODE);
 }
 
 impl Cellular for Address {
@@ -625,9 +630,7 @@ impl Cellular for Address {
 /// unit collection holds no value, so the instance operations live on
 /// [`NfVault`] and not here.
 impl LeafShape for () {
-    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(TypeShape::Tuple(Vec::new()))
-    }
+    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::Tuple(&[]));
 }
 
 impl Cellular for () {
@@ -641,17 +644,11 @@ impl Cellular for () {
 /// Bytes a caller supplied or a package stored, which the substate frames
 /// and nothing inside frames again.
 impl LeafShape for Vec<u8> {
-    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Bytes
-    }
+    const LEAF: LeafContent = LeafContent::Bytes;
 }
 
 impl<const N: usize> LeafShape for [u8; N] {
-    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(TypeShape::ByteArray(
-            u32::try_from(N).expect("a cell is far shorter than u32"),
-        ))
-    }
+    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::ByteArray(N));
 }
 
 /// Exact-width bytes: the width is the type's, so a parameter spelled
@@ -698,7 +695,7 @@ pub const WORD_BYTES: usize = 32;
 /// a package carrying it as a byte list would be restating a fact it was
 /// never told and checking it at runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor, HborShape)]
-#[hbor(transparent, infallible)]
+#[hbor(transparent, length_free)]
 pub struct Word([u8; WORD_BYTES]);
 
 impl Word {
@@ -738,9 +735,7 @@ impl Word {
 }
 
 impl LeafShape for Word {
-    fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(<[u8; WORD_BYTES] as HborShape>::shape(types))
-    }
+    const LEAF: LeafContent = LeafContent::Value(<[u8; WORD_BYTES] as HborShape>::NODE);
 }
 
 impl Cellular for Word {
@@ -1748,11 +1743,9 @@ impl Record for ResourceRecord {
 /// As the unit entry: presence is the whole of what a holdings entry
 /// says, so there is nothing to write and nothing to decode.
 impl LeafShape for NfVault {
-    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
-        // An instance's id is the entry's own order key, so the entry
-        // holds nothing.
-        LeafForm::Value(TypeShape::Tuple(Vec::new()))
-    }
+    // An instance's id is the entry's own order key, so the entry
+    // holds nothing.
+    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::Tuple(&[]));
 }
 
 impl Cellular for NfVault {
@@ -1769,55 +1762,41 @@ impl Cellular for NfVault {
 /// leaf every `Cellular` reads as its zero, so there is no discriminant
 /// byte in the cell for a shape to name.
 impl<T: LeafShape> LeafShape for Option<T> {
-    fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
-        T::leaf_form(types)
-    }
+    const LEAF: LeafContent = T::LEAF;
 }
 
 /// A seal's leaf: the epoch the kernel recorded, and nothing a package
 /// wrote. Not a [`Record`], so it states its own leaf rather than
 /// reaching one through an encoding it does not have.
 impl LeafShape for Seal {
-    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(TypeShape::U64)
-    }
+    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::U64);
 }
 
 /// A record's leaf is the record's own encoding.
 impl LeafShape for RuleBytes {
-    fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(Self::shape(types))
-    }
+    const LEAF: LeafContent = LeafContent::Value(<Self as HborShape>::NODE);
 }
 
 /// Likewise the governing record.
 impl LeafShape for Authority {
-    fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(Self::shape(types))
-    }
+    const LEAF: LeafContent = LeafContent::Value(<Self as HborShape>::NODE);
 }
 
 /// The same bytes, so the same leaf. Stated because [`Cellular`] asks
 /// for it and a parameter crosses through that; a cell holding a rule is
 /// declared [`RuleBytes`], which is what the gate grammar reads.
 impl LeafShape for PrincipalRule {
-    fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(Self::shape(types))
-    }
+    const LEAF: LeafContent = LeafContent::Value(<Self as HborShape>::NODE);
 }
 
 impl LeafShape for ResourceRecord {
-    fn leaf_form(types: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(Self::shape(types))
-    }
+    const LEAF: LeafContent = LeafContent::Value(<Self as HborShape>::NODE);
 }
 
 /// A vault leaf holds the kernel's own amount, which is why nothing here
 /// writes one: the balance moves through an edge and never through a set.
 impl LeafShape for Vault {
-    fn leaf_form(_: &mut ShapeRegistry) -> LeafForm {
-        LeafForm::Value(TypeShape::U128)
-    }
+    const LEAF: LeafContent = LeafContent::Value(&ShapeNode::U128);
 }
 
 #[allow(clippy::inline_always)] // the accessor is one import behind a dispatch its call site fixes
@@ -2639,9 +2618,10 @@ impl From<u128> for OrderKey {
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_hbor::ShapeNode;
+
     use super::{
-        Cellular, Fixed, LeafForm, LeafShape, OrderKey, Quantity, ShapeRegistry, SignedFixed,
-        TypeShape, UnitFixed, Wide,
+        Cellular, Fixed, LeafContent, LeafShape, OrderKey, Quantity, SignedFixed, UnitFixed, Wide,
     };
 
     /// A dimension, for the rates that need two of them.
@@ -2680,8 +2660,8 @@ mod tests {
         assert_eq!(UnitFixed::from_cell(&written.to_cell()), written);
         assert_eq!(written.to_cell().len(), 16);
         assert!(matches!(
-            UnitFixed::leaf_form(&mut ShapeRegistry::default()),
-            LeafForm::Value(TypeShape::U128)
+            UnitFixed::LEAF,
+            LeafContent::Value(ShapeNode::U128)
         ));
 
         for width in [1, 15, 17, 32] {

@@ -62,18 +62,18 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
         }
     });
     let signed = signing::derive(input, &attrs)?;
-    // Claimed rather than inferred: the impl bounds every field, so a
-    // field that carries a length refuses here by name rather than
-    // through a walk that cannot see past an alias.
-    let infallible = attrs.infallible.then(|| {
-        let bounds = bounds(input, &quote!(__hbor::HborInfallible));
-        let max_len = max_encoded_len(&input.data);
+    // Claimed rather than inferred: the shape a field is written in is
+    // not always the shape it has, so the claim is checked field by
+    // field below rather than walked for.
+    let length_free = attrs.length_free.then(|| {
+        let bounds = bounds(input, &quote!(__hbor::LengthFree));
+        let held = length_free_fields(input);
         quote! {
             #[automatically_derived]
-            impl #impl_generics __hbor::HborInfallible for #name #type_generics
-            #where_clause #bounds {
-                const MAX_ENCODED_LEN: usize = #max_len;
-            }
+            impl #impl_generics __hbor::LengthFree for #name #type_generics
+            #where_clause #bounds {}
+
+            #held
         }
     });
 
@@ -117,7 +117,7 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
         }
 
         #signed
-        #infallible
+        #length_free
         };
     })
 }
@@ -381,36 +381,40 @@ fn width_reaches(ty: &Type, this: &Ident) -> bool {
     }
 }
 
-/// The most bytes this type's encoding can occupy, as a const
-/// expression over its fields' own bounds.
+/// One check per wire field, holding its type to `LengthFree`.
 ///
-/// A struct is the sum of its fields. An enum is its discriminant plus
-/// the widest variant, which needs a comparison a const context can run —
-/// hence the fold rather than an iterator's `max`.
-fn max_encoded_len(data: &Data) -> TokenStream {
-    let sum = |fields: &Fields| {
-        let terms = fields.iter().map(|field| {
-            let ty = &field.ty;
-            quote!(+ <#ty as __hbor::HborInfallible>::MAX_ENCODED_LEN)
-        });
-        quote!(0 #(#terms)*)
+/// Written as a call rather than a `where` predicate because a bound on
+/// a concrete type is reported at the impl, where a turbofish is
+/// reported at the type the caller wrote — and the type a field carries
+/// is the one an author has to change.
+fn length_free_fields(input: &DeriveInput) -> TokenStream {
+    let fields: Vec<&Field> = match &input.data {
+        Data::Struct(data) => data.fields.iter().collect(),
+        Data::Enum(data) => data
+            .variants
+            .iter()
+            .flat_map(|variant| variant.fields.iter())
+            .collect(),
+        Data::Union(_) => Vec::new(),
     };
-    match data {
-        Data::Struct(data) => sum(&data.fields),
-        Data::Enum(data) => {
-            let widest = data
-                .variants
-                .iter()
-                .fold(quote!(0usize), |so_far, variant| {
-                    let variant = sum(&variant.fields);
-                    quote!({
-                        let (a, b) = (#so_far, #variant);
-                        if a > b { a } else { b }
-                    })
-                });
-            quote!(1 + #widest)
+    let checks = fields.into_iter().filter_map(|field| {
+        if FieldAttrs::parse(&field.attrs).is_ok_and(|attrs| attrs.skip) {
+            return None;
         }
-        Data::Union(_) => quote!(0),
+        let ty = &field.ty;
+        Some(quote!(held::<#ty>();))
+    });
+    let (impl_generics, _, where_clause) = input.generics.split_for_impl();
+    let bounds = bounds(input, &quote!(__hbor::LengthFree));
+    quote! {
+        const _: () = {
+            fn held<__T: __hbor::LengthFree + ?Sized>() {}
+
+            #[allow(dead_code)] // the call sites are the check
+            fn fields #impl_generics () #where_clause #bounds {
+                #(#checks)*
+            }
+        };
     }
 }
 

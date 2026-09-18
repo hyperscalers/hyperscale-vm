@@ -401,7 +401,7 @@ fn impostor_body(
             // as bytes like any record.
             let rule = RuleBytes::try_from(&StoredRule::claim(Claim::of_subject(ATTACKER)))
                 .expect("a rule within the caps");
-            if let Err(trap) = session.write_cell_set(*auth, 0, rule.0) {
+            if let Err(trap) = session.write_cell_set(*auth, 0, rule.0.into()) {
                 return (session, Invoked::Aborted(trap.into()));
             }
             // Possession is the half that is not: a vault holds value.

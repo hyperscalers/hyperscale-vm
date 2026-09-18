@@ -4,6 +4,10 @@
 //! order, so what a consumer is told and what the encoder writes are one
 //! derivation. Where the codec descends, the shape nests; where the codec
 //! skips a field, the shape has nothing to say about it.
+//!
+//! What is emitted is a static tree: one `const` naming the fields' own
+//! constants, which is the form a generic impl can state and a type that
+//! reaches itself cannot.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -25,7 +29,7 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
     let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
     let shape_bounds = bounds(input, &quote!(__hbor::HborShape));
 
-    let body = match &input.data {
+    let node = match &input.data {
         Data::Struct(data) => {
             if attrs.transparent {
                 transparent(&data.fields)?
@@ -33,11 +37,10 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
                 let content = fields(&data.fields)?;
                 let declared = kebab(&name.to_string());
                 quote! {
-                    types.nominal(
-                        #declared,
-                        ::core::any::type_name::<Self>(),
-                        |types| #content,
-                    )
+                    &__hbor::ShapeNode::Named {
+                        name: #declared,
+                        shape: #content,
+                    }
                 }
             }
         }
@@ -52,21 +55,14 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
             for (variant, tag) in data.variants.iter().zip(variant_tags(data)?) {
                 let variant_name = kebab(&variant.ident.to_string());
                 let content = fields(&variant.fields)?;
-                variants.extend(quote! {
-                    __hbor::ShapeVariant {
-                        name: ::std::string::ToString::to_string(#variant_name),
-                        discriminant: #tag,
-                        content: #content,
-                    },
-                });
+                variants.extend(quote!((#variant_name, #tag, #content),));
             }
             let declared = kebab(&name.to_string());
             quote! {
-                types.nominal(
-                    #declared,
-                    ::core::any::type_name::<Self>(),
-                    |types| __hbor::TypeShape::Enum(::std::vec![#variants]),
-                )
+                &__hbor::ShapeNode::Named {
+                    name: #declared,
+                    shape: &__hbor::ShapeNode::Enum(&[#variants]),
+                }
             }
         }
         Data::Union(_) => {
@@ -85,9 +81,7 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
         #[automatically_derived]
         impl #impl_generics __hbor::HborShape for #name #type_generics
         #where_clause #shape_bounds {
-            fn shape(types: &mut __hbor::ShapeRegistry) -> __hbor::TypeShape {
-                #body
-            }
+            const NODE: &'static __hbor::ShapeNode = #node;
         }
         };
     })
@@ -104,10 +98,10 @@ fn transparent(fields: &Fields) -> Result<TokenStream> {
         ));
     };
     let ty = &field.ty;
-    Ok(quote!(<#ty as __hbor::HborShape>::shape(types)))
+    Ok(quote!(<#ty as __hbor::HborShape>::NODE))
 }
 
-/// The shape of a set of fields: named, positional, or none at all.
+/// The node of a set of fields: named, positional, or none at all.
 ///
 /// A skipped field is not on the wire, so it is not in the shape either —
 /// a consumer told about one would read a value the bytes do not hold.
@@ -118,31 +112,26 @@ fn fields(fields: &Fields) -> Result<TokenStream> {
             on_the_wire.push(field);
         }
     }
-    let shapes = on_the_wire
+    let nodes = on_the_wire
         .iter()
         .map(|field| {
             let ty = &field.ty;
-            quote!(<#ty as __hbor::HborShape>::shape(types))
+            quote!(<#ty as __hbor::HborShape>::NODE)
         })
         .collect::<Vec<_>>();
     Ok(match fields {
         Fields::Named(_) => {
-            let entries = on_the_wire.iter().zip(shapes).map(|(field, shape)| {
+            let entries = on_the_wire.iter().zip(nodes).map(|(field, node)| {
                 let name = field
                     .ident
                     .as_ref()
                     .map_or_else(String::new, ToString::to_string);
-                quote! {
-                    __hbor::ShapeField {
-                        name: ::std::string::ToString::to_string(#name),
-                        shape: #shape,
-                    }
-                }
+                quote!((#name, #node))
             });
-            quote!(__hbor::TypeShape::Struct(::std::vec![#(#entries),*]))
+            quote!(&__hbor::ShapeNode::Struct(&[#(#entries),*]))
         }
         Fields::Unnamed(_) | Fields::Unit => {
-            quote!(__hbor::TypeShape::Tuple(::std::vec![#(#shapes),*]))
+            quote!(&__hbor::ShapeNode::Tuple(&[#(#nodes),*]))
         }
     })
 }

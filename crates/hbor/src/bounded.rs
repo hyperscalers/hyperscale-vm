@@ -180,7 +180,7 @@ pub const fn check_encoded_len(
     Ok(())
 }
 
-const fn check(claimed: usize, max: usize) -> Result<usize, DecodeError> {
+pub(crate) const fn check(claimed: usize, max: usize) -> Result<usize, DecodeError> {
     if claimed > max {
         return Err(DecodeError::BoundExceeded {
             max,
