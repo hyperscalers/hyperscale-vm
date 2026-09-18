@@ -565,6 +565,17 @@ impl<const N: usize> Bytes<N> {
         self.0.iter_mut()
     }
 
+    /// Append `byte`, where the cap has room for it.
+    ///
+    /// # Errors
+    ///
+    /// [`Overflow`] where the string is already at `N`.
+    pub fn push(&mut self, byte: u8) -> Result<(), Overflow> {
+        within(self.0.len() + 1, N)?;
+        self.0.push(byte);
+        Ok(())
+    }
+
     /// Keep the first `len` bytes.
     pub fn truncate(&mut self, len: usize) {
         self.0.truncate(len);

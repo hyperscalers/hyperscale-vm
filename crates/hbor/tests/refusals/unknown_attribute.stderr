@@ -1,4 +1,4 @@
-error: unknown hbor attribute; a field takes `max = N`, `unsigned`, or `skip`
+error: unknown hbor attribute; a field takes `unsigned` or `skip`
  --> tests/refusals/unknown_attribute.rs:5:12
   |
 5 |     #[hbor(flatten)]

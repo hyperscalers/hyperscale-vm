@@ -160,26 +160,6 @@ pub fn decode_bounded_btree_map<K: HborDecode + Ord, V: HborDecode>(
     Ok(out)
 }
 
-/// Refuse an encode whose value outgrew the bound its field declares.
-///
-/// The derive calls this before writing a capped field. A value can only
-/// reach here past its bound by being built past it, so this is the encoder
-/// refusing to emit bytes its own decoder would reject.
-///
-/// # Errors
-///
-/// [`EncodeError::BoundExceeded`] past `max`.
-pub const fn check_encoded_len(
-    field: &'static str,
-    actual: usize,
-    max: usize,
-) -> Result<(), EncodeError> {
-    if actual > max {
-        return Err(EncodeError::BoundExceeded { field, actual, max });
-    }
-    Ok(())
-}
-
 pub(crate) const fn check(claimed: usize, max: usize) -> Result<usize, DecodeError> {
     if claimed > max {
         return Err(DecodeError::BoundExceeded {

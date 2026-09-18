@@ -70,7 +70,6 @@ pub struct FieldAttrs {
     /// The largest length this field may carry, as any `usize` constant
     /// expression. Protocol caps are named constants, so a literal-only
     /// attribute would force the number to be written twice.
-    pub(crate) max: Option<Expr>,
     /// Held out of the signing preimage. The field still rides the wire —
     /// a signature and the key that verifies it are transmitted, they just
     /// cannot be part of what they cover.
@@ -78,28 +77,6 @@ pub struct FieldAttrs {
     /// Not on the wire at all: encode writes nothing, decode fills
     /// `Default::default()`. For in-memory caches riding a wire type.
     pub(crate) skip: bool,
-}
-
-/// The collection shape of a field's type, as written.
-///
-/// Resolution is syntactic: an alias hiding a `Vec` reads as [`Shape::Opaque`]
-/// and takes the generic path, which is correct but declines the fast path
-/// and cannot host a cap. Naming the type is the fix, and the diagnostic for
-/// a cap on an opaque type says so.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Shape {
-    /// `Vec<u8>` — read and written in one copy.
-    Bytes,
-    /// `Vec<T>` for some other `T`.
-    Sequence,
-    /// `String`.
-    Text,
-    /// `BTreeSet<T>`.
-    Set,
-    /// `BTreeMap<K, V>`.
-    Map,
-    /// Anything else, including an alias.
-    Opaque,
 }
 
 impl TypeAttrs {
@@ -182,10 +159,6 @@ impl FieldAttrs {
         let mut out = Self::default();
         for attr in attrs.iter().filter(|a| a.path().is_ident("hbor")) {
             attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("max") {
-                    out.max = Some(meta.value()?.parse()?);
-                    return Ok(());
-                }
                 if meta.path.is_ident("unsigned") {
                     out.unsigned = true;
                     return Ok(());
@@ -194,80 +167,28 @@ impl FieldAttrs {
                     out.skip = true;
                     return Ok(());
                 }
-                Err(meta.error(
-                    "unknown hbor attribute; a field takes `max = N`, `unsigned`, or `skip`",
-                ))
+                Err(meta.error("unknown hbor attribute; a field takes `unsigned` or `skip`"))
             })?;
         }
         Ok(out)
     }
 }
 
-/// Classify a field's type by how it is written.
+/// Whether `ty` is written as one run of bytes.
+///
+/// The codec's one fast path: `Vec<u8>` reads and writes in a single
+/// copy where a generic sequence walks per element. Resolution is
+/// syntactic, so an alias hiding a `Vec<u8>` takes the generic path,
+/// which is correct and slower.
 #[must_use]
-pub fn shape(ty: &Type) -> Shape {
+pub fn writes_bytes(ty: &Type) -> bool {
     let Type::Path(path) = ty else {
-        return Shape::Opaque;
+        return false;
     };
     let Some(segment) = path.path.segments.last() else {
-        return Shape::Opaque;
+        return false;
     };
-    match segment.ident.to_string().as_str() {
-        "String" => Shape::Text,
-        "BTreeSet" => Shape::Set,
-        "BTreeMap" => Shape::Map,
-        "Vec" => {
-            if first_type_argument(&segment.arguments).is_some_and(is_u8) {
-                Shape::Bytes
-            } else {
-                Shape::Sequence
-            }
-        }
-        _ => Shape::Opaque,
-    }
-}
-
-/// Where a capped field's collection sits relative to the written type.
-///
-/// `max` reaches through the containers that add nothing of their own to
-/// the wire: an `Arc` or `Box` is pure forwarding, and an `Option`'s
-/// payload is the collection when present. Resolution stays syntactic —
-/// exactly one named container layer, never a type-system walk — so an
-/// alias still reads as opaque.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum CapSite {
-    /// The field is the collection itself.
-    Direct(Shape),
-    /// `Arc<C>` — rebuilt with `Arc::new` on decode.
-    Shared(Shape),
-    /// `Box<C>` — rebuilt with `Box::new` on decode.
-    Boxed(Shape),
-    /// `Option<C>` — the cap applies to the payload when present.
-    Optional(Shape),
-}
-
-/// Resolve where a cap on `ty` lands, or `None` when no collection is
-/// written where the emitter can see one.
-#[must_use]
-pub fn cap_site(ty: &Type) -> Option<CapSite> {
-    let direct = shape(ty);
-    if direct != Shape::Opaque {
-        return Some(CapSite::Direct(direct));
-    }
-    let Type::Path(path) = ty else {
-        return None;
-    };
-    let segment = path.path.segments.last()?;
-    let inner = first_type_argument(&segment.arguments).map(shape)?;
-    if inner == Shape::Opaque {
-        return None;
-    }
-    match segment.ident.to_string().as_str() {
-        "Arc" => Some(CapSite::Shared(inner)),
-        "Box" => Some(CapSite::Boxed(inner)),
-        "Option" => Some(CapSite::Optional(inner)),
-        _ => None,
-    }
+    segment.ident == "Vec" && first_type_argument(&segment.arguments).is_some_and(is_u8)
 }
 
 /// Reject the types that have no canonical encoding, with the reason.

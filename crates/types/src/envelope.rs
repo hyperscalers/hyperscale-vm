@@ -21,7 +21,7 @@
 use core::fmt;
 
 use hyperscale_hbor::hash::Hasher;
-use hyperscale_hbor::{Bytes, Capped, EncodeError, Hash32, Hbor, HborSigned};
+use hyperscale_hbor::{Bytes, Capped, EncodeError, Hash32, Hbor, HborBound, HborShape, HborSigned};
 
 use crate::address::PrincipalAddr;
 use crate::amount::Quanta;
@@ -56,16 +56,8 @@ pub const MAX_MESSAGE_LEN: usize = 1024;
 /// widest registered scheme, and the scalars.
 ///
 /// What a decoder allocates for the envelope as the network carries it,
-/// derived from the caps inside it so it moves when they do.
-pub const MAX_ENVELOPE_BYTES: usize = MAX_TREE_BYTES
-    + MAX_ARTIFACT_BYTES
-    + MAX_TERMS_BYTES
-    + MAX_ATTESTATIONS * MAX_ATTESTATION_BYTES
-    + 256;
-
-/// The widest the terms encode: one ceiling per manifest node, the
-/// message at its cap, and the scalars.
-pub const MAX_TERMS_BYTES: usize = MAX_MANIFEST_NODES * 9 + MAX_MESSAGE_LEN + 128;
+/// read off the envelope's own shape so nothing here restates a field.
+pub const MAX_ENVELOPE_BYTES: usize = <TransactionEnvelope as HborBound>::MAX_ENCODED_LEN;
 
 /// How long a transaction-derived artifact outlives the signed window it
 /// was derived from, in milliseconds.
@@ -138,7 +130,10 @@ pub const MAX_TX_ATTESTATIONS: usize = 2 * MAX_INTENTS;
 
 /// The widest one attestation encodes: the key and the signature at the
 /// widest registered scheme, and the scalars around them.
-pub const MAX_ATTESTATION_BYTES: usize = MAX_KEY_BYTES + MAX_SIG_BYTES + 16;
+///
+/// Read off [`Attestation`]'s own shape, so it moves when a field or a
+/// scheme width does.
+pub const MAX_ATTESTATION_BYTES: usize = <Attestation as HborBound>::MAX_ENCODED_LEN;
 
 /// The cap on a tree's bytes as an envelope carries it: the calls,
 /// wiring and records at [`MAX_CALL_BYTES`], plus every attestation the
@@ -247,7 +242,7 @@ pub struct NetworkId(pub u8);
 /// principal the key derives, declared in the intent, so a signature
 /// re-keyed or re-tagged afterwards derives another principal and is
 /// refused against the declaration.
-#[derive(Debug, Clone, PartialEq, Eq, Hbor)]
+#[derive(Debug, Clone, PartialEq, Eq, Hbor, HborShape)]
 pub struct Attestation {
     /// The scheme the key and signature below belong to.
     pub scheme: SchemeId,
@@ -272,7 +267,7 @@ pub struct Attestation {
 /// the root's own header. Beside the tree rather than inside any
 /// intent: nothing reads terms on a member, and a signed field nothing
 /// reads is a field a composer could be made to sign for nothing.
-#[derive(Debug, Clone, PartialEq, Eq, Hbor)]
+#[derive(Debug, Clone, PartialEq, Eq, Hbor, HborShape)]
 pub struct Terms {
     /// The fee-paying account.
     pub fee_payer: PrincipalAddr,
@@ -333,7 +328,7 @@ impl Terms {
 /// fresh key. The attestations are transport, on the terms
 /// [`Attestation`] states: what they pair with is the principals the
 /// root intent declares itself attested by, which the tree signs.
-#[derive(Debug, Clone, PartialEq, Eq, Hbor)]
+#[derive(Debug, Clone, PartialEq, Eq, Hbor, HborShape)]
 #[hbor(signing_domain = "hyperscale-vm-envelope-v4")]
 pub struct TransactionEnvelope {
     /// The tree, canonically encoded; the effect vocabulary owns the

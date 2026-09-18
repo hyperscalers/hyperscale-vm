@@ -4,13 +4,11 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::spanned::Spanned;
 use syn::{
-    Data, DataEnum, DeriveInput, Error, Expr, Field, Fields, GenericArgument, Ident, Index,
+    Data, DataEnum, DeriveInput, Error, Field, Fields, GenericArgument, Ident, Index,
     PathArguments, Result, Type,
 };
 
-use crate::attrs::{
-    CapSite, FieldAttrs, Shape, TypeAttrs, VariantAttrs, cap_site, reject_unencodable, shape,
-};
+use crate::attrs::{FieldAttrs, TypeAttrs, VariantAttrs, reject_unencodable, writes_bytes};
 use crate::signing;
 
 /// Emit both impls for `input`.
@@ -182,44 +180,7 @@ pub fn encode_fields(
             continue;
         }
         let value = access.get(index, field.ident.as_ref());
-        let label = field
-            .ident
-            .as_ref()
-            .map_or_else(|| index.to_string(), ToString::to_string);
-
-        if let Some(max) = &attrs.max {
-            let Some(site) = cap_site(&field.ty) else {
-                return Err(capped_opaque(&field.ty));
-            };
-            match site {
-                // `Arc` and `Box` deref to the collection, so the length
-                // check and the write both reach through unchanged.
-                CapSite::Direct(inner) | CapSite::Shared(inner) | CapSite::Boxed(inner) => {
-                    out.extend(quote! {
-                        __hbor::bounded::check_encoded_len(
-                            #label, (#value).len(), #max,
-                        )?;
-                    });
-                    out.extend(write_expression(inner, &value));
-                }
-                // The cap applies to the payload when present; the write is
-                // the plain `Option` encoding, so the two spellings of a
-                // `Some` produce the same bytes at the same depth.
-                CapSite::Optional(_) => {
-                    out.extend(quote! {
-                        if let ::core::option::Option::Some(inner) = #value {
-                            __hbor::bounded::check_encoded_len(
-                                #label, inner.len(), #max,
-                            )?;
-                        }
-                        encoder.nested(#value)?;
-                    });
-                }
-            }
-            continue;
-        }
-
-        out.extend(write_expression(shape(&field.ty), &value));
+        out.extend(write_expression(&field.ty, &value));
     }
     Ok(out)
 }
@@ -241,7 +202,7 @@ fn decode_fields(fields: &Fields, constructor: &TokenStream) -> Result<TokenStre
             continue;
         }
         reject_unencodable(&field.ty)?;
-        let read = read_expression(ty, attrs.max.as_ref())?;
+        let read = read_expression(ty);
         reads.extend(quote! { let #name: #ty = #read; });
         names.push(name);
     }
@@ -257,9 +218,9 @@ fn decode_fields(fields: &Fields, constructor: &TokenStream) -> Result<TokenStre
     Ok(quote! {{ #reads #build }})
 }
 
-/// The write for an uncapped or length-checked field body.
-fn write_expression(shape: Shape, value: &TokenStream) -> TokenStream {
-    if shape == Shape::Bytes {
+/// The write for one field's body.
+fn write_expression(ty: &Type, value: &TokenStream) -> TokenStream {
+    if writes_bytes(ty) {
         quote! {
             encoder.descend(|encoder| {
                 __hbor::bounded::encode_bytes(encoder, #value)
@@ -270,84 +231,12 @@ fn write_expression(shape: Shape, value: &TokenStream) -> TokenStream {
     }
 }
 
-fn read_expression(ty: &Type, max: Option<&Expr>) -> Result<TokenStream> {
-    let Some(max) = max else {
-        return Ok(if shape(ty) == Shape::Bytes {
-            quote!(decoder.descend(__hbor::bounded::decode_bytes)?)
-        } else {
-            quote!(decoder.nested()?)
-        });
-    };
-
-    let Some(site) = cap_site(ty) else {
-        return Err(capped_opaque(ty));
-    };
-    // Every arm charges exactly what the uncapped spelling of the same
-    // type charges: one level for the field, with the bounded readers
-    // supplying the element level internally, plus one for an `Option`'s
-    // payload — the level `Option`'s own impl spends on `nested`.
-    Ok(match site {
-        CapSite::Direct(inner) => {
-            let reader = bounded_reader(inner);
-            quote! {
-                decoder.descend(|decoder| __hbor::bounded::#reader(decoder, #max))?
-            }
-        }
-        CapSite::Shared(inner) => {
-            let reader = bounded_reader(inner);
-            quote! {
-                decoder.descend(|decoder| {
-                    ::core::result::Result::Ok(::std::sync::Arc::new(
-                        __hbor::bounded::#reader(decoder, #max)?,
-                    ))
-                })?
-            }
-        }
-        CapSite::Boxed(inner) => {
-            let reader = bounded_reader(inner);
-            quote! {
-                decoder.descend(|decoder| {
-                    ::core::result::Result::Ok(::std::boxed::Box::new(
-                        __hbor::bounded::#reader(decoder, #max)?,
-                    ))
-                })?
-            }
-        }
-        CapSite::Optional(inner) => {
-            let reader = bounded_reader(inner);
-            quote! {
-                decoder.descend(|decoder| match decoder.read_u8()? {
-                    0 => ::core::result::Result::Ok(::core::option::Option::None),
-                    1 => decoder
-                        .descend(|decoder| __hbor::bounded::#reader(decoder, #max))
-                        .map(::core::option::Option::Some),
-                    other => ::core::result::Result::Err(
-                        __hbor::DecodeError::InvalidDiscriminant(other),
-                    ),
-                })?
-            }
-        }
-    })
-}
-
-fn bounded_reader(shape: Shape) -> TokenStream {
-    match shape {
-        Shape::Bytes => quote!(decode_bounded_bytes),
-        Shape::Sequence => quote!(decode_bounded_vec),
-        Shape::Text => quote!(decode_bounded_string),
-        Shape::Set => quote!(decode_bounded_btree_set),
-        Shape::Map => quote!(decode_bounded_btree_map),
-        Shape::Opaque => unreachable!("cap_site never yields an opaque shape"),
+fn read_expression(ty: &Type) -> TokenStream {
+    if writes_bytes(ty) {
+        quote!(decoder.descend(__hbor::bounded::decode_bytes)?)
+    } else {
+        quote!(decoder.nested()?)
     }
-}
-
-fn capped_opaque(ty: &Type) -> Error {
-    Error::new(
-        ty.span(),
-        "`max` needs a field written as Vec, String, BTreeSet, or BTreeMap — bare, or one \
-         level under Arc, Box, or Option; a type that hides one behind an alias carries \
-         its own bound instead",
-    )
 }
 
 /// Whether `ty`'s minimum width references `this` type's own.
@@ -431,13 +320,13 @@ fn min_encoded_len(fields: &Fields) -> TokenStream {
 }
 
 /// `skip` composes with nothing: a field that is not on the wire can carry
-/// no wire bound and no preimage marking.
+/// no preimage marking.
 fn refuse_skip_combinations(field: &Field, attrs: &FieldAttrs) -> Result<()> {
-    if attrs.max.is_some() || attrs.unsigned {
+    if attrs.unsigned {
         return Err(Error::new(
             field.span(),
-            "`skip` takes a field off the wire entirely; `max` and `unsigned` describe wire \
-             behaviour it cannot have",
+            "`skip` takes a field off the wire entirely; `unsigned` describes wire behaviour \
+             it cannot have",
         ));
     }
     Ok(())
@@ -471,40 +360,9 @@ fn transparent(fields: &Fields) -> Result<(TokenStream, TokenStream, TokenStream
         ));
     }
     // No `descend`: a transparent wrapper is not a level, it is a name. The
-    // inner type still charges for whatever it nests. A capped field swaps
-    // in the bounded reader and writer at the same depth — the newtype's
-    // own bound, expressed where the collection is written.
-    let (encode, inner) = match attrs.max {
-        Some(max) => {
-            let Some(CapSite::Direct(inner_shape)) = cap_site(ty) else {
-                return Err(capped_opaque(ty));
-            };
-            let reader = bounded_reader(inner_shape);
-            let write = if inner_shape == Shape::Bytes {
-                quote! {
-                    __hbor::bounded::encode_bytes(encoder, #access)?;
-                }
-            } else {
-                quote! {
-                    __hbor::HborEncode::encode(#access, encoder)?;
-                }
-            };
-            let label = field
-                .ident
-                .as_ref()
-                .map_or_else(|| "0".to_string(), ToString::to_string);
-            let encode = quote! {
-                __hbor::bounded::check_encoded_len(#label, (#access).len(), #max)?;
-                #write
-            };
-            let inner = quote!(__hbor::bounded::#reader(decoder, #max)?);
-            (encode, inner)
-        }
-        None => (
-            quote! { __hbor::HborEncode::encode(#access, encoder)?; },
-            quote!(<#ty as __hbor::HborDecode>::decode(decoder)?),
-        ),
-    };
+    // inner type still charges for whatever it nests.
+    let encode = quote! { __hbor::HborEncode::encode(#access, encoder)?; };
+    let inner = quote!(<#ty as __hbor::HborDecode>::decode(decoder)?);
     let decode = field.ident.as_ref().map_or_else(
         || quote!(Self(#inner)),
         |name| quote!(Self { #name: #inner }),

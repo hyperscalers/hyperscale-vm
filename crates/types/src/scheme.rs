@@ -15,14 +15,14 @@
 //! apart is what lets a scheme be sized, priced, and encoded ahead of any
 //! chain accepting it.
 
-use hyperscale_hbor::Hbor;
+use hyperscale_hbor::{Hbor, HborShape};
 
 /// The signature scheme a principal's auth material belongs to.
 ///
 /// A principal address commits to the scheme alongside the key, so one
 /// public key presented under two schemes is two principals — a scheme
 /// added later cannot land on an address already in use.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor, HborShape)]
 #[hbor(transparent)]
 pub struct SchemeId(pub u16);
 

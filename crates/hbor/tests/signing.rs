@@ -13,8 +13,8 @@
 //! value is injective because the encoding is.
 
 use hyperscale_hbor::{
-    DEFAULT_MAX_DEPTH, EncodeError, Encoder, Hbor, HborSigned, HborSignedWith, assert_canonical,
-    bounded, to_vec,
+    Bytes, DEFAULT_MAX_DEPTH, EncodeError, Encoder, Hbor, HborSigned, HborSignedWith,
+    assert_canonical, to_vec,
 };
 
 /// A named change to one field, for the coverage sweep below.
@@ -26,8 +26,8 @@ const MAX_NOTE: usize = 1024;
 /// What an order is for.
 #[derive(Debug, Clone, PartialEq, Eq, Hbor)]
 enum Item {
-    Goods(#[hbor(max = MAX_ITEM)] Vec<u8>),
-    Service(#[hbor(max = MAX_ITEM)] Vec<u8>),
+    Goods(Bytes<MAX_ITEM>),
+    Service(Bytes<MAX_ITEM>),
 }
 
 /// One party's endorsement of the order, carried inside what is signed.
@@ -53,8 +53,7 @@ struct Order {
     priority_bp: u32,
     opens_ms: u64,
     closes_ms: u64,
-    #[hbor(max = MAX_NOTE)]
-    note: Vec<u8>,
+    note: Bytes<MAX_NOTE>,
     #[hbor(unsigned)]
     signer: [u8; 32],
     #[hbor(unsigned)]
@@ -75,14 +74,13 @@ fn envelope_preimage_by_hand(order: &Order) -> Result<Vec<u8>, EncodeError> {
     encoder.nested(&order.priority_bp)?;
     encoder.nested(&order.opens_ms)?;
     encoder.nested(&order.closes_ms)?;
-    bounded::check_encoded_len("note", order.note.len(), MAX_NOTE)?;
-    encoder.descend(|encoder| bounded::encode_bytes(encoder, &order.note))?;
+    encoder.nested(&order.note)?;
     Ok(buffer)
 }
 
 fn sample() -> Order {
     Order {
-        item: Item::Goods(vec![1, 2, 3]),
+        item: Item::Goods(Bytes::from_array([1, 2, 3])),
         endorsements: vec![Endorsement {
             public_key: [0x11; 32],
             signature: [0x22; 64],
@@ -93,7 +91,7 @@ fn sample() -> Order {
         priority_bp: 250,
         opens_ms: 1_700_000_000_000,
         closes_ms: 1_700_000_060_000,
-        note: b"hello".to_vec(),
+        note: Bytes::from_array(*b"hello"),
         signer: [0x44; 32],
         signature: [0x55; 64],
     }
@@ -141,7 +139,9 @@ fn unsigned_fields_leave_the_preimage_but_not_the_wire() {
 fn every_signed_field_changes_the_preimage() {
     let base = sample().signing_bytes().unwrap();
     let mutate: [FieldEdit; 9] = [
-        ("item", |e| e.item = Item::Service(vec![1, 2, 3])),
+        ("item", |e| {
+            e.item = Item::Service(Bytes::from_array([1, 2, 3]));
+        }),
         ("endorsements", |e| e.endorsements.clear()),
         ("buyer", |e| e.buyer = [0x77; 16]),
         ("budget", |e| e.budget += 1),
@@ -149,7 +149,7 @@ fn every_signed_field_changes_the_preimage() {
         ("priority_bp", |e| e.priority_bp += 1),
         ("opens_ms", |e| e.opens_ms += 1),
         ("closes_ms", |e| e.closes_ms += 1),
-        ("note", |e| e.note.push(b'!')),
+        ("note", |e| e.note.push(b'!').expect("under the note cap")),
     ];
     for (field, apply) in mutate {
         let mut altered = sample();
@@ -168,9 +168,9 @@ fn every_signed_field_changes_the_preimage() {
 #[test]
 fn the_body_discriminant_is_covered() {
     let mut call = sample();
-    call.item = Item::Goods(vec![9, 9]);
+    call.item = Item::Goods(Bytes::from_array([9, 9]));
     let mut publish = sample();
-    publish.item = Item::Service(vec![9, 9]);
+    publish.item = Item::Service(Bytes::from_array([9, 9]));
     assert_ne!(
         call.signing_bytes().unwrap(),
         publish.signing_bytes().unwrap()
@@ -250,13 +250,13 @@ fn distinct_domains_separate_identical_content() {
 #[test]
 fn moving_bytes_between_adjacent_fields_changes_the_preimage() {
     let mut left = sample();
-    left.note = b"ab".to_vec();
+    left.note = Bytes::from_array(*b"ab");
     left.endorsements.clear();
 
     let mut right = sample();
-    right.note = b"a".to_vec();
+    right.note = Bytes::from_array(*b"a");
     right.endorsements.clear();
-    right.item = Item::Goods(vec![1, 2, 3, b'b']);
+    right.item = Item::Goods(Bytes::from_array([1, 2, 3, b'b']));
 
     assert_ne!(
         left.signing_bytes().unwrap(),
@@ -289,8 +289,7 @@ struct NetworkTag(u8);
 #[hbor(signing_domain = "ctx-vote-v1", signing_context = NetworkTag)]
 struct CtxVote {
     height: u64,
-    #[hbor(max = MAX_NOTE)]
-    payload: Vec<u8>,
+    payload: Bytes<MAX_NOTE>,
     #[hbor(unsigned)]
     signature: [u8; 64],
 }
@@ -303,8 +302,7 @@ struct CtxVote {
 struct LeadingFieldVote {
     network: NetworkTag,
     height: u64,
-    #[hbor(max = MAX_NOTE)]
-    payload: Vec<u8>,
+    payload: Bytes<MAX_NOTE>,
     #[hbor(unsigned)]
     signature: [u8; 64],
 }
@@ -312,7 +310,7 @@ struct LeadingFieldVote {
 fn ctx_sample() -> CtxVote {
     CtxVote {
         height: 42,
-        payload: b"payload".to_vec(),
+        payload: Bytes::from_array(*b"payload"),
         signature: [0x66; 64],
     }
 }

@@ -6,7 +6,7 @@
 
 use hyperscale_hbor::hash::TestHasher;
 use hyperscale_hbor::merkle::{Chunked, prove, root_of, sequence_chunks, verify};
-use hyperscale_hbor::{Hbor, HborMerkle, to_vec};
+use hyperscale_hbor::{Bytes, Hbor, HborMerkle, to_vec};
 
 const MAX_ITEM: usize = 4096;
 const MAX_NOTE: usize = 1024;
@@ -14,8 +14,8 @@ const MAX_NOTE: usize = 1024;
 #[derive(Debug, Clone, PartialEq, Eq, Hbor, HborMerkle)]
 #[hbor(merkle_domain = "test-item-v1")]
 enum Item {
-    Goods(#[hbor(max = MAX_ITEM)] Vec<u8>),
-    Service(#[hbor(max = MAX_ITEM)] Vec<u8>),
+    Goods(Bytes<MAX_ITEM>),
+    Service(Bytes<MAX_ITEM>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hbor)]
@@ -35,8 +35,7 @@ struct Order {
     priority_bp: u32,
     opens_ms: u64,
     closes_ms: u64,
-    #[hbor(max = MAX_NOTE)]
-    note: Vec<u8>,
+    note: Bytes<MAX_NOTE>,
     signer: [u8; 32],
     signature: [u8; 64],
 }
@@ -53,7 +52,7 @@ const FIELD_COUNT: usize = 11;
 
 fn sample() -> Order {
     Order {
-        item: Item::Goods(vec![1, 2, 3]),
+        item: Item::Goods(Bytes::from_array([1, 2, 3])),
         endorsements: vec![Endorsement {
             public_key: [0x11; 32],
             signature: [0x22; 64],
@@ -64,7 +63,7 @@ fn sample() -> Order {
         priority_bp: 250,
         opens_ms: 1_700_000_000_000,
         closes_ms: 1_700_000_060_000,
-        note: b"hello".to_vec(),
+        note: Bytes::from_array(*b"hello"),
         signer: [0x44; 32],
         signature: [0x55; 64],
     }
@@ -158,7 +157,7 @@ fn every_field_is_covered_by_the_root() {
     let base = sample().merkle_root(&hasher).unwrap();
 
     let mut altered = sample();
-    altered.item = Item::Service(vec![1, 2, 3]);
+    altered.item = Item::Service(Bytes::from_array([1, 2, 3]));
     assert_ne!(altered.merkle_root(&hasher).unwrap(), base);
 
     let mut altered = sample();
@@ -190,7 +189,7 @@ fn every_field_is_covered_by_the_root() {
     assert_ne!(altered.merkle_root(&hasher).unwrap(), base);
 
     let mut altered = sample();
-    altered.note.push(b'!');
+    altered.note.push(b'!').expect("under the note cap");
     assert_ne!(altered.merkle_root(&hasher).unwrap(), base);
 
     let mut altered = sample();
@@ -250,7 +249,7 @@ fn a_field_index_past_the_type_has_no_proof() {
 #[test]
 fn a_variant_proves_without_its_content() {
     let hasher = TestHasher;
-    let item = Item::Service(vec![9; 64]);
+    let item = Item::Service(Bytes::from_array([9; 64]));
     let root = item.merkle_root(&hasher).unwrap();
 
     let leaves = item.chunks().unwrap();
@@ -276,8 +275,8 @@ fn a_variant_proves_without_its_content() {
 #[test]
 fn variants_with_the_same_content_differ_at_the_root() {
     let hasher = TestHasher;
-    let call = Item::Goods(vec![7, 7]);
-    let publish = Item::Service(vec![7, 7]);
+    let call = Item::Goods(Bytes::from_array([7, 7]));
+    let publish = Item::Service(Bytes::from_array([7, 7]));
     assert_ne!(
         call.merkle_root(&hasher).unwrap(),
         publish.merkle_root(&hasher).unwrap()

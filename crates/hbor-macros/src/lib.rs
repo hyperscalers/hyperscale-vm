@@ -41,13 +41,6 @@
 //!
 //! On a field:
 //!
-//! - `#[hbor(max = N)]` — the largest length this field may carry, checked
-//!   against the claimed length before the collection is built, and again on
-//!   encode. The field must be written as a `Vec`, `String`, `BTreeSet`, or
-//!   `BTreeMap` — bare, one level under an `Arc`, `Box`, or `Option` (the
-//!   cap applies to the payload when present), or as the single field of a
-//!   `transparent` wrapper, whose bound is then its own. Resolution is
-//!   syntactic, so an alias cannot host a cap.
 //! - `#[hbor(unsigned)]` — held out of the signing preimage. The field still
 //!   rides the wire; a signature and the key that verifies it are
 //!   transmitted, they just cannot be part of what they cover. A field added
@@ -57,9 +50,9 @@
 //!   as `Default::default()` at decode. What a locally-derived cache rides
 //!   a wire type as, so a peer can never supply it.
 //!
-//! A cap is a protocol bound, not a safety one — decoding already refuses a
-//! length the remaining input cannot satisfy, whether or not a field declares
-//! a maximum.
+//! A collection's own bound is its type's: `Capped<C, N>`, `Bytes<N>` and
+//! `Text<N>` carry a cap the derive neither states nor checks, so what the
+//! encoder writes and the decoder admits is one statement made once.
 //!
 //! # Refusals
 //!
