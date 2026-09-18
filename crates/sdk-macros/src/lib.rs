@@ -80,7 +80,7 @@
 //! - `#[config] struct …` — the creation-fixed fields `config.<field>`
 //!   resolves against; at most one.
 //! - `#[resource(…)] struct …` — a resource the package issues:
-//!   `non_fungible`, `initial(<n>)`, `display_digits = <n>`, and
+//!   `non_fungible`, `initial = <n>`, `display_digits = <n>`, and
 //!   `grants(<behaviour> = <rule>, …)` over mint, burn, withdraw,
 //!   deposit, recall, and halt.
 //! - `#[error] enum …` — the refusal table: fieldless variants, crossing
@@ -91,7 +91,7 @@
 //! On the state struct's `pub fn instantiate`, where there is one: the
 //! bring-up's body. The macro synthesizes the seal for every instance
 //! package — the `CONFIG` write, one record per declared resource, the
-//! supply an `initial(..)` states — and an authored `instantiate` is
+//! supply an `initial` states — and an authored `instantiate` is
 //! spliced into it: its parameters are the seal's, and its statements
 //! run after the records and before the supply, in the same node. It
 //! declares no return type, or `Result<(), Error>` ending in `Ok(())`
@@ -1595,14 +1595,14 @@ pub(crate) const INSTANTIATE: &str = "instantiate";
 ///
 /// An authored `pub fn instantiate` is the seal's body: its parameters
 /// are the seal's, and its statements run after the seal and the
-/// records and before the supply an `initial(..)` states. So the whole
+/// records and before the supply an `initial` states. So the whole
 /// of the bring-up is still one node, the fence's one escape is still
 /// the `CONFIG` leaf, and what a body may declare is exactly what any
 /// method may — each write under its own door — minus the fence. The
 /// supply is the tail, and the author never touches it: the body
 /// declares no return type, or `Result<(), Error>` ending in `Ok(())`
 /// where it can refuse the configuration it was brought up under; what
-/// the component comes up holding is `initial(..)`'s to say, and an
+/// the component comes up holding is `initial`'s to say, and an
 /// authored return type would be a second claim about it. The gate stays
 /// the configuration's: a founder is named where the address folds them,
 /// so a gate on the body would be a second spelling of one answer.
@@ -1786,7 +1786,7 @@ fn bring_up_body(method: &syn::ImplItemFn) -> syn::Result<BringUp> {
                 _ => {
                     return Err(syn::Error::new_spanned(
                         ty,
-                        "what a component comes up holding is `initial(..)`'s to say, so the \
+                        "what a component comes up holding is `initial`'s to say, so the \
                          bring-up's body declares no return type — or `Result<(), Error>`, \
                          where it can refuse the configuration it was brought up under",
                     ));

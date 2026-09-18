@@ -47,7 +47,7 @@ pub mod staking {
     /// The pool comes up holding its one instance, which leaves as the
     /// edge the bring-up yields — so a pool that exists has an operator
     /// and there is no window in which it does not.
-    #[resource(non_fungible, initial(0))]
+    #[resource(non_fungible, initial = 0)]
     struct OwnerBadge;
 
     /// A delegation's receipt: the resource the pool issues against what

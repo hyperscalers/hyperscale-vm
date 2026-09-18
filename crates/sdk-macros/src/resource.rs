@@ -624,11 +624,21 @@ pub fn resource_attr(attr: &syn::Attribute) -> syn::Result<ResourceAttr> {
                         ));
                     }
                 }
-                syn::Meta::List(list) if list.path.is_ident("initial") => {
-                    if initial.replace(list.parse_args::<syn::LitInt>()?).is_some() {
+                syn::Meta::NameValue(nv) if nv.path.is_ident("initial") => {
+                    let syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Int(int),
+                        ..
+                    }) = &nv.value
+                    else {
                         return Err(syn::Error::new(
-                            list.path.span(),
-                            "`initial(..)` twice — a package states one bring-up supply",
+                            nv.value.span(),
+                            "a bring-up supply is a literal count",
+                        ));
+                    };
+                    if initial.replace(int.clone()).is_some() {
+                        return Err(syn::Error::new(
+                            nv.path.span(),
+                            "`initial` twice — a package states one bring-up supply",
                         ));
                     }
                 }
@@ -676,7 +686,7 @@ pub fn unknown_resource_term(at: &impl Spanned) -> syn::Error {
     syn::Error::new(
         at.span(),
         "a resource states `fungible` (the default) or `non_fungible`, the supply \
-         its component comes up holding as `initial(<n>)`, the behaviours its \
+         its component comes up holding as `initial = <n>`, the behaviours its \
          address grants as `grants(<behaviour> = <rule>, …)`, and — where it is \
          fungible — `display_digits = <digits>`",
     )

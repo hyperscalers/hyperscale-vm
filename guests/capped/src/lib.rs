@@ -45,7 +45,7 @@ pub mod capped {
     /// Granting nothing at all, which is what leaves the address unable
     /// to admit a mint however the caller is authorized: publish refuses
     /// a body that mints this, so there is no such method to reach.
-    #[resource(initial(1_000_000), display_digits = 0)]
+    #[resource(initial = 1_000_000, display_digits = 0)]
     struct Founded;
 
     /// Founded in full, and burnable by its issuer.
@@ -54,7 +54,7 @@ pub mod capped {
     /// moves one way. `burn` without `mint` is only spellable because
     /// the two are independent entries rather than two readings of one
     /// grant.
-    #[resource(initial(500), grants(burn = self), display_digits = 0)]
+    #[resource(initial = 500, grants(burn = self), display_digits = 0)]
     struct Retired;
 
     /// Founded in full, and destroyed by whoever holds it.
@@ -64,7 +64,7 @@ pub mod capped {
     /// holder's own account and the issuer is not a party to it. Absence
     /// of the entry is what makes that the exception — `Founded` beside it
     /// grants none, and nobody may destroy it at all.
-    #[resource(initial(1_000), grants(burn = anyone), display_digits = 0)]
+    #[resource(initial = 1_000, grants(burn = anyone), display_digits = 0)]
     struct Circulating;
 
     /// Minted by whoever holds the configured badge, and by nobody else.

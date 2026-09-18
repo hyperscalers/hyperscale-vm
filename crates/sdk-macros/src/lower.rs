@@ -975,7 +975,7 @@ impl<'a> Lowerer<'a> {
         let remedy = if behaviour == GrantedBehaviour::Mint {
             format!(
                 "state `grants(mint = self)` on `{name}`, or found the supply it comes up \
-                 holding with `initial(<n>)`"
+                 holding with `initial = <n>`"
             )
         } else {
             format!(

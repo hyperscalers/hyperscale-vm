@@ -28,7 +28,7 @@ mod mill {
     /// before anything grants against it. Granting nothing costs it no
     /// supply — the one instance it comes up holding is founded where
     /// its record is written, which no `Mint` entry governs.
-    #[resource(non_fungible, initial(0))]
+    #[resource(non_fungible, initial = 0)]
     struct OwnerBadge;
 
     /// A token whose holders can be recalled from, by whoever holds the
@@ -63,7 +63,7 @@ mod mill {
 mod hall {
     use hyperscale_vm_sdk::state::{Bucket, Quantity};
 
-    #[resource(non_fungible, initial(0))]
+    #[resource(non_fungible, initial = 0)]
     struct Warden;
 
     /// Recallable by whoever holds any warden badge, and movable by one

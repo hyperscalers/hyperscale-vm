@@ -26,7 +26,7 @@ mod registry {
     /// holding it is holding the seat and selling the seat is a
     /// transfer. The registry comes up holding its one instance, which
     /// leaves as the edge the bring-up yields.
-    #[resource(non_fungible, initial(0))]
+    #[resource(non_fungible, initial = 0)]
     struct AdminBadge;
 
     /// Only the founder may bring the registry up.

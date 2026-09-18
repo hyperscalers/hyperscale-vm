@@ -522,6 +522,24 @@ pub fn state_struct(items: &mut Vec<syn::Item>, module: &syn::Ident) -> syn::Res
         return Err(refusal);
     }
     let Some(stated) = stated else {
+        // An unmarked struct already wearing the state's name is a
+        // `#[state]` somebody forgot: synthesizing a second one beside it
+        // would be refused by rustc as a duplicate, with every body then
+        // lowered against the empty synthesized state and failing to
+        // find its fields.
+        if let Some(unmarked) = items.iter().find_map(|item| match item {
+            syn::Item::Struct(item) if item.ident == expected => Some(&item.ident),
+            _ => None,
+        }) {
+            return Err(syn::Error::new(
+                unmarked.span(),
+                format!(
+                    "`{expected}` is the name of `{module}`'s state, and the struct is \
+                     unmarked — mark it `#[state]`, or rename it: without the mark a \
+                     second `{expected}` is synthesized beside it"
+                ),
+            ));
+        }
         let ident = syn::Ident::new(&expected, module.span());
         items.insert(0, syn::parse_quote!(#[state] struct #ident;));
         return Ok(ident);

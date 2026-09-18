@@ -1,0 +1,5 @@
+error: `Vault` is the name of `vault`'s state, and the struct is unmarked — mark it `#[state]`, or rename it: without the mark a second `Vault` is synthesized beside it
+ --> tests/refusals/unmarked_state.rs:9:12
+  |
+9 |     struct Vault {
+  |            ^^^^^

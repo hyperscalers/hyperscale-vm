@@ -24,7 +24,7 @@ mod issuer {
 
     /// The issuer comes up holding this badge's one instance, which
     /// leaves as the edge the bring-up yields.
-    #[resource(non_fungible, initial(0))]
+    #[resource(non_fungible, initial = 0)]
     struct OwnerBadge;
 
     /// A fielded mark: the instance's data cell holds this record, in

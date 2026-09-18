@@ -146,6 +146,7 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/ungranted_halt.rs");
     refuse.compile_fail("tests/refusals/ungranted_recall.rs");
     refuse.compile_fail("tests/refusals/renamed_state.rs");
+    refuse.compile_fail("tests/refusals/unmarked_state.rs");
 }
 
 /// A mark the macro can already tell is unsupportable, refused where the
@@ -325,7 +326,7 @@ fn the_lowering_refuses_a_published_name_collision() {
 
 /// The bring-up is one node with one body, and what an authored
 /// `instantiate` may say about it is exactly what any method may — minus
-/// a return type, since the supply is `initial(..)`'s, and minus a gate,
+/// a return type, since the supply is `initial`'s, and minus a gate,
 /// since the founder is the configuration's. A refusing body ends in
 /// `Ok(())`, because the supply is filed after it.
 #[test]
