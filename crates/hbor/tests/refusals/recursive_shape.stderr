@@ -1,0 +1,63 @@
+error[E0391]: cycle detected when elaborating drops for `<impl at $DIR/tests/refusals/recursive_shape.rs:24:1: 24:19>::NODE`
+  --> tests/refusals/recursive_shape.rs:25:38
+   |
+25 |       const NODE: &'static ShapeNode = &ShapeNode::Struct(&[
+   |  ______________________________________^
+26 | |         ("next", <Option<Box<Rec>> as Shape>::NODE),
+27 | |         ("value", <u8 as Shape>::NODE),
+28 | |     ]);
+   | |______^
+   |
+note: ...which requires simplifying constant for the type system `<impl at $DIR/tests/refusals/recursive_shape.rs:24:1: 24:19>::NODE::promoted[0]`...
+  --> tests/refusals/recursive_shape.rs:25:5
+   |
+25 |     const NODE: &'static ShapeNode = &ShapeNode::Struct(&[
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: ...which requires const-evaluating + checking `<impl at $DIR/tests/refusals/recursive_shape.rs:24:1: 24:19>::NODE::promoted[0]`...
+  --> tests/refusals/recursive_shape.rs:25:5
+   |
+25 |     const NODE: &'static ShapeNode = &ShapeNode::Struct(&[
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: ...which requires optimizing promoted MIR for `<impl at $DIR/tests/refusals/recursive_shape.rs:24:1: 24:19>::NODE`...
+  --> tests/refusals/recursive_shape.rs:26:18
+   |
+26 |         ("next", <Option<Box<Rec>> as Shape>::NODE),
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: ...which requires simplifying constant for the type system `<impl at $DIR/tests/refusals/recursive_shape.rs:11:1: 11:35>::NODE`...
+  --> tests/refusals/recursive_shape.rs:12:5
+   |
+12 |     const NODE: &'static ShapeNode = &ShapeNode::Option(T::NODE);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: ...which requires const-evaluating + checking `<impl at $DIR/tests/refusals/recursive_shape.rs:11:1: 11:35>::NODE`...
+  --> tests/refusals/recursive_shape.rs:12:57
+   |
+12 |     const NODE: &'static ShapeNode = &ShapeNode::Option(T::NODE);
+   |                                                         ^^^^^^^
+note: ...which requires simplifying constant for the type system `<impl at $DIR/tests/refusals/recursive_shape.rs:15:1: 15:32>::NODE`...
+  --> tests/refusals/recursive_shape.rs:16:5
+   |
+16 |     const NODE: &'static ShapeNode = T::NODE;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: ...which requires const-evaluating + checking `<impl at $DIR/tests/refusals/recursive_shape.rs:15:1: 15:32>::NODE`...
+  --> tests/refusals/recursive_shape.rs:16:38
+   |
+16 |     const NODE: &'static ShapeNode = T::NODE;
+   |                                      ^^^^^^^
+note: ...which requires simplifying constant for the type system `<impl at $DIR/tests/refusals/recursive_shape.rs:24:1: 24:19>::NODE`...
+  --> tests/refusals/recursive_shape.rs:25:5
+   |
+25 |     const NODE: &'static ShapeNode = &ShapeNode::Struct(&[
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: ...which requires const-evaluating + checking `<impl at $DIR/tests/refusals/recursive_shape.rs:24:1: 24:19>::NODE`...
+  --> tests/refusals/recursive_shape.rs:25:5
+   |
+25 |     const NODE: &'static ShapeNode = &ShapeNode::Struct(&[
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: ...which requires caching mir of `<impl at $DIR/tests/refusals/recursive_shape.rs:24:1: 24:19>::NODE` for CTFE...
+  --> tests/refusals/recursive_shape.rs:25:5
+   |
+25 |     const NODE: &'static ShapeNode = &ShapeNode::Struct(&[
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: ...which again requires elaborating drops for `<impl at $DIR/tests/refusals/recursive_shape.rs:24:1: 24:19>::NODE`, completing the cycle
+   = note: cycle used when running analysis passes on crate `$CRATE`
+   = note: see https://rustc-dev-guide.rust-lang.org/overview.html#queries and https://rustc-dev-guide.rust-lang.org/query.html for more information

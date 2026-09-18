@@ -58,6 +58,7 @@ pub mod canonical;
 pub mod decode;
 pub mod encode;
 pub mod error;
+pub mod node;
 pub mod shape;
 pub mod varint;
 
@@ -75,6 +76,7 @@ pub use error::{DecodeError, EncodeError};
 pub use hash::{Hash32, Hasher};
 pub use hyperscale_hbor_macros::{Hbor, HborMerkle, HborShape};
 pub use merkle::Chunked;
+pub use node::{HborBound, ShapeNode};
 pub use shape::{
     HborShape, MAX_SHAPE_DEPTH, ReadError, Resolution, ShapeFault, ShapeField, ShapeRegistry,
     ShapeTable, ShapeValue, ShapeVariant, TypeShape, shape_of,

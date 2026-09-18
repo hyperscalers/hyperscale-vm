@@ -17,6 +17,15 @@ fn the_derive_refuses_what_has_no_canonical_form() {
     refuse.compile_fail("tests/refusals/duplicate_discriminant.rs");
     refuse.compile_fail("tests/refusals/transparent_two_fields.rs");
     refuse.compile_fail("tests/refusals/transparent_skip_field.rs");
+}
+
+/// A shape is a static tree a type states as a constant, so a type that
+/// reaches itself makes its constant name itself — and rustc refuses the
+/// cycle on the impl, before any walk could spend a budget on it.
+#[test]
+fn a_recursive_type_has_no_static_shape() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/recursive_shape.rs");
     refuse.compile_fail("tests/refusals/transparent_unsigned_field.rs");
     refuse.compile_fail("tests/refusals/unknown_attribute.rs");
 }

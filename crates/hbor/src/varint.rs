@@ -10,6 +10,22 @@ use crate::error::{DecodeError, EncodeError};
 /// The largest expressible length. Four LEB128 bytes carry 28 bits.
 pub const MAX_LENGTH: usize = 0x0FFF_FFFF;
 
+/// The bytes a minimal LEB128 length of `value` occupies.
+///
+/// A `const fn`, because a capped run's widest encoding is its cap's
+/// length field plus its elements, and that figure is folded off a type's
+/// shape at compile time.
+#[must_use]
+pub const fn encoded_len(value: usize) -> usize {
+    let mut len = 1;
+    let mut rest = value >> 7;
+    while rest > 0 {
+        len += 1;
+        rest >>= 7;
+    }
+    len
+}
+
 /// Append `value` as a minimal LEB128 length.
 ///
 /// # Errors
@@ -95,12 +111,27 @@ pub fn read(bytes: &[u8]) -> Result<(usize, usize), DecodeError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_LENGTH, encode, read};
+    use super::{MAX_LENGTH, encode, encoded_len, read};
     use crate::error::{DecodeError, EncodeError};
 
     fn encoded(value: usize) -> Vec<u8> {
         let (bytes, len) = encode(value).unwrap();
         bytes[..len].to_vec()
+    }
+
+    /// The constant length agrees with the bytes actually written, at
+    /// every width boundary.
+    #[test]
+    fn the_constant_length_is_the_written_length() {
+        for value in [
+            0, 1, 127, 128, 16_383, 16_384, 2_097_151, 2_097_152, MAX_LENGTH,
+        ] {
+            assert_eq!(
+                encoded_len(value),
+                encoded(value).len(),
+                "length of {value}"
+            );
+        }
     }
 
     #[test]
