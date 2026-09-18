@@ -13,6 +13,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use hyperscale_hbor::Bytes;
 use hyperscale_vm_effects::{
     CallArg, EdgeContent, JudgedLeaf, NodeCall, PackageHash, Rule, RuleBytes,
 };
@@ -85,7 +86,12 @@ enum NodeFailure {
 
 /// A node's invocation succeeded: the session, the edges it produced,
 /// whatever it answered with, and the fuel it consumed.
-type NodeSuccess = (KernelSession, Vec<u32>, Option<Vec<u8>>, u64);
+type NodeSuccess = (
+    KernelSession,
+    Vec<u32>,
+    Option<Bytes<MAX_ANSWER_BYTES>>,
+    u64,
+);
 
 impl NodeFailure {
     /// The walk's own answer to this failure, appended to what the
@@ -272,22 +278,23 @@ fn settled(node: u32, call: &NodeCall, invoked: InvokeResult) -> Result<NodeSucc
             }
             // What a method answered with rides the receipt, so the
             // width one may carry is the vocabulary's rather than the
-            // guest's. Refused here, where the value comes back, so an
-            // oversized answer is a deterministic verdict every node
-            // reaches alike instead of an encoding nothing downstream
-            // could hold.
-            if answer
-                .as_ref()
-                .is_some_and(|value| value.len() > MAX_ANSWER_BYTES)
-            {
-                return Err(fail(
-                    session,
-                    Outcome::UserError {
-                        reason: AbortReason::AnswerTooLarge,
-                    },
-                    invoked.fuel,
-                ));
-            }
+            // guest's: the answer's type holds the cap, and a value past
+            // it is refused here, where it comes back, so an oversized
+            // answer is a deterministic verdict every node reaches alike
+            // instead of an encoding nothing downstream could hold.
+            let answer = match answer.map(Bytes::new) {
+                None => None,
+                Some(Ok(value)) => Some(value),
+                Some(Err(_)) => {
+                    return Err(fail(
+                        session,
+                        Outcome::UserError {
+                            reason: AbortReason::AnswerTooLarge,
+                        },
+                        invoked.fuel,
+                    ));
+                }
+            };
             Ok((session, reps, answer, invoked.fuel))
         }
         Invoked::Produced { .. } => Err(fail(

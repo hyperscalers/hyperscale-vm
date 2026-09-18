@@ -16,10 +16,13 @@
 //! None of the three derefs mutably. A mutable deref would move the cap
 //! from the constructor to the encoder, and a cap the encoder is the first
 //! to enforce is an error arm every writer has to carry. The writers are
-//! the constructors and the fallible inserts here.
+//! the constructors and the fallible inserts here. What is offered mutably
+//! is what cannot reach the cap: an element in place — an index, an
+//! iterator, a map's value — since replacing one changes no length, and
+//! removal, since a shorter value is under any cap the longer one met.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ops::Deref;
+use std::ops::{Deref, Index, IndexMut};
 
 use crate::decode::Decoder;
 use crate::encode::{Encoder, Sink};
@@ -139,11 +142,62 @@ impl<C: Collection, const N: usize> Capped<C, N> {
     }
 }
 
+impl<C, const N: usize> Capped<C, N> {
+    /// The elements, borrowed.
+    pub fn iter<'a>(&'a self) -> <&'a C as IntoIterator>::IntoIter
+    where
+        &'a C: IntoIterator,
+    {
+        (&self.0).into_iter()
+    }
+}
+
 impl<T, const N: usize> Capped<Vec<T>, N> {
-    /// The empty list.
+    /// The empty list, as a constant; a set or a map starts from
+    /// `Default`.
     #[must_use]
     pub const fn empty() -> Self {
         Self(Vec::new())
+    }
+
+    /// The elements, mutably: an element replaced in place changes no
+    /// length.
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, T> {
+        self.0.iter_mut()
+    }
+
+    /// The element at `index`, mutably, where there is one.
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
+        self.0.get_mut(index)
+    }
+
+    /// Remove the last element, where there is one.
+    pub fn pop(&mut self) -> Option<T> {
+        self.0.pop()
+    }
+
+    /// Keep the first `len` elements.
+    pub fn truncate(&mut self, len: usize) {
+        self.0.truncate(len);
+    }
+
+    /// Keep the elements `keep` answers for.
+    pub fn retain(&mut self, keep: impl FnMut(&T) -> bool) {
+        self.0.retain(keep);
+    }
+
+    /// Remove every element.
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    /// A list written out, whose length the compiler holds under the cap.
+    #[must_use]
+    pub fn from_array<const M: usize>(items: [T; M]) -> Self {
+        const {
+            assert!(M <= N, "a list written past its cap");
+        }
+        Self(items.into())
     }
 
     /// Append `item`, where the cap has room for it.
@@ -159,10 +213,14 @@ impl<T, const N: usize> Capped<Vec<T>, N> {
 }
 
 impl<T: Ord, const N: usize> Capped<BTreeSet<T>, N> {
-    /// The empty set.
-    #[must_use]
-    pub const fn empty() -> Self {
-        Self(BTreeSet::new())
+    /// Remove `item`, saying whether it was a member.
+    pub fn remove(&mut self, item: &T) -> bool {
+        self.0.remove(item)
+    }
+
+    /// Remove every member.
+    pub fn clear(&mut self) {
+        self.0.clear();
     }
 
     /// Insert `item`, where the cap has room for a new member.
@@ -180,10 +238,25 @@ impl<T: Ord, const N: usize> Capped<BTreeSet<T>, N> {
 }
 
 impl<K: Ord, V, const N: usize> Capped<BTreeMap<K, V>, N> {
-    /// The empty map.
-    #[must_use]
-    pub const fn empty() -> Self {
-        Self(BTreeMap::new())
+    /// Remove the entry at `key`, handing back its value where there was
+    /// one.
+    pub fn remove(&mut self, key: &K) -> Option<V> {
+        self.0.remove(key)
+    }
+
+    /// Remove every entry.
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    /// The value at `key`, mutably, where there is one.
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+        self.0.get_mut(key)
+    }
+
+    /// The values, mutably: a value replaced in place changes no length.
+    pub fn values_mut(&mut self) -> std::collections::btree_map::ValuesMut<'_, K, V> {
+        self.0.values_mut()
     }
 
     /// Insert `value` at `key`, where the cap has room for a new key.
@@ -204,6 +277,62 @@ impl<C, const N: usize> Deref for Capped<C, N> {
 
     fn deref(&self) -> &C {
         &self.0
+    }
+}
+
+impl<T, I, const N: usize> Index<I> for Capped<Vec<T>, N>
+where
+    Vec<T>: Index<I>,
+{
+    type Output = <Vec<T> as Index<I>>::Output;
+
+    fn index(&self, index: I) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl<T, I, const N: usize> IndexMut<I> for Capped<Vec<T>, N>
+where
+    Vec<T>: IndexMut<I>,
+{
+    fn index_mut(&mut self, index: I) -> &mut Self::Output {
+        &mut self.0[index]
+    }
+}
+
+impl<'a, T, const N: usize> IntoIterator for &'a mut Capped<Vec<T>, N> {
+    type Item = &'a mut T;
+    type IntoIter = std::slice::IterMut<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter_mut()
+    }
+}
+
+impl<T, const N: usize> AsRef<[T]> for Capped<Vec<T>, N> {
+    fn as_ref(&self) -> &[T] {
+        &self.0
+    }
+}
+
+impl<C: IntoIterator, const N: usize> IntoIterator for Capped<C, N> {
+    type Item = C::Item;
+    type IntoIter = C::IntoIter;
+
+    fn into_iter(self) -> C::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a, C, const N: usize> IntoIterator for &'a Capped<C, N>
+where
+    &'a C: IntoIterator,
+{
+    type Item = <&'a C as IntoIterator>::Item;
+    type IntoIter = <&'a C as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        (&self.0).into_iter()
     }
 }
 
@@ -299,10 +428,68 @@ impl<const N: usize> Bytes<N> {
         Self(Vec::new())
     }
 
+    /// Bytes written out, whose length the compiler holds under the cap.
+    #[must_use]
+    pub fn from_array<const M: usize>(bytes: [u8; M]) -> Self {
+        const {
+            assert!(M <= N, "bytes written past their cap");
+        }
+        Self(bytes.into())
+    }
+
     /// The bytes, out from under their cap.
     #[must_use]
     pub fn into_inner(self) -> Vec<u8> {
         self.0
+    }
+
+    /// The bytes, borrowed one at a time.
+    pub fn iter(&self) -> std::slice::Iter<'_, u8> {
+        self.0.iter()
+    }
+
+    /// The bytes, mutably: a byte replaced in place changes no length.
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, u8> {
+        self.0.iter_mut()
+    }
+
+    /// Keep the first `len` bytes.
+    pub fn truncate(&mut self, len: usize) {
+        self.0.truncate(len);
+    }
+
+    /// Remove every byte.
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+}
+
+impl<'a, const N: usize> IntoIterator for &'a mut Bytes<N> {
+    type Item = &'a mut u8;
+    type IntoIter = std::slice::IterMut<'a, u8>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter_mut()
+    }
+}
+
+impl<I, const N: usize> Index<I> for Bytes<N>
+where
+    Vec<u8>: Index<I>,
+{
+    type Output = <Vec<u8> as Index<I>>::Output;
+
+    fn index(&self, index: I) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl<I, const N: usize> IndexMut<I> for Bytes<N>
+where
+    Vec<u8>: IndexMut<I>,
+{
+    fn index_mut(&mut self, index: I) -> &mut Self::Output {
+        &mut self.0[index]
     }
 }
 
@@ -311,6 +498,45 @@ impl<const N: usize> Deref for Bytes<N> {
 
     fn deref(&self) -> &[u8] {
         &self.0
+    }
+}
+
+impl<const N: usize> AsRef<[u8]> for Bytes<N> {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl<const N: usize> PartialEq<[u8]> for Bytes<N> {
+    fn eq(&self, other: &[u8]) -> bool {
+        self.0 == other
+    }
+}
+
+impl<const N: usize, const M: usize> PartialEq<[u8; M]> for Bytes<N> {
+    fn eq(&self, other: &[u8; M]) -> bool {
+        self.0 == other
+    }
+}
+
+impl<const N: usize> PartialEq<Vec<u8>> for Bytes<N> {
+    fn eq(&self, other: &Vec<u8>) -> bool {
+        &self.0 == other
+    }
+}
+
+impl<const N: usize> From<Bytes<N>> for Vec<u8> {
+    fn from(bytes: Bytes<N>) -> Self {
+        bytes.0
+    }
+}
+
+impl<'a, const N: usize> IntoIterator for &'a Bytes<N> {
+    type Item = &'a u8;
+    type IntoIter = std::slice::Iter<'a, u8>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
     }
 }
 
@@ -394,6 +620,24 @@ impl<const N: usize> Deref for Text<N> {
 
     fn deref(&self) -> &str {
         &self.0
+    }
+}
+
+impl<const N: usize> AsRef<str> for Text<N> {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<const N: usize> PartialEq<str> for Text<N> {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl<const N: usize> From<Text<N>> for String {
+    fn from(text: Text<N>) -> Self {
+        text.0
     }
 }
 

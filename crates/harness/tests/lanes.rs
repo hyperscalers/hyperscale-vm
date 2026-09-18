@@ -326,7 +326,10 @@ fn a_view_method_answers_off_the_receipt_in_both_lanes() {
         answers.as_slice(),
         [Answer {
             node: 0,
-            value: to_vec(&42u64).expect("a scalar encodes"),
+            value: to_vec(&42u64)
+                .expect("a scalar encodes")
+                .try_into()
+                .unwrap(),
         }],
         "the receipt carries what the method answered",
     );
@@ -1034,7 +1037,10 @@ fn a_configuration_record_reaches_a_helper_in_both_lanes() {
         answers.as_slice()
             == [Answer {
                 node: 0,
-                value: to_vec(&judgment).expect("a judgment encodes"),
+                value: to_vec(&judgment)
+                    .expect("a judgment encodes")
+                    .try_into()
+                    .unwrap(),
             }]
     };
     assert!(answered(&side, true), "the configured side: {side:?}");

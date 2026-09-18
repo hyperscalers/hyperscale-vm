@@ -32,7 +32,7 @@ use wat::parse_str;
 fn answered(value: u64) -> Vec<Answer> {
     vec![Answer {
         node: 0,
-        value: value.to_le_bytes().to_vec(),
+        value: value.to_le_bytes().to_vec().try_into().unwrap(),
     }]
 }
 
@@ -357,7 +357,7 @@ fn six_schedules_one_outcome() -> Result<()> {
         assert_eq!(
             baseline.receipts[&tx(id)].outcome,
             Outcome::Completed {
-                answers: answered(amount)
+                answers: answered(amount).try_into().unwrap()
             }
         );
     }

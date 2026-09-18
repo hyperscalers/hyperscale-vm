@@ -9,6 +9,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{Declaration, Hash32, Hasher, NodeCall, PackageHash, TestHasher};
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
@@ -99,7 +100,12 @@ fn run(nodes: usize, gas_limits: Vec<u64>) -> (Receipt, usize) {
 #[test]
 fn every_node_under_its_ceiling_completes() {
     let (receipt, invoked) = run(3, vec![COST, COST, COST]);
-    assert_eq!(receipt.outcome, Outcome::Completed { answers: vec![] });
+    assert_eq!(
+        receipt.outcome,
+        Outcome::Completed {
+            answers: Capped::empty()
+        }
+    );
     assert_eq!(invoked, 3);
     assert_eq!(receipt.fuel, 3 * COST, "the receipt reports the sum");
 }
@@ -141,7 +147,12 @@ fn a_trapping_node_leaves_its_successors_unrun() {
 #[test]
 fn unbound_ceilings_meter_nothing() {
     let (receipt, invoked) = run(2, Vec::new());
-    assert_eq!(receipt.outcome, Outcome::Completed { answers: vec![] });
+    assert_eq!(
+        receipt.outcome,
+        Outcome::Completed {
+            answers: Capped::empty()
+        }
+    );
     assert_eq!(invoked, 2);
 }
 

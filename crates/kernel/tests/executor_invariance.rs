@@ -7,23 +7,27 @@ use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{Declaration, Hash32, Hasher, SlotId, TestHasher, child_key};
 use hyperscale_vm_kernel::{
     BatchOutcome, BatchTx, Capability, EnvInputs, ExecutionMode, KernelSession, MemoryStore,
     RunResult, WorkingStore, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Movement,
-    Moves, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    AbortReason, Address, AddressClass, Answer, Effect, EffectSet, EffectTarget,
+    MAX_MANIFEST_NODES, Mode, Movement, Moves, Outcome, ResourceAddr, SubstateKey, TxHash,
+    encode_amount,
 };
 
 /// The one answer a fixture guest hands back, so a receipt depends on
 /// something the run can vary.
-fn answered(value: u64) -> Vec<Answer> {
+fn answered(value: u64) -> Capped<Vec<Answer>, MAX_MANIFEST_NODES> {
     vec![Answer {
         node: 0,
-        value: value.to_le_bytes().to_vec(),
+        value: value.to_le_bytes().to_vec().try_into().unwrap(),
     }]
+    .try_into()
+    .unwrap()
 }
 
 /// What every cell these fixtures move value through holds.
@@ -140,13 +144,15 @@ fn scripted(entry: &BatchTx, mut session: KernelSession) -> RunResult {
             }
         }
     } else {
-        Outcome::Completed { answers: vec![] }
+        Outcome::Completed {
+            answers: Capped::empty(),
+        }
     };
     let spent = vec![10 + u64::from(tx_id.0.0[0])];
     match outcome {
         Outcome::Completed { answers } => RunResult::Completed {
             session,
-            answers,
+            answers: answers.into_inner(),
             spent,
         },
         outcome => RunResult::Aborted {
@@ -392,7 +398,7 @@ fn each_transaction_sees_its_own_clock() {
     );
 
     let observe = |entry: &BatchTx, session: KernelSession| RunResult::Completed {
-        answers: answered(session.clock_ms()),
+        answers: answered(session.clock_ms()).into_inner(),
         spent: vec![u64::from(entry.tx.0.0[0])],
         session,
     };
@@ -445,7 +451,7 @@ fn each_transaction_sees_its_own_epoch() {
     );
 
     let observe = |entry: &BatchTx, session: KernelSession| RunResult::Completed {
-        answers: answered(session.epoch()),
+        answers: answered(session.epoch()).into_inner(),
         spent: vec![u64::from(entry.tx.0.0[0])],
         session,
     };

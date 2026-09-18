@@ -17,7 +17,7 @@
 /// given, which is a defect and traps by its own name.
 pub const ABSENT_REP: u32 = u32::MAX;
 
-use hyperscale_hbor::Hbor;
+use hyperscale_hbor::{Bytes, Capped, Hbor};
 
 use crate::address::{Address, EffectTarget, SubstateKey};
 use crate::envelope::TxHash;
@@ -144,8 +144,7 @@ pub struct Event {
     /// The index into the emitting package's event table.
     pub event_type: u32,
     /// The event's opaque payload.
-    #[hbor(max = MAX_EVENT_PAYLOAD_BYTES)]
-    pub payload: Vec<u8>,
+    pub payload: Bytes<MAX_EVENT_PAYLOAD_BYTES>,
 }
 
 /// Why a transaction aborted, as a class rather than as prose.
@@ -523,8 +522,7 @@ pub struct Answer {
     /// The node whose call answered.
     pub node: u32,
     /// The value, as the method encoded it.
-    #[hbor(max = MAX_ANSWER_BYTES)]
-    pub value: Vec<u8>,
+    pub value: Bytes<MAX_ANSWER_BYTES>,
 }
 
 /// How execution ended: the abort taxonomy as the receipt records it.
@@ -536,8 +534,7 @@ pub enum Outcome {
         /// What each answering node handed back, in node order. Empty
         /// where no method the transaction called returns a value, and
         /// at most one per node, which is what bounds it.
-        #[hbor(max = MAX_MANIFEST_NODES)]
-        answers: Vec<Answer>,
+        answers: Capped<Vec<Answer>, MAX_MANIFEST_NODES>,
     },
     /// A guest defect: a trap, a panic, a kernel refusal of bad guest
     /// arguments, a declaration defect. The sender's fault; priced at the
@@ -731,7 +728,9 @@ pub enum UnmetCondition {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_hbor::{DecodeError, Hash32, assert_canonical, from_slice, to_vec};
+    use hyperscale_hbor::{
+        Bytes, Capped, DecodeError, Hash32, assert_canonical, from_slice, to_vec,
+    };
 
     use super::{
         AbortReason, Address, Answer, EVENT_FRAME_BYTES, Event, MAX_EVENT_PAYLOAD_BYTES, Outcome,
@@ -750,10 +749,10 @@ mod tests {
         let empty = Event {
             emitter: Address::new([7; 31], AddressClass::Component),
             event_type: 3,
-            payload: Vec::new(),
+            payload: Bytes::empty(),
         };
         let widest = Event {
-            payload: vec![0xAB; MAX_EVENT_PAYLOAD_BYTES],
+            payload: vec![0xAB; MAX_EVENT_PAYLOAD_BYTES].try_into().unwrap(),
             emitter: empty.emitter,
             event_type: empty.event_type,
         };
@@ -867,7 +866,12 @@ mod tests {
             local: LocalKey([3; 16]),
         };
         let outcomes = [
-            (0, Outcome::Completed { answers: vec![] }),
+            (
+                0,
+                Outcome::Completed {
+                    answers: Capped::empty(),
+                },
+            ),
             (
                 1,
                 Outcome::UserError {
@@ -920,13 +924,15 @@ mod tests {
         assert_canonical(&Event {
             emitter: Address::new([1; 31], AddressClass::Component),
             event_type: 3,
-            payload: vec![9, 9],
+            payload: vec![9, 9].try_into().unwrap(),
         });
         assert_canonical(&Outcome::Completed {
             answers: vec![Answer {
                 node: 1,
-                value: vec![7],
-            }],
+                value: vec![7].try_into().unwrap(),
+            }]
+            .try_into()
+            .unwrap(),
         });
         assert_canonical(&Outcome::Infeasible {
             key: SubstateKey {
@@ -961,19 +967,20 @@ mod tests {
         payload: Vec<u8>,
     }
 
-    /// The wire refuses what the kernel would never emit, on the same
-    /// constant the kernel enforces.
+    /// An oversized payload cannot be built, and the wire refuses one a
+    /// peer smuggles past the type, on the same constant the kernel
+    /// enforces.
     #[test]
     fn an_oversized_payload_rejects_at_decode() {
-        let mut over = Event {
+        assert!(
+            Bytes::<MAX_EVENT_PAYLOAD_BYTES>::new(vec![0; MAX_EVENT_PAYLOAD_BYTES + 1]).is_err()
+        );
+        let full = Event {
             emitter: Address::new([1; 31], AddressClass::Component),
             event_type: 0,
-            payload: vec![0; MAX_EVENT_PAYLOAD_BYTES + 1],
+            payload: vec![0; MAX_EVENT_PAYLOAD_BYTES].try_into().unwrap(),
         };
-        assert!(to_vec(&over).is_err());
-        over.payload.truncate(MAX_EVENT_PAYLOAD_BYTES);
-        let bytes = to_vec(&over).unwrap();
-        assert!(from_slice::<Event>(&bytes).is_ok());
+        assert!(from_slice::<Event>(&to_vec(&full).unwrap()).is_ok());
 
         let smuggled = to_vec(&Uncapped {
             emitter: Address::new([1; 31], AddressClass::Component),

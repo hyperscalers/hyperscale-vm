@@ -21,7 +21,7 @@
 use core::fmt;
 
 use hyperscale_hbor::hash::Hasher;
-use hyperscale_hbor::{EncodeError, Hash32, Hbor, HborSigned};
+use hyperscale_hbor::{Bytes, Capped, EncodeError, Hash32, Hbor, HborSigned};
 
 use crate::address::PrincipalAddr;
 use crate::amount::Quanta;
@@ -256,13 +256,11 @@ pub struct Attestation {
     /// an attestation deriving any other is refused. Whether an account
     /// the intent acts as admits that principal is the account's own
     /// cell to say, on its own shard.
-    #[hbor(max = MAX_KEY_BYTES)]
-    pub public_key: Vec<u8>,
+    pub public_key: Bytes<MAX_KEY_BYTES>,
     /// The signature over the signing hash of the content the
     /// attestation stands beside: an intent's hash for a member, the
     /// envelope's digest for the root.
-    #[hbor(max = MAX_SIG_BYTES)]
-    pub signature: Vec<u8>,
+    pub signature: Bytes<MAX_SIG_BYTES>,
 }
 
 /// The signing-time choices no node can derive, stated once on the
@@ -289,15 +287,13 @@ pub struct Terms {
     /// The root's, not the members' signers': whoever pays sets the
     /// ceilings. A member's signer fixes what their nodes do, and the
     /// root fixes what they may cost.
-    #[hbor(max = MAX_MANIFEST_NODES)]
-    pub gas_limits: Vec<u64>,
+    pub gas_limits: Capped<Vec<u64>, MAX_MANIFEST_NODES>,
     /// The signed priority, in basis points over the table price, held
     /// to [`MAX_PRIORITY_BP`] at derivation. Burned with the rest of the
     /// fee; decides inclusion and never order.
     pub priority_bp: u32,
-    /// An optional message, capped at [`MAX_MESSAGE_LEN`].
-    #[hbor(max = MAX_MESSAGE_LEN)]
-    pub message: Vec<u8>,
+    /// An optional message.
+    pub message: Bytes<MAX_MESSAGE_LEN>,
 }
 
 impl Terms {
@@ -344,8 +340,7 @@ pub struct TransactionEnvelope {
     /// encoding. A publish's tree is one root that calls nothing. Every
     /// member's attestations ride inside it, beside the intent they
     /// cover.
-    #[hbor(max = MAX_TREE_BYTES)]
-    pub tree: Vec<u8>,
+    pub tree: Bytes<MAX_TREE_BYTES>,
     /// What the transaction is paid and metered under. A function of
     /// the whole tree, so the composer of the root states them, and
     /// signed content: a fee ceiling nobody signed is one anybody could
@@ -359,15 +354,13 @@ pub struct TransactionEnvelope {
     /// this envelope rather than a body of its own: fee assurance,
     /// engagement, and tick settlement are the same machinery either
     /// way.
-    #[hbor(max = MAX_ARTIFACT_BYTES)]
-    pub artifact: Option<Vec<u8>>,
+    pub artifact: Option<Bytes<MAX_ARTIFACT_BYTES>>,
     /// The root's attestations over the hash of
     /// [`signing_bytes`](hyperscale_hbor::HborSigned::signing_bytes),
     /// one per principal the root intent declares itself attested by,
     /// in that order. The one field the preimage leaves out.
     #[hbor(unsigned)]
-    #[hbor(max = MAX_ATTESTATIONS)]
-    pub signatures: Vec<Attestation>,
+    pub signatures: Capped<Vec<Attestation>, MAX_ATTESTATIONS>,
 }
 
 impl TransactionEnvelope {
@@ -403,12 +396,19 @@ impl TransactionEnvelope {
 /// The scheme is stamped beside the material it describes, so a signer's
 /// key and their claim about which curve produced it are written in one
 /// place and cannot drift apart.
+///
+/// # Panics
+///
+/// On a signer whose key or signature outsizes the widest the registry
+/// holds, which no registered scheme produces.
 #[must_use]
 pub fn attest<S: AccountSigner + ?Sized>(key: &S, hash: &[u8; 32]) -> Attestation {
+    // The registry sizes the caps from the widest scheme it holds, so a
+    // registered signer's key and signature fit by construction.
     Attestation {
         scheme: key.scheme(),
-        public_key: key.public_key_bytes(),
-        signature: key.sign_digest(hash),
+        public_key: Bytes::new(key.public_key_bytes()).expect("a registered scheme's key fits"),
+        signature: Bytes::new(key.sign_digest(hash)).expect("a registered scheme's signature fits"),
     }
 }
 
@@ -565,7 +565,7 @@ impl std::error::Error for TermsRefusal {}
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_hbor::{HborSigned, assert_canonical, to_vec};
+    use hyperscale_hbor::{Capped, HborSigned, assert_canonical, to_vec};
 
     use super::{
         Attestation, MAX_EVENT_BYTES_PER_TX, MAX_GAS_LIMIT, MAX_PRIORITY_BP, PrincipalAddr, Terms,
@@ -575,14 +575,16 @@ mod tests {
 
     fn sample() -> TransactionEnvelope {
         TransactionEnvelope {
-            tree: vec![1, 2, 3],
+            tree: vec![1, 2, 3].try_into().unwrap(),
             terms: terms(),
             artifact: None,
             signatures: vec![Attestation {
                 scheme: SchemeId::ED25519,
-                public_key: vec![0x44; 32],
-                signature: vec![0x55; 64],
-            }],
+                public_key: vec![0x44; 32].try_into().unwrap(),
+                signature: vec![0x55; 64].try_into().unwrap(),
+            }]
+            .try_into()
+            .unwrap(),
         }
     }
 
@@ -590,9 +592,9 @@ mod tests {
         Terms {
             fee_payer: PrincipalAddr::new([0x33; 31]),
             max_fee: 1_000_000,
-            gas_limits: vec![300_000, 200_000],
+            gas_limits: vec![300_000, 200_000].try_into().unwrap(),
             priority_bp: 250,
-            message: b"hello".to_vec(),
+            message: b"hello".to_vec().try_into().unwrap(),
         }
     }
 
@@ -621,17 +623,20 @@ mod tests {
         let mut envelope = sample();
         assert_eq!(attestation_work(&envelope.signatures), ed);
 
-        envelope.signatures.push(Attestation {
-            scheme: SchemeId::SECP256K1,
-            public_key: vec![0x66; 33],
-            signature: vec![0x77; 64],
-        });
+        envelope
+            .signatures
+            .push(Attestation {
+                scheme: SchemeId::SECP256K1,
+                public_key: vec![0x66; 33].try_into().unwrap(),
+                signature: vec![0x77; 64].try_into().unwrap(),
+            })
+            .unwrap();
         assert_eq!(
             attestation_work(&envelope.signatures),
             ed.saturating_add(secp)
         );
 
-        envelope.signatures.clear();
+        envelope.signatures = Capped::empty();
         assert_eq!(
             attestation_work(&envelope.signatures),
             DeclaredWork::default()
@@ -645,8 +650,10 @@ mod tests {
     fn the_signature_covers_everything_but_the_attestations() {
         let envelope = sample();
         let mut resigned = envelope.clone();
-        resigned.signatures[0].signature = vec![0xAA; 64];
-        resigned.signatures[0].scheme = SchemeId(0xFFFF);
+        let mut first = resigned.signatures[0].clone();
+        first.signature = vec![0xAA; 64].try_into().unwrap();
+        first.scheme = SchemeId(0xFFFF);
+        resigned.signatures = vec![first].try_into().unwrap();
         assert_eq!(
             envelope.signing_bytes().unwrap(),
             resigned.signing_bytes().unwrap()
@@ -654,7 +661,7 @@ mod tests {
         assert_ne!(to_vec(&envelope).unwrap(), to_vec(&resigned).unwrap());
 
         let mut retreed = envelope.clone();
-        retreed.tree.push(4);
+        retreed.tree = vec![1, 2, 3, 4].try_into().unwrap();
         assert_ne!(
             retreed.signing_bytes().unwrap(),
             envelope.signing_bytes().unwrap()
@@ -673,13 +680,13 @@ mod tests {
     fn the_artifact_is_signed() {
         let call = sample();
         let mut publish = sample();
-        publish.artifact = Some(vec![9]);
+        publish.artifact = Some(vec![9].try_into().unwrap());
         assert_ne!(
             call.signing_bytes().unwrap(),
             publish.signing_bytes().unwrap()
         );
         let mut other = sample();
-        other.artifact = Some(vec![8]);
+        other.artifact = Some(vec![8].try_into().unwrap());
         assert_ne!(
             other.signing_bytes().unwrap(),
             publish.signing_bytes().unwrap()
@@ -690,7 +697,7 @@ mod tests {
     fn the_total_is_the_sum_over_nodes() {
         assert_eq!(terms().gas_limit_total(), 500_000);
         let mut saturating = terms();
-        saturating.gas_limits = vec![u64::MAX, 1];
+        saturating.gas_limits = vec![u64::MAX, 1].try_into().unwrap();
         assert_eq!(saturating.gas_limit_total(), u64::MAX);
     }
 
@@ -720,16 +727,20 @@ mod tests {
     #[test]
     fn a_sum_past_the_ceiling_is_refused() {
         let mut terms = terms();
-        terms.gas_limits = vec![MAX_GAS_LIMIT / 2 + 1, MAX_GAS_LIMIT / 2];
+        terms.gas_limits = vec![MAX_GAS_LIMIT / 2 + 1, MAX_GAS_LIMIT / 2]
+            .try_into()
+            .unwrap();
         assert_eq!(
             terms.admit(2),
             Err(TermsRefusal::CeilingSum {
                 total: MAX_GAS_LIMIT + 1,
             })
         );
-        terms.gas_limits = vec![MAX_GAS_LIMIT / 2, MAX_GAS_LIMIT / 2];
+        terms.gas_limits = vec![MAX_GAS_LIMIT / 2, MAX_GAS_LIMIT / 2]
+            .try_into()
+            .unwrap();
         assert_eq!(terms.admit(2), Ok(()));
-        terms.gas_limits = vec![u64::MAX, u64::MAX];
+        terms.gas_limits = vec![u64::MAX, u64::MAX].try_into().unwrap();
         assert_eq!(
             terms.admit(2),
             Err(TermsRefusal::CeilingSum { total: u64::MAX })
@@ -793,7 +804,7 @@ mod tests {
     #[test]
     fn a_publish_carries_one_ceiling() {
         let mut terms = terms();
-        terms.gas_limits = vec![0];
+        terms.gas_limits = vec![0].try_into().unwrap();
         assert_eq!(terms.admit(1), Ok(()));
     }
 }

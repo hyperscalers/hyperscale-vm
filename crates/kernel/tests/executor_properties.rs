@@ -19,6 +19,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     Declaration, Hash32, Hasher, IssuanceGrant, Issued, ResourceKind, SlotId, TestHasher, child_key,
 };
@@ -28,16 +29,19 @@ use hyperscale_vm_kernel::{
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Answer, CollectionId, Effect, EffectSet, EffectTarget,
-    EntryKey, Mode, Movement, Moves, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    EntryKey, MAX_MANIFEST_NODES, Mode, Movement, Moves, Outcome, ResourceAddr, SubstateKey,
+    TxHash, encode_amount,
 };
 
 /// The one answer a fixture guest hands back, so a receipt depends on
 /// something the run can vary.
-fn answered(value: u64) -> Vec<Answer> {
+fn answered(value: u64) -> Capped<Vec<Answer>, MAX_MANIFEST_NODES> {
     vec![Answer {
         node: 0,
-        value: value.to_le_bytes().to_vec(),
+        value: value.to_le_bytes().to_vec().try_into().unwrap(),
     }]
+    .try_into()
+    .unwrap()
 }
 
 /// What every cell these fixtures move value through holds.
@@ -332,13 +336,15 @@ fn runner(aborting: BTreeSet<TxHash>) -> impl Fn(&BatchTx, KernelSession) -> Run
                 reason: AbortReason::Unreachable,
             }
         } else {
-            Outcome::Completed { answers: vec![] }
+            Outcome::Completed {
+                answers: Capped::empty(),
+            }
         };
         let spent = vec![3 + u64::from(id.0.0[0])];
         match outcome {
             Outcome::Completed { answers } => RunResult::Completed {
                 session,
-                answers,
+                answers: answers.into_inner(),
                 spent,
             },
             outcome => RunResult::Aborted {
@@ -514,7 +520,7 @@ fn portable_runner() -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
         }
         RunResult::Completed {
             session,
-            answers: answered(observed),
+            answers: answered(observed).into_inner(),
             spent: vec![3 + u64::from(id.0.0[0])],
         }
     }
@@ -568,7 +574,7 @@ fn outbound_runner(
         }
         RunResult::Completed {
             session,
-            answers: answered(observed),
+            answers: answered(observed).into_inner(),
             spent: vec![1],
         }
     }

@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     Declaration, Hash32, Hasher, IntentHash, IntentRecord, IssuanceGrant, Issued, Marked, Marker,
     Nullifier, ResourceKind, SlotId, TestHasher, child_key, nullifier_key,
@@ -17,8 +18,8 @@ use hyperscale_vm_kernel::{
     OwnerSet, RunResult, WorkingStore, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
-    Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, Mode, Movement, Moves, Outcome,
-    PrincipalAddr, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    Address, AddressClass, Answer, Effect, EffectSet, EffectTarget, MAX_MANIFEST_NODES, Mode,
+    Movement, Moves, Outcome, PrincipalAddr, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 /// `batch` with every entry applying `applies`.
@@ -35,11 +36,13 @@ const TEST_EXPIRY_MS: u64 = 1_000_000;
 
 /// The one answer a fixture guest hands back, so a receipt depends on
 /// something the run can vary.
-fn answered(value: u64) -> Vec<Answer> {
+fn answered(value: u64) -> Capped<Vec<Answer>, MAX_MANIFEST_NODES> {
     vec![Answer {
         node: 0,
-        value: value.to_le_bytes().to_vec(),
+        value: value.to_le_bytes().to_vec().try_into().unwrap(),
     }]
+    .try_into()
+    .unwrap()
 }
 
 /// What every cell these fixtures move value through holds.
@@ -307,7 +310,7 @@ fn an_environment_reading_guest_derives_one_receipt_on_both_shards() {
         },
     )];
     let reading_guest = |_entry: &BatchTx, session: KernelSession| RunResult::Completed {
-        answers: answered(session.epoch()),
+        answers: answered(session.epoch()).into_inner(),
         session,
         spent: vec![FUEL],
     };
@@ -390,7 +393,7 @@ fn moving_guest(credit: u128, debit: u128) -> impl Fn(&BatchTx, KernelSession) -
                     } else {
                         decode_amount(&cell).unwrap()
                     };
-                    answers = answered(u64::try_from(amount).unwrap());
+                    answers = answered(u64::try_from(amount).unwrap()).into_inner();
                 }
                 _ => {}
             }

@@ -282,9 +282,7 @@ fn answered(answers: &[Answer], node: u32) -> Result<u64> {
     let Some(answer) = answers.iter().find(|answer| answer.node == node) else {
         bail!("node {node} answered nothing: {answers:?}");
     };
-    let bytes: [u8; 8] = answer
-        .value
-        .as_slice()
+    let bytes: [u8; 8] = (&answer.value[..])
         .try_into()
         .map_err(|_| wasmtime::error::format_err!("node {node} answered {:?}", answer.value))?;
     Ok(u64::from_le_bytes(bytes))

@@ -13,6 +13,7 @@
 //! questions can sign an envelope, and a verifier that agrees with it can
 //! accept the result.
 
+use hyperscale_hbor::Bytes;
 use hyperscale_vm_effects::{
     Hasher, Intent, IntentHeader, IntentTree, PackageHash, Records, TestHasher, decode_tree,
     encode_tree,
@@ -106,9 +107,9 @@ fn terms() -> Terms {
     Terms {
         fee_payer: ALICE,
         max_fee: 1_000,
-        gas_limits: vec![500_000, 500_000],
+        gas_limits: vec![500_000, 500_000].try_into().unwrap(),
         priority_bp: 0,
-        message: Vec::new(),
+        message: Bytes::empty(),
     }
 }
 
@@ -125,8 +126,8 @@ fn a_transaction_signs_and_verifies_inside_this_workspace() {
     let tree = IntentTree::of_one(Intent::leaf(HEADER, ALICE, graph));
 
     let key = TestSigner(7);
-    let envelope =
-        sign(wrap(&tree, terms()), &key, &TestHasher).expect("an envelope within its caps signs");
+    let envelope = sign(wrap(&tree, terms()).unwrap(), &key, &TestHasher)
+        .expect("an envelope within its caps signs");
 
     let [attestation] = envelope.signatures.as_slice() else {
         panic!("one key, one attestation");
@@ -155,8 +156,8 @@ fn the_signature_covers_what_the_envelope_says() {
     ));
 
     let key = TestSigner(7);
-    let signed =
-        sign(wrap(&tree, terms()), &key, &TestHasher).expect("an envelope within its caps signs");
+    let signed = sign(wrap(&tree, terms()).unwrap(), &key, &TestHasher)
+        .expect("an envelope within its caps signs");
     let attestation = signed.signatures[0].clone();
     let accepts = |envelope: &TransactionEnvelope| {
         TestVerifier.verify(
@@ -178,7 +179,7 @@ fn the_signature_covers_what_the_envelope_says() {
     let mut retargeted = signed;
     let mut tree = decode_tree(&retargeted.tree).expect("the tree decodes");
     tree.root.header.network = NetworkId(1);
-    retargeted.tree = encode_tree(&tree);
+    retargeted.tree = encode_tree(&tree).try_into().unwrap();
     assert!(!accepts(&retargeted));
 }
 
@@ -192,7 +193,7 @@ fn the_signature_covers_what_the_envelope_says() {
 fn a_publish_envelope_signs_and_verifies() {
     let key = TestSigner(7);
     let signed = sign(
-        wrap_publish(vec![0xAB; 64], ALICE, HEADER, terms()),
+        wrap_publish(vec![0xAB; 64].try_into().unwrap(), ALICE, HEADER, terms()),
         &key,
         &TestHasher,
     )
@@ -216,27 +217,23 @@ fn a_publish_envelope_signs_and_verifies() {
     // The artifact is signed content: a body flipped after signing no
     // longer verifies.
     let mut tampered = signed;
-    let bytes = tampered
+    let mut bytes: Vec<u8> = tampered
         .artifact
-        .as_mut()
-        .expect("wrap_publish carries an artifact");
+        .take()
+        .expect("wrap_publish carries an artifact")
+        .into();
     bytes[0] ^= 1;
+    tampered.artifact = Some(bytes.try_into().unwrap());
     assert!(
         !accepts(&tampered),
         "a tampered artifact loses the signature"
     );
 }
 
-/// A locally built publish body over the wire cap comes back as a refusal
-/// from `sign`, not a panic.
-///
-/// A decoded envelope is bounded — the decoder holds the same cap — so this
-/// reaches `sign` only for an envelope a host built in memory, where the
-/// artifact outsizes what any envelope can carry. The signer is handed the
-/// encode error rather than a signature over bytes it can never submit.
+/// A publish body over the wire cap cannot be wrapped: the artifact's type
+/// holds the cap, so a host is refused where it builds the body rather
+/// than handed a signature over bytes no envelope can carry.
 #[test]
-fn an_over_cap_publish_body_refuses_to_sign() {
-    let key = TestSigner(7);
-    let envelope = wrap_publish(vec![0u8; MAX_ARTIFACT_BYTES + 1], ALICE, HEADER, terms());
-    assert!(sign(envelope, &key, &TestHasher).is_err());
+fn an_over_cap_publish_body_cannot_be_built() {
+    assert!(Bytes::<MAX_ARTIFACT_BYTES>::new(vec![0u8; MAX_ARTIFACT_BYTES + 1]).is_err());
 }

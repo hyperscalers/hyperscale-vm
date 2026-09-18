@@ -1207,11 +1207,11 @@ fn promote_by(signer: PrincipalAddr) -> ManifestGraph {
 /// What Alice's account said about a replacement, at the index the
 /// package's event table fixes: `proposed` is 2, `enacted` 3 and
 /// `cancelled` 4.
-const fn said(event_type: u32, payload: Vec<u8>) -> Event {
+fn said(event_type: u32, payload: Vec<u8>) -> Event {
     Event {
         emitter: ALICE.address(),
         event_type,
-        payload,
+        payload: payload.try_into().unwrap(),
     }
 }
 

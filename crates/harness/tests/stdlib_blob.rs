@@ -296,12 +296,12 @@ fn the_committed_blob_validates_and_transfers_on_both_runtimes() -> Result<()> {
             Event {
                 emitter: SENDER,
                 event_type: 0,
-                payload: encode_amount(AMOUNT).to_vec(),
+                payload: encode_amount(AMOUNT).to_vec().try_into().unwrap(),
             },
             Event {
                 emitter: RECIPIENT,
                 event_type: 1,
-                payload: encode_amount(AMOUNT).to_vec(),
+                payload: encode_amount(AMOUNT).to_vec().try_into().unwrap(),
             },
         ],
     );

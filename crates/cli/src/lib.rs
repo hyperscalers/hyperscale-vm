@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use hyperscale_hbor::to_vec;
+use hyperscale_hbor::{Bytes, Capped, to_vec};
 // The address vocabulary a caller writes on the command line, re-exported
 // beside the renderer that reads one.
 pub use hyperscale_vm_effects::{Address, AddressClass, PackageMetadata, Value};
@@ -402,13 +402,15 @@ pub fn artifact(dir: &Path, provenance: Provenance) -> Result<Vec<u8>, BuildErro
 ///
 /// # Errors
 ///
-/// [`BuildError`] if the envelope does not encode, which an artifact
-/// within the wire caps never is.
+/// [`BuildError`] for an artifact past the wire cap, or an envelope that
+/// does not encode.
 pub fn publish_envelope(
     artifact: Vec<u8>,
     payer: PrincipalAddr,
     network: NetworkId,
 ) -> Result<Vec<u8>, BuildError> {
+    let artifact = Bytes::new(artifact)
+        .map_err(|overflow| BuildError::new(format!("the artifact is {overflow}")))?;
     let envelope = wrap_publish(
         artifact,
         payer,
@@ -421,9 +423,9 @@ pub fn publish_envelope(
         Terms {
             fee_payer: payer,
             max_fee: 0,
-            gas_limits: vec![0],
+            gas_limits: Capped::from_array([0]),
             priority_bp: 0,
-            message: Vec::new(),
+            message: Bytes::empty(),
         },
     );
     to_vec(&envelope)

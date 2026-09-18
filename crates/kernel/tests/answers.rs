@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{Declaration, Hash32, Hasher, NodeCall, PackageHash, TestHasher};
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
@@ -89,7 +90,12 @@ fn an_answer_the_signature_promised_is_recorded() {
 #[test]
 fn silence_the_signature_promised_is_recorded() {
     let receipt = run("silent", false);
-    assert_eq!(receipt.outcome, Outcome::Completed { answers: vec![] });
+    assert_eq!(
+        receipt.outcome,
+        Outcome::Completed {
+            answers: Capped::empty()
+        }
+    );
 }
 
 #[test]

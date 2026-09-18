@@ -8,6 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{IntentRecord, Marked, Marker};
 use hyperscale_vm_types::{
     AbortReason, Address, Answer, CollectionId, EntryKey, Event, Movement, Outcome, ResourceAddr,
@@ -786,7 +787,10 @@ impl KernelSession {
         self.store.merge_active();
         Ok((
             Receipt {
-                outcome: Outcome::Completed { answers },
+                outcome: Outcome::Completed {
+                    answers: Capped::new(answers)
+                        .expect("at most one answer per node, under the node cap"),
+                },
                 delta,
                 events: self.events,
                 // Value exists because the transaction committed it;
@@ -862,6 +866,7 @@ fn diff(store: &OverlayStore) -> StateDelta {
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_hbor::Capped;
     use hyperscale_vm_types::{
         AbortReason, Address, AddressClass, Effect, EffectTarget, Event, Mode, Moves, Outcome,
         encode_amount,
@@ -895,12 +900,12 @@ mod tests {
                 Event {
                     emitter: first,
                     event_type: 3,
-                    payload: b"one".to_vec(),
+                    payload: b"one".to_vec().try_into().unwrap(),
                 },
                 Event {
                     emitter: second,
                     event_type: 4,
-                    payload: b"two".to_vec(),
+                    payload: b"two".to_vec().try_into().unwrap(),
                 },
             ],
         );
@@ -985,7 +990,12 @@ mod tests {
         session.cell_put(0, 0, split).expect("the credit lands");
 
         let (receipt, _) = session.finish(vec![], vec![7]).expect("finishes");
-        assert_eq!(receipt.outcome, Outcome::Completed { answers: vec![] });
+        assert_eq!(
+            receipt.outcome,
+            Outcome::Completed {
+                answers: Capped::empty()
+            }
+        );
     }
 
     /// A credit the cell's width cannot hold is refused at the call

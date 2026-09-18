@@ -156,14 +156,14 @@ fn a_value_past_the_cap_cannot_be_built() {
     assert_eq!(words.push(3), Err(Overflow { actual: 4, max: 3 }));
     assert_eq!(words.len(), 3);
 
-    let mut members = Members::empty();
+    let mut members = Members::default();
     assert!(members.insert(1).unwrap());
     assert!(members.insert(2).unwrap());
     // A member already present takes no room.
     assert_eq!(members.insert(2), Ok(false));
     assert_eq!(members.insert(3), Err(Overflow { actual: 3, max: 2 }));
 
-    let mut rows = Rows::empty();
+    let mut rows = Rows::default();
     assert_eq!(rows.insert(1, 10), Ok(None));
     assert_eq!(rows.insert(2, 20), Ok(None));
     // A key already present is replaced without room for a new one.

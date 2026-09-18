@@ -312,12 +312,12 @@ fn transfer_executes_end_to_end_on_both_runtimes() {
             Event {
                 emitter: ALICE.address(),
                 event_type: 0,
-                payload: encode_amount(100).to_vec(),
+                payload: encode_amount(100).to_vec().try_into().unwrap(),
             },
             Event {
                 emitter: BOB.address(),
                 event_type: 1,
-                payload: encode_amount(100).to_vec(),
+                payload: encode_amount(100).to_vec().try_into().unwrap(),
             },
         ],
     );

@@ -26,6 +26,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{Admitted, explain_refusal};
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, ExecutionMode, GuestBackend, ManifestWalk, OwnerSet, Substates,
@@ -165,7 +166,7 @@ pub fn preview(
         // says exactly that rather than reading as a refusal.
         return Report {
             outcome: Outcome::Completed {
-                answers: Vec::new(),
+                answers: Capped::empty(),
             },
             refusal: Some("the engine could not run this transaction's code".to_owned()),
             movements: Vec::new(),
@@ -178,7 +179,7 @@ pub fn preview(
     let Some(receipt) = outcome.receipts.get(&entry.tx) else {
         return Report {
             outcome: Outcome::Completed {
-                answers: Vec::new(),
+                answers: Capped::empty(),
             },
             refusal: Some("the batch returned no receipt for this transaction".to_owned()),
             movements: Vec::new(),

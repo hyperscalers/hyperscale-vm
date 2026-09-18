@@ -565,7 +565,7 @@ fn pool_event(outcome: &BatchOutcome, entry: &BatchTx) -> (u32, Vec<u8>) {
         .filter(|e| e.emitter == Address::from(pool()))
         .collect();
     assert_eq!(from_pool.len(), 1, "the pool spoke once");
-    (from_pool[0].event_type, from_pool[0].payload.clone())
+    (from_pool[0].event_type, from_pool[0].payload.to_vec())
 }
 
 /// What the pool holds for `validator`, decoded through the type the

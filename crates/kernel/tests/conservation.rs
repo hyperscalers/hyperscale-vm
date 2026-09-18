@@ -416,6 +416,7 @@ mod through_the_session {
 mod instances {
     use std::sync::Arc;
 
+    use hyperscale_hbor::Capped;
     use hyperscale_vm_effects::{
         Declaration, DeclaredAccess, Hash32, Hasher, SlotId, TestHasher, Value, collection_id,
     };
@@ -499,10 +500,17 @@ mod instances {
 
     #[test]
     fn refiling_an_instance_where_it_was_moves_no_holding() {
-        assert_eq!(refile(&[1], &[1]), Outcome::Completed { answers: vec![] });
+        assert_eq!(
+            refile(&[1], &[1]),
+            Outcome::Completed {
+                answers: Capped::empty()
+            }
+        );
         assert_eq!(
             refile(&[1], &[2]),
-            Outcome::Completed { answers: vec![] },
+            Outcome::Completed {
+                answers: Capped::empty()
+            },
             "the entry carries something else and the instance is where it was",
         );
     }

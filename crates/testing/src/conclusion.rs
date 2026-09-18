@@ -130,7 +130,7 @@ impl<T> Conclusion<T> {
             .events
             .iter()
             .filter(|event| event.event_type == event_type)
-            .map(|event| event.payload.as_slice())
+            .map(|event| &*event.payload)
             .collect()
     }
 

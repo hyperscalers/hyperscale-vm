@@ -44,6 +44,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use buckets::Buckets;
 pub use buckets::Held;
 pub use grants::{Op, grants};
+use hyperscale_hbor::Bytes;
 use hyperscale_vm_effects::{IntentRecord, IssuanceGrant};
 use hyperscale_vm_types::{
     ABSENT_REP, Address, EffectSet, EffectTarget, ResourceAddr, SeedWindow, SubstateKey, TxHash,
@@ -52,8 +53,7 @@ use hyperscale_vm_types::{
 // same constants bound the kernel's emission here and the wire's decode in
 // the consensus workspace, so the two cannot drift.
 use hyperscale_vm_types::{
-    EVENT_FRAME_BYTES, Event, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES,
-    MAX_EVENTS_PER_TX,
+    EVENT_FRAME_BYTES, Event, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_TYPES, MAX_EVENTS_PER_TX,
 };
 pub use materialize::{Capability, Interval, MaterializeError, Settlement};
 use ranges::Ranges;
@@ -740,9 +740,10 @@ impl KernelSession {
         if event_type >= MAX_EVENT_TYPES {
             return Err(SessionTrap::EventTypeOutOfRange(event_type));
         }
-        if payload.len() > MAX_EVENT_PAYLOAD_BYTES {
-            return Err(SessionTrap::EventPayloadTooLarge(payload.len()));
-        }
+        // The payload's cap is its type's: a payload past it cannot be
+        // built, and the refusal is the construction's.
+        let payload = Bytes::new(payload)
+            .map_err(|overflow| SessionTrap::EventPayloadTooLarge(overflow.actual))?;
         if self.events.len() >= MAX_EVENTS_PER_TX {
             return Err(SessionTrap::TooManyEvents);
         }
