@@ -72,14 +72,14 @@ fn without_a_policy_a_rest_edge_is_still_a_refusal() {
     assert_eq!(
         refused,
         TypedError::DanglingOutput {
-            method: "in-lots".into(),
+            method: "in_lots".into(),
             output: 1
         }
     );
     // The refusal speaks the author's coordinates, and points at the fix.
     assert_eq!(
         refused.to_string(),
-        "output 1 of `in-lots` reaches no consumer — route it, or name a rest sink with `rest_to`"
+        "output 1 of `in_lots` reaches no consumer — route it, or name a rest sink with `rest_to`"
     );
 }
 

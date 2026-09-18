@@ -32,9 +32,10 @@ pub struct Method {
     pub(crate) function: TokenStream,
 }
 
-/// The Rust name a kebab-cased export is defined under.
+/// The Rust name an export is defined under, which is the export's own:
+/// a method publishes under its identifier.
 fn rust_name(published: &str) -> syn::Ident {
-    syn::Ident::new(&published.replace('-', "_"), Span::call_site())
+    syn::Ident::new(published, Span::call_site())
 }
 
 /// One method's export and its executing body.

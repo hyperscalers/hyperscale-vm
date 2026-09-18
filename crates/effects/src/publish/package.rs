@@ -930,19 +930,19 @@ mod tests {
     /// by the name at all.
     #[test]
     fn a_reserved_name_over_a_foreign_shape_is_refused() {
-        let pinned = reserved_shape("resource-address").expect("the protocol pins it");
+        let pinned = reserved_shape("ResourceAddr").expect("the protocol pins it");
         assert!(matches!(pinned, ShapeNode::Named { .. }));
         let mut types = ShapeTable::new();
         types.declare(pinned).expect("the protocol's own shape");
         assert_eq!(check_metadata(&declaring(types)), Ok(()));
         let text = TypeShape::Text { cap: 8 };
         assert_eq!(
-            check_metadata(&declaring(one("resource-address", text.clone()))),
+            check_metadata(&declaring(one("ResourceAddr", text.clone()))),
             Err(MetadataError::ReservedType {
-                name: "resource-address".into(),
+                name: "ResourceAddr".into(),
             })
         );
         // A name the protocol does not hold is the package's own to spend.
-        assert_eq!(check_metadata(&declaring(one("outcome", text))), Ok(()));
+        assert_eq!(check_metadata(&declaring(one("Outcome", text))), Ok(()));
     }
 }

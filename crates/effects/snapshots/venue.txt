@@ -7,7 +7,7 @@ config
       1  price
       2  door
 errors
-      0  short
+      0  Short
 
 enter() — infallible, answers
   declares

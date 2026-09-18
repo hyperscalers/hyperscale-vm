@@ -88,7 +88,7 @@ pub extern "C" fn operate() {
 
 /// The same, at instance resolution: opens for whoever presents the
 /// one instance the configured resource and id name.
-#[unsafe(export_name = "operate-instance")]
+#[unsafe(export_name = "operate_instance")]
 pub extern "C" fn operate_instance() {
     // Likewise: what differs is which claim the gate names, which is
     // the declaration's business and never this body's.
@@ -97,7 +97,7 @@ pub extern "C" fn operate_instance() {
 
 /// The same over an admin set: opens for whoever presents two of the
 /// three configured instances.
-#[unsafe(export_name = "operate-quorum")]
+#[unsafe(export_name = "operate_quorum")]
 pub extern "C" fn operate_quorum() {
     // Likewise again: a threshold is a shape the declaration holds, so
     // counting the presentations is the kernel's and not this body's

@@ -285,10 +285,10 @@ mod tests {
     /// method plus that name.
     #[test]
     fn a_decline_reads_as_the_method_and_the_named_error() {
-        let errors = vec!["slippage-exceeded".to_owned(), "empty-pool".to_owned()];
+        let errors = vec!["SlippageExceeded".to_owned(), "EmptyPool".to_owned()];
         let sentence = explain_decline(2, 0, Some(("swap", target())), &errors);
         assert!(sentence.contains("`swap`"), "{sentence}");
-        assert!(sentence.contains("slippage-exceeded"), "{sentence}");
+        assert!(sentence.contains("SlippageExceeded"), "{sentence}");
         assert!(sentence.contains("node 2"), "{sentence}");
     }
 
@@ -296,7 +296,7 @@ mod tests {
     /// dressed up as a name.
     #[test]
     fn a_code_past_the_table_is_marked_as_such() {
-        let errors = vec!["short".to_owned()];
+        let errors = vec!["Short".to_owned()];
         let sentence = explain_decline(1, 7, Some(("repay", target())), &errors);
         assert!(sentence.contains("code 7"), "{sentence}");
         assert!(

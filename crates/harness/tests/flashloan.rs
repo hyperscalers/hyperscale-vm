@@ -96,13 +96,13 @@ fn debt_record() -> ResourceMeta {
         .methods
         .into_values()
         .flat_map(|signature| signature.issues)
-        .find(|issuance| issuance.mark == b"debt")
+        .find(|issuance| issuance.mark == b"Debt")
         .expect("the pool issues the obligation");
     ResourceMeta {
         namespace: pool_addr().into(),
         kind: issuance.kind,
         material: Capped::new(vec![
-            Bytes::new(Value::Bytes(b"debt".to_vec()).canonical_bytes()).unwrap(),
+            Bytes::new(Value::Bytes(b"Debt".to_vec()).canonical_bytes()).unwrap(),
         ])
         .unwrap(),
         rules: issuance

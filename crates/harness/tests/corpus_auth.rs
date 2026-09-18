@@ -2234,7 +2234,7 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
     let presented_by_bob = ManifestGraph {
         nodes: Capped::from_array([GraphNode {
             target: ALICE.into(),
-            method: "present-instance".into(),
+            method: "present_instance".into(),
             args: vec![
                 GraphArg::Literal(Value::Address(badge.address())),
                 GraphArg::Literal(Value::U64(id)),

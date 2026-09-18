@@ -3251,8 +3251,8 @@ impl<'a> Lowerer<'a> {
         // `Name::address()` — the resource the mark derives, as a body
         // names it. The same derivation `issued(Name)` reaches from an
         // attribute, so a gate and a body cannot mean two addresses.
-        if name == "address" {
-            let Some(issued) = self.issuing_mark(call, "address") else {
+        if name == "Address" {
+            let Some(issued) = self.issuing_mark(call, "Address") else {
                 return Eval::absent(call.func.span(), "an undeclared resource");
             };
             let term = Term::SelfResource(issued.kind, issued.mark);

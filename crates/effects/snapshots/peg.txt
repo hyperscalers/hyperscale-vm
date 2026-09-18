@@ -9,9 +9,9 @@ config
       2  oracle
       3  band
 errors
-      0  outside-band
-      1  nothing-redeemed
-      2  same-asset
+      0  OutsideBand
+      1  NothingRedeemed
+      2  SameAsset
 
 instantiate() — fallible
   declares
@@ -19,7 +19,7 @@ instantiate() — fallible
       1  write self.config
   exports  handle for clause 1, self.record, config.band, config.stable, config.reserve
 
-post-deviation(u256) — infallible
+post_deviation(u256) — infallible
   declares
       0  requires claim config.oracle
       1  write self.deviation

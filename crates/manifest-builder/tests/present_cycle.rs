@@ -199,7 +199,7 @@ impl ChainRecords for EndlessBadges {
 fn chaining_account() -> PackageMetadata {
     let mut package = PackageMetadata::default();
     package.methods.insert(
-        "present-badge".into(),
+        "present_badge".into(),
         MethodSignature {
             params: vec![ParamType::Address],
             effects: vec![
@@ -233,7 +233,7 @@ fn an_endless_chain_of_distinct_claims_stops_at_the_depth_bound() {
     // Without the bound this recurses until the stack is exhausted: every
     // claim is a fresh badge, so nothing the memo holds is ever seen
     // twice.
-    b.call(ALICE, "present-badge", (first,))
+    b.call(ALICE, "present_badge", (first,))
         .expect("the call types")
         .none()
         .expect("present-badge produces no edges");

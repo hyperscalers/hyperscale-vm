@@ -3,69 +3,69 @@ state
 config
       0  registrar
 resources
-  fungible["approved"] — granting mint to the issuer and withdraw to whoever answers for config.registrar and deposit to whoever answers for config.registrar and recall to config.registrar
-  fungible["bearer"] — granting mint to the issuer and recall to config.registrar
-  fungible["share"] — granting mint to the issuer and withdraw to whoever holds the issuer's "registered" badge and deposit to whoever holds the issuer's "registered" badge and halt to config.registrar and recall to config.registrar
-  non-fungible["registered"] — granting mint to the issuer and withdraw to nobody and recall to config.registrar
+  fungible["Approved"] — granting mint to the issuer and withdraw to whoever answers for config.registrar and deposit to whoever answers for config.registrar and recall to config.registrar
+  fungible["Bearer"] — granting mint to the issuer and recall to config.registrar
+  fungible["Share"] — granting mint to the issuer and withdraw to whoever holds the issuer's "Registered" badge and deposit to whoever holds the issuer's "Registered" badge and halt to config.registrar and recall to config.registrar
+  non-fungible["Registered"] — granting mint to the issuer and withdraw to nobody and recall to config.registrar
 
 halt(address) — infallible
   declares
-      0  write arg0.halt[self-issued(fungible["share"])], reaching under halt
+      0  write arg0.halt[self-issued(fungible["Share"])], reaching under halt
   exports  handle for clause 0
 
 instantiate() — infallible
   declares
       0  requires self.config is absent
       1  write self.config
-      2  requires self.resource[self-issued(non-fungible["registered"])] is absent
-      3  write self.resource[self-issued(non-fungible["registered"])]
-      4  requires self.resource[self-issued(fungible["share"])] is absent
-      5  write self.resource[self-issued(fungible["share"])]
-      6  requires self.resource[self-issued(fungible["approved"])] is absent
-      7  write self.resource[self-issued(fungible["approved"])]
-      8  requires self.resource[self-issued(fungible["bearer"])] is absent
-      9  write self.resource[self-issued(fungible["bearer"])]
+      2  requires self.resource[self-issued(non-fungible["Registered"])] is absent
+      3  write self.resource[self-issued(non-fungible["Registered"])]
+      4  requires self.resource[self-issued(fungible["Share"])] is absent
+      5  write self.resource[self-issued(fungible["Share"])]
+      6  requires self.resource[self-issued(fungible["Approved"])] is absent
+      7  write self.resource[self-issued(fungible["Approved"])]
+      8  requires self.resource[self-issued(fungible["Bearer"])] is absent
+      9  write self.resource[self-issued(fungible["Bearer"])]
   exports  handle for clause 1, handle for clause 3, handle for clause 5, handle for clause 7, handle for clause 9, self.record
 
 issue(u128) — infallible
-  mints    "share" fungible
-  yields   edge 0 carrying self-issued(fungible["share"])
+  mints    "Share" fungible
+  yields   edge 0 carrying self-issued(fungible["Share"])
   exports  arg0
 
-issue-approved(u128) — infallible
-  mints    "approved" fungible
-  yields   edge 0 carrying self-issued(fungible["approved"])
+issue_approved(u128) — infallible
+  mints    "Approved" fungible
+  yields   edge 0 carrying self-issued(fungible["Approved"])
   exports  arg0
 
-issue-bearer(u128) — infallible
-  mints    "bearer" fungible
-  yields   edge 0 carrying self-issued(fungible["bearer"])
+issue_bearer(u128) — infallible
+  mints    "Bearer" fungible
+  yields   edge 0 carrying self-issued(fungible["Bearer"])
   exports  arg0
 
-recall-registrations(address, u64, ids) — infallible
+recall_registrations(address, u64, ids) — infallible
   declares
-      0  take arg0.arg1[self-issued(non-fungible["registered"])] over the whole order space, at most len(arg2) entries, reaching under recall
+      0  take arg0.arg1[self-issued(non-fungible["Registered"])] over the whole order space, at most len(arg2) entries, reaching under recall
   costs    clause 0's cap — read, write, footprint and retention
            clause 0's bounds — footprint
-  yields   edge 0 carrying self-issued(non-fungible["registered"]) × arg2
+  yields   edge 0 carrying self-issued(non-fungible["Registered"]) × arg2
   exports  handle for clause 0, arg2
 
-recall-shares(address, u64, u128) — infallible
+recall_shares(address, u64, u128) — infallible
   declares
-      0  reserve arg2 arg0.arg1[self-issued(fungible["share"])], reaching under recall
-  yields   edge 0 carrying self-issued(fungible["share"])
+      0  reserve arg2 arg0.arg1[self-issued(fungible["Share"])], reaching under recall
+  yields   edge 0 carrying self-issued(fungible["Share"])
   exports  handle for clause 0
 
 register(u64) — infallible
-  mints    "registered" non-fungible
+  mints    "Registered" non-fungible
   declares
       0  requires claim config.registrar
-      1  requires self.instance[self-issued(non-fungible["registered"]), arg0] is absent
-      2  write self.instance[self-issued(non-fungible["registered"]), arg0]
-  yields   edge 0 carrying self-issued(non-fungible["registered"]) × [arg0]
+      1  requires self.instance[self-issued(non-fungible["Registered"]), arg0] is absent
+      2  write self.instance[self-issued(non-fungible["Registered"]), arg0]
+  yields   edge 0 carrying self-issued(non-fungible["Registered"]) × [arg0]
   exports  handle for clause 2, arg0
 
 unhalt(address) — infallible
   declares
-      0  write arg0.halt[self-issued(fungible["share"])], reaching under halt
+      0  write arg0.halt[self-issued(fungible["Share"])], reaching under halt
   exports  handle for clause 0

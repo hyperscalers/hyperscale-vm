@@ -22,7 +22,7 @@ struct Record {
 }
 
 const RECORD: &ShapeNode = &ShapeNode::Named {
-    name: "record",
+    name: "Record",
     shape: &ShapeNode::Struct(&[
         ("a", &ShapeNode::U32),
         ("b", &ShapeNode::ByteArray(3)),
@@ -41,15 +41,15 @@ enum Choice {
 }
 
 const CHOICE: &ShapeNode = &ShapeNode::Named {
-    name: "choice",
+    name: "Choice",
     shape: &ShapeNode::Enum(&[
-        ("nothing", 0, &ShapeNode::Tuple(&[])),
+        ("Nothing", 0, &ShapeNode::Tuple(&[])),
         (
-            "wide",
+            "Wide",
             1,
             &ShapeNode::Struct(&[("held", &ShapeNode::U128), ("more", &ShapeNode::U64)]),
         ),
-        ("narrow", 2, &ShapeNode::Tuple(&[&ShapeNode::U8])),
+        ("Narrow", 2, &ShapeNode::Tuple(&[&ShapeNode::U8])),
     ]),
 };
 
@@ -172,7 +172,7 @@ fn a_generic_impl_composes_by_naming_its_parameter() {
     assert_eq!(
         <Composed<u8> as HborShape>::NODE,
         &ShapeNode::Named {
-            name: "composed",
+            name: "Composed",
             shape: &ShapeNode::Struct(&[
                 ("a", &ShapeNode::U64),
                 ("b", &ShapeNode::Option(&ShapeNode::U8)),

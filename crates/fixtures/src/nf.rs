@@ -237,13 +237,13 @@ fn consumer_gates() -> [(&'static str, RuleExpr); 3] {
         // The same at instance resolution: the configured resource and
         // the configured id name one instance, and holding any other
         // instance of that resource opens nothing.
-        ("operate-instance", instance(1)),
+        ("operate_instance", instance(1)),
         // The same over an admin set: three badge instances in
         // configuration, any two of which open the surface. One badge
         // resource, one instance per admin — rotate by issuing, revoke
         // by burning, and never redeploy to seat a fourth.
         (
-            "operate-quorum",
+            "operate_quorum",
             RuleExpr::CountOf {
                 count: 2,
                 rules: Capped::new((1..=3).map(instance).collect::<Vec<_>>()).unwrap(),
@@ -323,7 +323,7 @@ pub fn operate_quorum(
     proofs: &[Proof],
 ) -> Result<(), TypedError> {
     builder
-        .call_presenting(proofs, gated, "operate-quorum", ())?
+        .call_presenting(proofs, gated, "operate_quorum", ())?
         .none()
 }
 
@@ -340,7 +340,7 @@ pub fn operate_instance(
     proof: Proof,
 ) -> Result<(), TypedError> {
     builder
-        .call_presenting(proof, gated, "operate-instance", ())?
+        .call_presenting(proof, gated, "operate_instance", ())?
         .none()
 }
 

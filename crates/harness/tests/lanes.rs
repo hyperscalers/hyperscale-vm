@@ -218,7 +218,7 @@ fn a_fielded_instance_reads_the_same_in_both_lanes() {
 fn a_closure_over_a_value_in_hand_declares_what_the_long_way_does() {
     let methods = &grammar::metadata().methods;
     let folded = &methods["tally"];
-    let spelled = &methods["tally-plainly"];
+    let spelled = &methods["tally_plainly"];
 
     assert_eq!(folded.effects, spelled.effects, "the clauses diverged");
     assert_eq!(folded.abi, spelled.abi, "the binding diverged");

@@ -314,16 +314,6 @@ fn the_lowering_prices_only_an_emit_it_can_attribute() {
     refuse.compile_fail("tests/refusals/emit_outside_a_method.rs");
 }
 
-/// A published name names one export. Two identifiers can spell one
-/// published name — the kebab form erases case — and the collision
-/// refuses at the line that wrote it rather than panicking inside the
-/// generated `blueprint()`.
-#[test]
-fn the_lowering_refuses_a_published_name_collision() {
-    let refuse = TestCases::new();
-    refuse.compile_fail("tests/refusals/colliding_name.rs");
-}
-
 /// The bring-up is one node with one body, and what an authored
 /// `instantiate` may say about it is exactly what any method may — minus
 /// a return type, since the supply is `initial`'s, and minus a gate,

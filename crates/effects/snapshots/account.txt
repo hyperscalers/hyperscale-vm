@@ -4,27 +4,27 @@ state
      17  quarantine — a leaf per key, holding u128, at most 16 bytes
      18  recovery — one leaf, holding [u8]≤4096, at most 4098 bytes
      19  veto — one leaf, holding [u8]≤4096, at most 4098 bytes
-     20  proposal — one leaf, holding proposal, at most 12312 bytes
+     20  proposal — one leaf, holding Proposal, at most 12312 bytes
      21  delay_ms — one leaf, holding u64, at most 8 bytes
      22  serials — one leaf, holding u64, at most 8 bytes
 events
-      0  withdrawn
-      1  deposited
-      2  proposed
-      3  enacted
-      4  cancelled
+      0  Withdrawn
+      1  Deposited
+      2  Proposed
+      3  Enacted
+      4  Cancelled
 errors
-      0  no-such-proposal
-      1  unmatured
-      2  outranked
+      0  NoSuchProposal
+      1  Unmatured
+      2  Outranked
 types
-  cancelled = { serial: u64 }
-  deposited = { amount: u128 }
-  enacted = { serial: u64 }
-  proposal = { serial: u64, effective_at_ms: u64, replaces: replacement }
-  proposed = { serial: u64, effective_at_ms: u64 }
-  replacement = < 0 factors{ primary: [u8]≤4096, confirmation: [u8]≤4096, frozen: [u8]≤4096? } | 1 roles{ recovery: [u8]≤4096, veto: [u8]≤4096, delay_ms: u64 } >
-  withdrawn = { amount: u128 }
+  Cancelled = { serial: u64 }
+  Deposited = { amount: u128 }
+  Enacted = { serial: u64 }
+  Proposal = { serial: u64, effective_at_ms: u64, replaces: Replacement }
+  Proposed = { serial: u64, effective_at_ms: u64 }
+  Replacement = < 0 Factors{ primary: [u8]≤4096, confirmation: [u8]≤4096, frozen: [u8]≤4096? } | 1 Roles{ recovery: [u8]≤4096, veto: [u8]≤4096, delay_ms: u64 } >
+  Withdrawn = { amount: u128 }
 
 accept(resource-address) — infallible
   declares
@@ -33,7 +33,7 @@ accept(resource-address) — infallible
   exports  handle for clause 1
 
 amend(rule, rule, u64) — fallible
-  emits    proposed — at most 54 bytes
+  emits    Proposed — at most 54 bytes
   declares
       0  requires claim self
       1  write self.proposal
@@ -47,12 +47,12 @@ burn(bucket) — infallible
   destroys arg0, if its own rule admits it
   exports  edge arg0
 
-burn-nf(nf-bucket) — infallible
+burn_nf(nf-bucket) — infallible
   destroys arg0, if its own rule admits it
   exports  edge arg0
 
 cancel(u64) — fallible
-  emits    cancelled — at most 46 bytes
+  emits    Cancelled — at most 46 bytes
   declares
       0  read self.recovery
       1  requires 1 of (the rule stored at self.recovery, 2 of (self.recovery is absent, claim self))
@@ -62,14 +62,14 @@ cancel(u64) — fallible
   exports  handle for clause 2, handle for clause 4, arg0
 
 deposit(bucket) — total
-  emits    deposited — at most 54 bytes
+  emits    Deposited — at most 54 bytes
   declares
       0  read self.refused[resource-of(arg0)]
       1  credit self.quarantine[resource-of(arg0)]
       2  credit self.vault[resource-of(arg0)]
   exports  handles for clauses 0–2, edge arg0
 
-deposit-nf(nf-bucket) — infallible
+deposit_nf(nf-bucket) — infallible
   declares
       0  file self.nf-vault[resource-of(arg0)] over the whole order space, at most len(ids-of(arg0)) entries
   costs    clause 0's cap — read, write, footprint and retention
@@ -77,7 +77,7 @@ deposit-nf(nf-bucket) — infallible
   exports  handle for clause 0, edge arg0
 
 freeze(principal-rule, principal-rule) — infallible
-  emits    proposed — at most 54 bytes
+  emits    Proposed — at most 54 bytes
   declares
       0  read self.recovery
       1  requires 1 of (the rule stored at self.recovery, 2 of (self.recovery is absent, claim self))
@@ -88,14 +88,14 @@ freeze(principal-rule, principal-rule) — infallible
       6  write self.serials
   exports  handles for clauses 3–6, arg0, arg1
 
-present-badge(address) — infallible
+present_badge(address) — infallible
   declares
       0  read self.vault[arg0]
       1  requires claim self
       2  requires self.vault[arg0] is present
       3  proves arg0
 
-present-instance(address, u64) — infallible
+present_instance(address, u64) — infallible
   declares
       0  read self.nf-vault[arg0] at arg1
       1  requires claim self
@@ -103,7 +103,7 @@ present-instance(address, u64) — infallible
       3  proves (arg0, arg1)
 
 promote(u64) — fallible
-  emits    enacted — at most 46 bytes
+  emits    Enacted — at most 46 bytes
   declares
       0  write self.proposal
       1  requires self.auth is present
@@ -114,7 +114,7 @@ promote(u64) — fallible
   exports  handle for clause 0, handles for clauses 2–5, arg0
 
 propose(principal-rule, principal-rule) — infallible
-  emits    proposed — at most 54 bytes
+  emits    Proposed — at most 54 bytes
   declares
       0  read self.recovery
       1  requires 1 of (the rule stored at self.recovery, 2 of (self.recovery is absent, claim self))
@@ -156,7 +156,7 @@ sweep(resource-address, u128) — infallible
   exports  handle for clause 1
 
 veto(u64) — fallible
-  emits    cancelled — at most 46 bytes
+  emits    Cancelled — at most 46 bytes
   declares
       0  read self.veto
       1  requires 1 of (the rule stored at self.veto, 2 of (self.veto is absent, claim self))
@@ -166,14 +166,14 @@ veto(u64) — fallible
   exports  handle for clause 2, handle for clause 4, arg0
 
 withdraw(resource-address, u128) — infallible
-  emits    withdrawn — at most 54 bytes
+  emits    Withdrawn — at most 54 bytes
   declares
       0  requires claim self
       1  reserve arg1 self.vault[arg0]
   yields   edge 0 carrying arg0
   exports  handle for clause 1
 
-withdraw-nf(resource-address, ids) — infallible
+withdraw_nf(resource-address, ids) — infallible
   declares
       0  requires claim self
       1  take self.nf-vault[arg0] over the whole order space, at most len(arg1) entries

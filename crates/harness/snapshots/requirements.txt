@@ -1,9 +1,9 @@
 required by the protocol, from the resources this transaction moves
     0  account:1010101010101010101010101010101010101010101010101010101010101001 withdraw
          nothing — no resource this node moves governs it
-    1  component:13532d01a195165c1593e2df67bc4802ca527b90a482090fe6424ee0f9ad3102 swap
-         halt of restricted:90e275ff88936786e5eda116c6e1498b1d1417c25615293b68df98c3f4d85f06 — the moving party is not halted, heard before any body runs
-         withdraw of restricted:90e275ff88936786e5eda116c6e1498b1d1417c25615293b68df98c3f4d85f06 — the moving party holds any instance of restricted:33e8ec41e6c9ae68c303a5d0ea4dffad1926e2199cc0cfebdf70dceba42e8e06, heard before any body runs
+    1  component:768aca7145728f1bf2d43ae38158ec1858e8313f5f0c3b541de9417da64afa02 swap
+         halt of restricted:e05892ace4b0f7b223f44dc2e25a26bbd209fc6d2f3483b87b4b0e5a40a17c06 — the moving party is not halted, heard before any body runs
+         withdraw of restricted:e05892ace4b0f7b223f44dc2e25a26bbd209fc6d2f3483b87b4b0e5a40a17c06 — the moving party holds any instance of restricted:97034da8afe60c8c6bbe2f93e78b54dc6a8c94c6e021fe4c6931724e20c12506, heard before any body runs
     2  account:1010101010101010101010101010101010101010101010101010101010101001 deposit
-         halt of restricted:90e275ff88936786e5eda116c6e1498b1d1417c25615293b68df98c3f4d85f06 — the moving party is not halted, heard before any body runs
-         deposit of restricted:90e275ff88936786e5eda116c6e1498b1d1417c25615293b68df98c3f4d85f06 — the moving party holds any instance of restricted:33e8ec41e6c9ae68c303a5d0ea4dffad1926e2199cc0cfebdf70dceba42e8e06, heard before any body runs
+         halt of restricted:e05892ace4b0f7b223f44dc2e25a26bbd209fc6d2f3483b87b4b0e5a40a17c06 — the moving party is not halted, heard before any body runs
+         deposit of restricted:e05892ace4b0f7b223f44dc2e25a26bbd209fc6d2f3483b87b4b0e5a40a17c06 — the moving party holds any instance of restricted:97034da8afe60c8c6bbe2f93e78b54dc6a8c94c6e021fe4c6931724e20c12506, heard before any body runs

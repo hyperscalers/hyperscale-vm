@@ -1,34 +1,34 @@
 state
   the protocol's own — config
      16  pot — a leaf per key, holding u128, at most 16 bytes
-     17  tickets — an unordered collection, holding address, at most 32 bytes
+     17  tickets — an unordered collection, holding Address, at most 32 bytes
      18  round — one leaf, holding u64, at most 8 bytes
-     19  outcome — one leaf, holding outcome, at most 65 bytes
+     19  outcome — one leaf, holding Outcome, at most 65 bytes
 events
-      0  entered
-      1  closed
-      2  settled
+      0  Entered
+      1  Closed
+      2  Settled
 errors
-      0  round-truncated
-      1  not-yet-drawn
-      2  seal-lapsed
-      3  round-stands-open
+      0  RoundTruncated
+      1  NotYetDrawn
+      2  SealLapsed
+      3  RoundStandsOpen
 types
-  address = [u8; 32]
-  closed = ()
-  entered = { who: address }
-  outcome = { draw: [u8; 32], winner: address? }
-  settled = (outcome)
+  Address = [u8; 32]
+  Closed = ()
+  Entered = { who: Address }
+  Outcome = { draw: [u8; 32], winner: Address? }
+  Settled = (Outcome)
 
 close() — infallible
-  emits    closed — at most 38 bytes
+  emits    Closed — at most 38 bytes
   declares
       0  requires self.round is absent
       1  write self.round
   exports  handle for clause 1
 
 enter(address, bucket) — infallible
-  emits    entered — at most 70 bytes
+  emits    Entered — at most 70 bytes
   declares
       0  requires self.round is absent
       1  read self.round
@@ -43,7 +43,7 @@ instantiate() — infallible
   exports  handle for clause 1, self.record
 
 reopen() — fallible
-  emits    closed — at most 38 bytes
+  emits    Closed — at most 38 bytes
   declares
       0  requires self.outcome is absent
       1  read self.outcome
@@ -52,7 +52,7 @@ reopen() — fallible
   exports  handle for clause 1, handle for clause 3
 
 settle(u64) — fallible
-  emits    settled — at most 103 bytes
+  emits    Settled — at most 103 bytes
   declares
       0  requires self.round is present
       1  write self.round

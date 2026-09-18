@@ -17,7 +17,7 @@ fn a_bare_lookup_declares_what_the_guarded_spelling_does() {
     // question a miss answers, and both write the same cell.
     let metadata = grammar::metadata();
     let bare = &metadata.methods["charge"];
-    let guarded = &metadata.methods["charge-or"];
+    let guarded = &metadata.methods["charge_or"];
 
     assert_eq!(
         bare.effects, guarded.effects,

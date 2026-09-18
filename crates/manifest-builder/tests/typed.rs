@@ -151,7 +151,7 @@ fn a_split_of_a_typed_edge_is_two_typed_edges() {
     // `take` types both outputs by the resource of its input, so the type
     // travels the length of the chain from the one literal that fixed it.
     let [taken, rest] = b
-        .call(splitter(), "in-lots", (funds, 30u128))
+        .call(splitter(), "in_lots", (funds, 30u128))
         .unwrap()
         .into_array()
         .unwrap();
@@ -207,7 +207,7 @@ fn an_edge_nothing_typed_stays_untyped() {
         .untyped()
         .call_signed(ALICE, ALICE, "withdraw", (RES, 100u128));
     let [taken, rest] = b
-        .call(splitter(), "in-lots", (funds, 30u128))
+        .call(splitter(), "in_lots", (funds, 30u128))
         .unwrap()
         .into_array()
         .unwrap();
@@ -232,7 +232,7 @@ fn an_asserted_type_carries_through_the_untyped_path() {
         .untyped()
         .call_signed(ALICE, ALICE, "withdraw", (RES, 100u128));
     let [taken, rest] = b
-        .call(splitter(), "in-lots", (funds.resource_is(RES), 30u128))
+        .call(splitter(), "in_lots", (funds.resource_is(RES), 30u128))
         .unwrap()
         .into_array()
         .unwrap();
@@ -302,7 +302,7 @@ fn a_call_is_typed_against_the_signature_it_names() {
         .one()
         .unwrap();
     assert!(matches!(
-        b.call(splitter(), "in-lots", (one, two)),
+        b.call(splitter(), "in_lots", (one, two)),
         Err(TypedError::EdgeForValueParam { param: 1, .. })
     ));
 }
@@ -375,16 +375,16 @@ fn a_scope_presents_where_a_gate_wants_claims() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, OPERATOR);
     let presented = b
-        .call_proving(OPERATOR, "present-badge", (owner_badge(),))
+        .call_proving(OPERATOR, "present_badge", (owner_badge(),))
         .unwrap();
     b.presenting(presented, |b| {
-        b.call(pool(), "deactivate-validator", (8u64,))?.none()
+        b.call(pool(), "deactivate_validator", (8u64,))?.none()
     })
     .unwrap();
     let graph = b.build().unwrap();
 
     let gated = graph.nodes.last().expect("the gated call is a node");
-    assert_eq!(gated.method, "deactivate-validator");
+    assert_eq!(gated.method, "deactivate_validator");
     assert!(
         gated.evidence.contains(&ClaimRef::Node(0)),
         "the scope's proof rides the gated call: {:?}",
@@ -401,7 +401,7 @@ fn a_scope_is_invisible_to_a_call_wanting_nothing() {
     // whether the scope was open over it.
     let compose = |scoped: bool| {
         TypedBuilder::compose(&chain, &TestHasher, ALICE, move |b| {
-            let held = b.call_proving(ALICE, "present-badge", (RES,))?;
+            let held = b.call_proving(ALICE, "present_badge", (RES,))?;
             let funds = b.call(ALICE, "withdraw", (RES, 100u128))?.one()?;
             if scoped {
                 b.presenting(held, move |b| b.call(BOB, "deposit", (funds,))?.none())
@@ -423,13 +423,13 @@ fn a_scope_is_invisible_to_a_call_wanting_nothing() {
 fn nested_scopes_present_together() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, OPERATOR);
-    let held = b.call_proving(OPERATOR, "present-badge", (RES,)).unwrap();
+    let held = b.call_proving(OPERATOR, "present_badge", (RES,)).unwrap();
     let presented = b
-        .call_proving(OPERATOR, "present-badge", (owner_badge(),))
+        .call_proving(OPERATOR, "present_badge", (owner_badge(),))
         .unwrap();
     b.presenting(held, |b| {
         b.presenting(presented, |b| {
-            b.call(pool(), "deactivate-validator", (8u64,))?.none()
+            b.call(pool(), "deactivate_validator", (8u64,))?.none()
         })
     })
     .unwrap();
@@ -449,12 +449,12 @@ fn nested_scopes_present_together() {
 fn explicit_evidence_stands_in_for_the_scope() {
     let chain = world();
     let mut b = TypedBuilder::new(&chain, &TestHasher, OPERATOR);
-    let held = b.call_proving(OPERATOR, "present-badge", (RES,)).unwrap();
+    let held = b.call_proving(OPERATOR, "present_badge", (RES,)).unwrap();
     let presented = b
-        .call_proving(OPERATOR, "present-badge", (owner_badge(),))
+        .call_proving(OPERATOR, "present_badge", (owner_badge(),))
         .unwrap();
     b.presenting(held, |b| {
-        b.call_presenting(presented, pool(), "deactivate-validator", (8u64,))?
+        b.call_presenting(presented, pool(), "deactivate_validator", (8u64,))?
             .none()
     })
     .unwrap();
@@ -480,7 +480,7 @@ fn an_uncovered_gate_refuses_with_the_claim_named() {
     let mut b = TypedBuilder::new(&chain, &TestHasher, BOB);
     let (seal, _) = b.seal_of(pool()).unwrap();
     let unrelated = b
-        .call_proving(BOB, "present-badge", (owner_badge(),))
+        .call_proving(BOB, "present_badge", (owner_badge(),))
         .unwrap();
     let refused = b.presenting(unrelated, |b| b.call(pool(), &seal, ()).map(|_| ()));
     assert!(

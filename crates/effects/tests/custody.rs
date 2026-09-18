@@ -571,7 +571,7 @@ fn a_total_frame_carries_no_entry_its_own_leg_would_answer() {
     let entry = |rule: StoredRule| ResourceMeta {
         namespace: ISSUER,
         kind: ResourceKind::Fungible,
-        material: Capped::new(vec![Bytes::new(b"approved".to_vec()).unwrap()]).unwrap(),
+        material: Capped::new(vec![Bytes::new(b"Approved".to_vec()).unwrap()]).unwrap(),
         rules: {
             let mut rules = ResourceGrants::new();
             rules.set(GrantedBehaviour::Deposit, sealed(&rule));

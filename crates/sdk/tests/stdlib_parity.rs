@@ -97,7 +97,7 @@ fn account() -> Blueprint {
             t.bind_destroyer(0);
             t.bind_bucket(0);
         })
-        .method("burn-nf", &[ParamType::NfBucket], |t: &mut Trace| {
+        .method("burn_nf", &[ParamType::NfBucket], |t: &mut Trace| {
             t.bind_destroyer(0);
             t.bind_bucket(0);
         })
@@ -234,7 +234,7 @@ fn account() -> Blueprint {
 }
 
 /// The mark the pool issues its liquidity claims under.
-const SHARE: &[u8] = b"share";
+const SHARE: &[u8] = b"Share";
 
 /// The book's two declared vaults, at the slots their typed markers
 /// carry.
@@ -265,7 +265,7 @@ fn share_grants() -> GrantsExpr {
 fn amm() -> Blueprint {
     Blueprint::builder()
         .method(
-            "add-liquidity",
+            "add_liquidity",
             &[ParamType::Bucket, ParamType::Bucket],
             |t: &mut Trace| {
                 // Both sides are named by the configuration rather than
@@ -290,7 +290,7 @@ fn amm() -> Blueprint {
                 t.output(&t.self_resource(ResourceKind::Fungible, SHARE));
             },
         )
-        .method("remove-liquidity", &[ParamType::Bucket], |t: &mut Trace| {
+        .method("remove_liquidity", &[ParamType::Bucket], |t: &mut Trace| {
             // What comes back is the pool's own claim, which is the
             // one resource a redemption can be priced in.
             t.grant(SHARE, share_grants());
@@ -368,7 +368,7 @@ fn amm() -> Blueprint {
 fn book() -> Blueprint {
     Blueprint::builder()
         .method(
-            "place-ask",
+            "place_ask",
             &[ParamType::U64, ParamType::Bucket],
             |t: &mut Trace| {
                 let price: Sym<U64> = t.arg(0);
@@ -393,7 +393,7 @@ fn book() -> Blueprint {
             },
         )
         .method(
-            "fill-asks",
+            "fill_asks",
             &[ParamType::U64, ParamType::U64, ParamType::Bucket],
             |t: &mut Trace| {
                 let from: Sym<U64> = t.arg(0);
@@ -455,10 +455,10 @@ fn fungible_account() -> PackageMetadata {
     // holdings interval, where the two that matter — the module's and the
     // gate's pinned shape — already agree.
     for aside in [
-        "deposit-nf",
-        "withdraw-nf",
-        "present-badge",
-        "present-instance",
+        "deposit_nf",
+        "withdraw_nf",
+        "present_badge",
+        "present_instance",
     ] {
         authored.methods.remove(aside);
     }

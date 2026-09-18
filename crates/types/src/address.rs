@@ -259,16 +259,16 @@ impl AddressClass {
     /// The encoding erases the distinction — every address is
     /// thirty-two bytes — so a consumer reading a payload against a
     /// shape has this name and nothing else to tell it that what it
-    /// found addresses something. Spelled as the effect vocabulary
-    /// spells the same narrowing, so one word answers both.
+    /// found addresses something. The Rust type that carries the
+    /// narrowing, because a published name is the item it came from.
     #[must_use]
     pub const fn shape_name(self) -> &'static str {
         match self {
-            Self::Principal => "principal-address",
-            Self::Component => "component-address",
-            Self::Package => "package-address",
-            Self::Resource | Self::Restricted => "resource-address",
-            Self::Native => "native-address",
+            Self::Principal => "PrincipalAddr",
+            Self::Component => "ComponentAddr",
+            Self::Package => "PackageAddr",
+            Self::Resource | Self::Restricted => "ResourceAddr",
+            Self::Native => "NativeAddr",
         }
     }
 
@@ -449,7 +449,7 @@ impl HborDecode for Address {
 
 /// The name every address is described under: thirty-two bytes, and the
 /// name is the whole of what says so.
-pub const ADDRESS_SHAPE: &str = "address";
+pub const ADDRESS_SHAPE: &str = "Address";
 
 /// The thirty-two bytes every address is, under every narrowing.
 const ADDRESS_BYTES: &ShapeNode = &ShapeNode::ByteArray(32);
@@ -772,7 +772,7 @@ position_addr! {
     /// register's two roles are a resource and a publisher. A callable
     /// role arrives with its conversion, which is the fail-closed
     /// direction: a class not listed here cannot be called at all.
-    CallTarget, NotCallable, "call-target" {
+    CallTarget, NotCallable, "CallTarget" {
         /// An account, answering through the protocol's account blueprint.
         Principal(PrincipalAddr),
         /// An instance, answering through the blueprint its address

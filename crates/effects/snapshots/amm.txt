@@ -7,35 +7,35 @@ config
       1  y
       2  fee
 resources
-  fungible["share"] — granting mint to the issuer and burn to the issuer
+  fungible["Share"] — granting mint to the issuer and burn to the issuer
 errors
-      0  slippage-exceeded
-      1  empty-pool
-      2  nothing-minted
-      3  self-paired
+      0  SlippageExceeded
+      1  EmptyPool
+      2  NothingMinted
+      3  SelfPaired
 
-add-liquidity(bucket, bucket) — fallible
+add_liquidity(bucket, bucket) — fallible
   takes    arg0 carrying config.x
   takes    arg1 carrying config.y
-  mints    "share" fungible
+  mints    "Share" fungible
   declares
       0  credit-only self.reserves[config.x]
       1  credit-only self.reserves[config.y]
       2  write self.supply
-  yields   edge 0 carrying self-issued(fungible["share"])
+  yields   edge 0 carrying self-issued(fungible["Share"])
   exports  handles for clauses 0–2, edge arg0, edge arg1
 
 instantiate() — fallible
   declares
       0  requires self.config is absent
       1  write self.config
-      2  requires self.resource[self-issued(fungible["share"])] is absent
-      3  write self.resource[self-issued(fungible["share"])]
+      2  requires self.resource[self-issued(fungible["Share"])] is absent
+      3  write self.resource[self-issued(fungible["Share"])]
   exports  handle for clause 1, handle for clause 3, self.record, config.fee, config.x, config.y
 
-remove-liquidity(bucket) — fallible
-  takes    arg0 carrying self-issued(fungible["share"])
-  burns    "share" fungible
+remove_liquidity(bucket) — fallible
+  takes    arg0 carrying self-issued(fungible["Share"])
+  burns    "Share" fungible
   declares
       0  debit-only self.reserves[config.x]
       1  debit-only self.reserves[config.y]

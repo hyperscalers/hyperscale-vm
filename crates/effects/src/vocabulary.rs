@@ -71,10 +71,10 @@ pub const HALT: SlotId = SlotId(7);
 pub const DEPOSIT_METHOD: &str = "deposit";
 
 /// The method that mints a claim on a badge its caller holds.
-pub const PRESENT_BADGE_METHOD: &str = "present-badge";
+pub const PRESENT_BADGE_METHOD: &str = "present_badge";
 
 /// The same over one instance of a non-fungible badge.
-pub const PRESENT_INSTANCE_METHOD: &str = "present-instance";
+pub const PRESENT_INSTANCE_METHOD: &str = "present_instance";
 
 #[cfg(test)]
 mod tests {

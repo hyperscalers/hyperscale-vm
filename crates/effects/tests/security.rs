@@ -186,9 +186,9 @@ fn transfer_to(resource: ResourceAddr, recipient: PrincipalAddr) -> IntentTree {
 #[test]
 fn the_class_follows_what_the_entries_do() {
     let (_, issuer) = issuer();
-    let share = issued(issuer, b"share");
-    let registered = issued(issuer, b"registered");
-    let bearer = issued(issuer, b"bearer");
+    let share = issued(issuer, b"Share");
+    let registered = issued(issuer, b"Registered");
+    let bearer = issued(issuer, b"Bearer");
 
     assert_eq!(
         share.address().class(),
@@ -219,11 +219,11 @@ fn the_class_follows_what_the_entries_do() {
 #[test]
 fn an_authored_rule_governs_a_holder_the_package_never_named() {
     let (chain, issuer) = issuer();
-    let share = issued(issuer, b"share");
-    let registered = issued(issuer, b"registered");
+    let share = issued(issuer, b"Share");
+    let registered = issued(issuer, b"Registered");
 
     let mut env = transfer(share);
-    env.resources = Capped::new(vec![record(issuer, b"share")]).unwrap();
+    env.resources = Capped::new(vec![record(issuer, b"Share")]).unwrap();
     let admitted =
         admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher).expect("the transfer admits");
     let declaration = admitted.declaration();
@@ -274,11 +274,11 @@ fn an_authored_rule_governs_a_holder_the_package_never_named() {
 #[test]
 fn each_side_of_a_transfer_answers_for_its_own_register_entry() {
     let (chain, issuer) = issuer();
-    let share = issued(issuer, b"share");
-    let registered = issued(issuer, b"registered");
+    let share = issued(issuer, b"Share");
+    let registered = issued(issuer, b"Registered");
 
     let mut env = transfer_to(share, BOB);
-    env.resources = Capped::new(vec![record(issuer, b"share")]).unwrap();
+    env.resources = Capped::new(vec![record(issuer, b"Share")]).unwrap();
     let admitted =
         admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher).expect("the transfer admits");
     let conditions: Vec<_> = admitted.declaration().required().cloned().collect();
@@ -299,7 +299,7 @@ fn each_side_of_a_transfer_answers_for_its_own_register_entry() {
 #[test]
 fn the_unrestricted_class_is_asked_nothing() {
     let (chain, issuer) = issuer();
-    let env = transfer(issued(issuer, b"bearer"));
+    let env = transfer(issued(issuer, b"Bearer"));
     let admitted = admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher)
         .expect("the transfer admits with no record presented at all");
     assert!(
@@ -321,8 +321,8 @@ fn the_unrestricted_class_is_asked_nothing() {
 fn the_register_entry_is_soulbound() {
     let (chain, issuer) = issuer();
 
-    let mut env = transfer(issued(issuer, b"registered"));
-    env.resources = Capped::new(vec![record(issuer, b"registered")]).unwrap();
+    let mut env = transfer(issued(issuer, b"Registered"));
+    env.resources = Capped::new(vec![record(issuer, b"Registered")]).unwrap();
     let refusal = admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher)
         .expect_err("no holder may debit their own register entry");
     // The sentence itself — "grants Withdraw to nobody", per direction —
@@ -373,7 +373,7 @@ fn a_member_presenting_a_granted_claim_is_the_cores_off_the_granters_shard() {
                     },
                     GraphNode {
                         target: BOB.into(),
-                        method: "deposit-nf".into(),
+                        method: "deposit_nf".into(),
                         args: vec![GraphArg::edge(
                             EdgeRef {
                                 producer: 0,
@@ -401,7 +401,7 @@ fn a_member_presenting_a_granted_claim_is_the_cores_off_the_granters_shard() {
     }])
     .unwrap();
     let mut env = IntentTree::of_one(root);
-    env.resources = Capped::new(vec![record(issuer, b"registered")]).unwrap();
+    env.resources = Capped::new(vec![record(issuer, b"Registered")]).unwrap();
     let admitted = admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher)
         .expect("the registrar grants what Bob's socket asks");
 

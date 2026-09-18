@@ -197,7 +197,7 @@ fn a_package_explains_itself_in_the_names_its_author_wrote() {
     // names come out of.
     let whole = explain(&metadata);
     assert!(
-        whole.contains("round-truncated"),
+        whole.contains("RoundTruncated"),
         "the error table:\n{whole}"
     );
 }
@@ -245,7 +245,7 @@ fn a_package_says_what_its_resources_say_to_a_holder() {
     // be handed.
     assert!(
         told.contains(
-            "restricted:3ad1723eaaf3149c012bfffd1d2d3c166268e91ab3a579acb4785461884a5006"
+            "restricted:818284e10191ca2a3e2fb222e85466590e087d37c4fd885b797e0b6559e64106"
         ),
         "the address blake3 derives:\n{told}"
     );

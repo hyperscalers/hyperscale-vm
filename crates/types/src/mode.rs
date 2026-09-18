@@ -270,8 +270,8 @@ mod tests {
         let all = [Presence::Either, Presence::Absent, Presence::Present];
         for left in all {
             assert_eq!(left.meet(left), Some(left), "idempotent");
-            assert_eq!(left.meet(Presence::Either), Some(left), "unit");
-            assert_eq!(Presence::Either.meet(left), Some(left), "unit");
+            assert_eq!(left.meet(Presence::Either), Some(left), "Unit");
+            assert_eq!(Presence::Either.meet(left), Some(left), "Unit");
             for right in all {
                 assert_eq!(left.meet(right), right.meet(left), "symmetric");
             }

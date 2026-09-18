@@ -84,11 +84,11 @@ struct Everything {
 #[test]
 fn a_declared_type_is_named_and_found_by_its_name() {
     let (table, root) = ShapeTable::of::<Everything>();
-    assert_eq!(table.named("everything"), Some(root));
+    assert_eq!(table.named("Everything"), Some(root));
     let mut names: Vec<&str> = table.names().map(|(name, _)| name).collect();
     names.sort_unstable();
     // `Wrapped` is transparent, so it is a name and not a node.
-    assert_eq!(names, ["choice", "everything", "inner"]);
+    assert_eq!(names, ["Choice", "Everything", "Inner"]);
 }
 
 /// A tuple struct and a unit are the same form at different widths, and
@@ -100,7 +100,7 @@ fn positional_and_unit_declare_tuples() {
         panic!("a struct is named");
     };
     let shape = *shape;
-    let inner = table.named("inner").unwrap();
+    let inner = table.named("Inner").unwrap();
     let word = table.push(TypeShape::U64).unwrap();
     assert_eq!(table.get(shape), Some(&TypeShape::Tuple(vec![inner, word])));
     let (table, root) = ShapeTable::of::<Unit>();
@@ -123,7 +123,7 @@ fn variants_carry_their_names_and_their_discriminants() {
     let word = table.push(TypeShape::U32).unwrap();
     let boolean = table.push(TypeShape::Bool).unwrap();
     let pair = table.push(TypeShape::Tuple(vec![word, boolean])).unwrap();
-    let inner = table.named("inner").unwrap();
+    let inner = table.named("Inner").unwrap();
     let maybe = table.push(TypeShape::Option(inner)).unwrap();
     let named = table
         .push(TypeShape::Struct(vec![ShapeField {
@@ -135,17 +135,17 @@ fn variants_carry_their_names_and_their_discriminants() {
         table.get(shape),
         Some(&TypeShape::Enum(vec![
             ShapeVariant {
-                name: "nothing".into(),
+                name: "Nothing".into(),
                 discriminant: 0,
                 content: unit,
             },
             ShapeVariant {
-                name: "pair".into(),
+                name: "Pair".into(),
                 discriminant: 1,
                 content: pair,
             },
             ShapeVariant {
-                name: "named".into(),
+                name: "Named".into(),
                 discriminant: 9,
                 content: named,
             },
@@ -222,7 +222,7 @@ fn a_value_reads_back_against_its_own_shape() {
     assert_eq!(
         fields[4].1,
         ShapeValue::Variant {
-            name: "pair".to_owned(),
+            name: "Pair".to_owned(),
             discriminant: 1,
             content: Box::new(ShapeValue::Tuple(vec![
                 ShapeValue::U32(11),

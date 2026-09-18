@@ -147,7 +147,7 @@ fn an_enum_record_declares_its_variants_and_encodes() {
     let metadata = shapes::blueprint().metadata();
     let kind = metadata
         .types
-        .named("kind")
+        .named("Kind")
         .expect("the record declares it");
     let Some(TypeShape::Named { shape, .. }) = metadata.types.get(kind) else {
         panic!("a record declares under its name");
@@ -157,7 +157,7 @@ fn an_enum_record_declares_its_variants_and_encodes() {
     };
     assert_eq!(
         variants.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(),
-        ["plain", "marked"]
+        ["Plain", "Marked"]
     );
     let marked = shapes::Kind::Marked { mark: 7, weight: 9 };
     let bytes = to_vec(&marked).expect("a record encodes");
@@ -449,7 +449,7 @@ fn an_instance_issues_resources_its_own_address_derives() {
         metadata.methods["stake"].outputs,
         vec![Expr::SelfResource {
             kind: ResourceKind::Fungible,
-            material: vec![Expr::Literal(Value::Bytes(b"unit".to_vec()))],
+            material: vec![Expr::Literal(Value::Bytes(b"Unit".to_vec()))],
             grants: issuer_mints,
         }],
     );
@@ -462,7 +462,7 @@ fn an_instance_issues_resources_its_own_address_derives() {
                 guard: None,
                 rule: RuleExpr::claim(Expr::SelfResource {
                     kind: ResourceKind::NonFungible,
-                    material: vec![Expr::Literal(Value::Bytes(b"owner-badge".to_vec()))],
+                    material: vec![Expr::Literal(Value::Bytes(b"OwnerBadge".to_vec()))],
                     grants: GrantsExpr::new(),
                 }),
             })
@@ -609,7 +609,7 @@ fn a_denomination_from_one_arm_is_recorded_unconditionally() {
 
     let metadata = switch::blueprint().metadata();
     assert_eq!(
-        metadata.methods["credit-one-way"].denominations,
+        metadata.methods["credit_one_way"].denominations,
         vec![Some(Expr::Config(0)), None],
     );
 }
@@ -676,7 +676,7 @@ fn a_branch_the_declaration_cannot_read_declares_the_union() {
     use hyperscale_vm_effects::AbiParam;
 
     let metadata = switch::blueprint().metadata();
-    let opaque = &metadata.methods["bump-opaque"];
+    let opaque = &metadata.methods["bump_opaque"];
     assert_eq!(opaque.effects.len(), 2);
     assert!(
         opaque.effects.iter().all(|clause| clause.guard().is_none()),
@@ -853,7 +853,7 @@ fn a_declared_gate_carries_the_whole_threshold_algebra() {
             .expect("a gated method requires its rule")
     };
     assert_eq!(
-        requires("set-fee"),
+        requires("set_fee"),
         RuleExpr::CountOf {
             count: 1,
             rules: Capped::new(vec![slot(0), slot(1)]).unwrap(),
@@ -1410,7 +1410,7 @@ fn a_spelled_sum_lowers_to_the_addition() {
     use hyperscale_vm_effects::{Expr, TargetExpr};
 
     let metadata = shelf::blueprint().metadata();
-    let effects = &metadata.methods["window-both"].effects;
+    let effects = &metadata.methods["window_both"].effects;
     let Clause::Effect {
         reach: None,
         target,
@@ -1739,9 +1739,9 @@ fn a_bare_fallible_tail_reads_as_its_spelled_form() {
         method("spelled").answers && method("bare").answers,
         "a payload answers"
     );
-    assert_eq!(method("spelled-unit").effects, method("bare-unit").effects);
+    assert_eq!(method("spelled_unit").effects, method("bare_unit").effects);
     assert!(
-        !method("spelled-unit").answers && !method("bare-unit").answers,
+        !method("spelled_unit").answers && !method("bare_unit").answers,
         "a unit payload answers nothing"
     );
 }
@@ -1996,7 +1996,7 @@ fn an_issued_denomination_names_the_declared_resource() {
     };
     let effects = &metadata.methods["stash"].effects;
     assert!(
-        effects.iter().any(|clause| issued(b"chip", clause)
+        effects.iter().any(|clause| issued(b"Chip", clause)
             && matches!(
                 clause,
                 Clause::Effect {
@@ -2008,7 +2008,7 @@ fn an_issued_denomination_names_the_declared_resource() {
     );
     let effects = &metadata.methods["reclaim"].effects;
     assert!(
-        effects.iter().any(|clause| issued(b"seat", clause)
+        effects.iter().any(|clause| issued(b"Seat", clause)
             && matches!(
                 clause,
                 Clause::Effect {

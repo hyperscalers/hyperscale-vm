@@ -5,41 +5,41 @@ state
 config
       0  asset
 resources
-  fungible["unit"] — granting mint to the issuer and burn to the issuer
+  fungible["Unit"] — granting mint to the issuer and burn to the issuer
 errors
-      0  empty-vault
-      1  insufficient
+      0  EmptyVault
+      1  Insufficient
 
 deposit(bucket) — fallible
   takes    arg0 carrying config.asset
-  mints    "unit" fungible
+  mints    "Unit" fungible
   declares
       0  credit-only self.pool[config.asset]
       1  write self.supply
-  yields   edge 0 carrying self-issued(fungible["unit"])
+  yields   edge 0 carrying self-issued(fungible["Unit"])
   exports  handle for clause 0, handle for clause 1, edge arg0
 
 instantiate() — infallible
   declares
       0  requires self.config is absent
       1  write self.config
-      2  requires self.resource[self-issued(fungible["unit"])] is absent
-      3  write self.resource[self-issued(fungible["unit"])]
+      2  requires self.resource[self-issued(fungible["Unit"])] is absent
+      3  write self.resource[self-issued(fungible["Unit"])]
   exports  handle for clause 1, handle for clause 3, self.record
 
 mint(u128, bucket) — fallible
   takes    arg1 carrying config.asset
-  mints    "unit" fungible
+  mints    "Unit" fungible
   declares
       0  credit-only self.pool[config.asset]
       1  write self.supply
-  yields   edge 0 carrying self-issued(fungible["unit"])
+  yields   edge 0 carrying self-issued(fungible["Unit"])
   yields   edge 1 carrying resource-of(arg1)
   exports  handle for clause 0, handle for clause 1, arg0, edge arg1
 
 redeem(bucket) — fallible
-  takes    arg0 carrying self-issued(fungible["unit"])
-  burns    "unit" fungible
+  takes    arg0 carrying self-issued(fungible["Unit"])
+  burns    "Unit" fungible
   declares
       0  debit-only self.pool[config.asset]
       1  write self.supply
@@ -47,8 +47,8 @@ redeem(bucket) — fallible
   exports  handle for clause 0, handle for clause 1, edge arg0
 
 withdraw(u128, bucket) — fallible
-  takes    arg1 carrying self-issued(fungible["unit"])
-  burns    "unit" fungible
+  takes    arg1 carrying self-issued(fungible["Unit"])
+  burns    "Unit" fungible
   declares
       0  debit-only self.pool[config.asset]
       1  write self.supply

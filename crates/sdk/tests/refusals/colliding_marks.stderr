@@ -1,5 +1,19 @@
-error: `owner-badge` already names one of this package's resources, and a band resolves by position — so this one is an entry nothing can reach
-  --> tests/refusals/colliding_marks.rs:12:12
-   |
-12 |     struct Owner_badge;
-   |            ^^^^^^^^^^^
+error[E0428]: the name `OWNER_BADGE` is defined multiple times
+ --> tests/refusals/colliding_marks.rs:3:1
+  |
+3 | #[blueprint]
+  | ^^^^^^^^^^^^ `OWNER_BADGE` redefined here
+  |
+  = note: `OWNER_BADGE` must be defined only once in the value namespace of this module
+  = note: this error originates in the attribute macro `blueprint` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0592]: duplicate definitions with name `issued_owner_badge`
+ --> tests/refusals/colliding_marks.rs:3:1
+  |
+3 | #[blueprint]
+  | ^^^^^^^^^^^^
+  | |
+  | duplicate definitions for `issued_owner_badge`
+  | other definition for `issued_owner_badge`
+  |
+  = note: this error originates in the attribute macro `blueprint` (in Nightly builds, run with -Z macro-backtrace for more info)

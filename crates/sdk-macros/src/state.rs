@@ -24,7 +24,7 @@ use syn::spanned::Spanned as _;
 
 use crate::client::Serves;
 use crate::lower::{Field, FieldKind};
-use crate::{is_named, kebab, pascal};
+use crate::{is_named, pascal};
 
 /// The names one declared band spells, refused where two of them
 /// collide.
@@ -32,16 +32,17 @@ use crate::{is_named, kebab, pascal};
 /// Every band resolves by position and renders by name — an event's
 /// index, an error's code, a role's band offset, a resource's mark — so
 /// two entries spelling one name are two claims on one number, and the
-/// second is the one nothing reaches. [`kebab`] maps more than one
-/// identifier onto a name, which is what makes this something an author
-/// can write without seeing it.
+/// second is the one nothing reaches. A band spans several declarations
+/// — the error codes of every `#[error]` enum are one table — so two of
+/// them can carry one identifier where Rust would refuse two members of
+/// one type.
 pub fn distinct_band<'a>(
     band: &str,
     declared: impl IntoIterator<Item = &'a syn::Ident>,
 ) -> syn::Result<Vec<String>> {
     let mut names: Vec<String> = Vec::new();
     for ident in declared {
-        let name = kebab(&ident.to_string());
+        let name = ident.to_string();
         if names.contains(&name) {
             return Err(syn::Error::new(
                 ident.span(),

@@ -21,7 +21,7 @@ use quote::{format_ident, quote};
 
 use crate::gate::Gate;
 use crate::resource::Resource;
-use crate::{INSTANTIATE, is_named, kebab};
+use crate::{INSTANTIATE, is_named, snake};
 
 /// Which addresses a package's instances sit at, and so how it is
 /// called.
@@ -146,7 +146,7 @@ fn sdk(name: &str) -> TokenStream2 {
 /// The wrapper's parameter and the argument it binds.
 ///
 /// A parameter widens to what the manifest position admits rather than
-/// to the guest's own type: a body's `Address` is one class at a time,
+/// to the guest's own type: a body's `address` is one class at a time,
 /// and which class belongs at a position is the package's business.
 fn widen(name: &syn::Ident, ty: &syn::Type) -> (TokenStream2, TokenStream2) {
     let bucket_arg = sdk("BucketArg");
@@ -396,7 +396,7 @@ fn issued(resources: &[Resource], config: Option<&syn::Ident>) -> Vec<TokenStrea
             // the helper cannot collide with the wrapper for a method
             // the package happens to name after its own resource, and a
             // call site reads which of the two it is.
-            let name = format_ident!("issued_{}", kebab(&resource.name).replace('-', "_"));
+            let name = format_ident!("issued_{}", snake(&resource.name));
             let mark = syn::LitByteStr::new(&resource.mark, Span::call_site());
             let kind = match resource.kind {
                 ResourceKind::Fungible => quote!(#kind_ty::Fungible),

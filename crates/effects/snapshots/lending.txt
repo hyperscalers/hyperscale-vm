@@ -15,13 +15,13 @@ config
       4  liquidation_threshold
       5  growth_per_period
 errors
-      0  price-unset
-      1  index-stale
-      2  over-ltv
-      3  still-covered
-      4  nothing-owed
-      5  same-asset
-      6  liquidates-at-open
+      0  PriceUnset
+      1  IndexStale
+      2  OverLtv
+      3  StillCovered
+      4  NothingOwed
+      5  SameAsset
+      6  LiquidatesAtOpen
 
 accrue(u64) — infallible
   declares
@@ -47,7 +47,7 @@ draw(u128, u64) — fallible
   yields   edge 0 carrying config.debt
   exports  handles for clauses 0–6, arg1, arg0, config.ltv
 
-index-scaled() — infallible, answers
+index_scaled() — infallible, answers
   declares
       0  read self.index
   exports  handle for clause 0
@@ -69,7 +69,7 @@ liquidate(u64) — fallible
   yields   edge 0 carrying config.collateral
   exports  handles for clauses 0–5, arg0, config.liquidation_threshold
 
-post-price(u256, u256) — infallible
+post_price(u256, u256) — infallible
   declares
       0  requires claim config.oracle
       1  write self.collateral_price

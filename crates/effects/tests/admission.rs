@@ -109,7 +109,7 @@ fn valid_graph() -> ManifestGraph {
             },
             GraphNode {
                 target: splitter().into(),
-                method: "in-lots".into(),
+                method: "in_lots".into(),
                 args: vec![
                     GraphArg::edge(
                         EdgeRef {
@@ -780,7 +780,7 @@ fn every_malformed_mutation_rejects() {
     // sign rather than a cell whose framing a guest decodes its way out
     // of.
     let mut wrong_edge_kind = valid_graph();
-    wrong_edge_kind.nodes[2].method = "deposit-nf".into();
+    wrong_edge_kind.nodes[2].method = "deposit_nf".into();
     assert_eq!(
         admit_it(&wrong_edge_kind),
         Err(AdmissionError::ResourceKindMismatch {
@@ -1193,7 +1193,7 @@ fn a_halted_non_fungible_class_fences_the_interval_movement() {
     let record = ResourceMeta {
         namespace: BOB.address(),
         kind: ResourceKind::NonFungible,
-        material: Capped::new(vec![Bytes::new(b"seat".to_vec()).unwrap()]).unwrap(),
+        material: Capped::new(vec![Bytes::new(b"Seat".to_vec()).unwrap()]).unwrap(),
         rules,
     };
     let seat = record.address(&TestHasher);
@@ -1204,7 +1204,7 @@ fn a_halted_non_fungible_class_fences_the_interval_movement() {
         nodes: Capped::new(vec![
             GraphNode {
                 target: ALICE.into(),
-                method: "withdraw-nf".into(),
+                method: "withdraw_nf".into(),
                 args: vec![
                     GraphArg::Literal(Value::Address(seat.address())),
                     GraphArg::Literal(Value::List(vec![Value::U64(7)])),
@@ -1213,7 +1213,7 @@ fn a_halted_non_fungible_class_fences_the_interval_movement() {
             },
             GraphNode {
                 target: BOB.into(),
-                method: "deposit-nf".into(),
+                method: "deposit_nf".into(),
                 args: vec![GraphArg::edge(
                     EdgeRef {
                         producer: 0,

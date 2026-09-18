@@ -118,7 +118,7 @@ fn mirror_metadata() -> PackageMetadata {
             ..MethodSignature::default()
         },
     );
-    metadata.events = vec!["withdrawn".into(), "deposited".into()];
+    metadata.events = vec!["Withdrawn".into(), "Deposited".into()];
     metadata
 }
 
@@ -328,7 +328,7 @@ fn transfer_executes_end_to_end_on_both_runtimes() {
     let table = account::metadata().events;
     assert_eq!(
         table,
-        vec!["withdrawn", "deposited", "proposed", "enacted", "cancelled"]
+        vec!["Withdrawn", "Deposited", "Proposed", "Enacted", "Cancelled"]
     );
     for event in &receipt.events {
         assert!(
@@ -371,11 +371,11 @@ fn the_stdlib_deposit_earns_the_mark_it_claims() -> Result<()> {
     );
 
     assert_eq!(
-        account::metadata().methods["withdraw-nf"].totality,
+        account::metadata().methods["withdraw_nf"].totality,
         Totality::Infallible,
     );
     assert!(
-        check_method(&artifact, "withdraw-nf").is_err(),
+        check_method(&artifact, "withdraw_nf").is_err(),
         "one module, two verdicts — the check is per method",
     );
     Ok(())

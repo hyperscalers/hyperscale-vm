@@ -16,9 +16,9 @@ config
       4  marks
       5  assets
 resources
-  non-fungible["seat"] — granting mint to the issuer and burn to the issuer
+  non-fungible["Seat"] — granting mint to the issuer and burn to the issuer
 types
-  seat = { holder: u64 }
+  Seat = { holder: u64 }
 
 accrue(u128) — infallible
   declares
@@ -33,7 +33,7 @@ charge(u64) — infallible
       0  write self.noted
   exports  handle for clause 0, config.tiers[arg0]
 
-charge-or(u64) — infallible
+charge_or(u64) — infallible
   declares
       0  write self.noted
   exports  handle for clause 0, if arg0 in config.tiers then config.tiers[arg0] else config.fallback
@@ -62,8 +62,8 @@ instantiate() — infallible
   declares
       0  requires self.config is absent
       1  write self.config
-      2  requires self.resource[self-issued(non-fungible["seat"])] is absent
-      3  write self.resource[self-issued(non-fungible["seat"])]
+      2  requires self.resource[self-issued(non-fungible["Seat"])] is absent
+      3  write self.resource[self-issued(non-fungible["Seat"])]
   exports  handle for clause 1, handle for clause 3, self.record
 
 jot(u64, u64) — infallible
@@ -90,7 +90,7 @@ noted() — infallible, answers
       0  read self.noted
   exports  handle for clause 0
 
-owe-each() — infallible
+owe_each() — infallible
   declares
       0  for each of config.windows
         1  write self.owed[element]
@@ -104,8 +104,8 @@ raise() — infallible, answers
 
 reseat(u64, u64) — infallible
   declares
-      0  requires self.instance[self-issued(non-fungible["seat"]), arg0] is present
-      1  write self.instance[self-issued(non-fungible["seat"]), arg0]
+      0  requires self.instance[self-issued(non-fungible["Seat"]), arg0] is present
+      1  write self.instance[self-issued(non-fungible["Seat"]), arg0]
       2  write self.noted
   exports  handle for clause 1, handle for clause 2, arg1
 
@@ -124,18 +124,18 @@ scheduled(u64) — infallible
   exports  handle for clause 0, arg0 in config.tiers
 
 seat(u64, u64) — infallible
-  mints    "seat" non-fungible
+  mints    "Seat" non-fungible
   declares
-      0  requires self.instance[self-issued(non-fungible["seat"]), arg0] is absent
-      1  write self.instance[self-issued(non-fungible["seat"]), arg0]
+      0  requires self.instance[self-issued(non-fungible["Seat"]), arg0] is absent
+      1  write self.instance[self-issued(non-fungible["Seat"]), arg0]
       2  write self.noted
-  yields   edge 0 carrying self-issued(non-fungible["seat"]) × [arg0]
+  yields   edge 0 carrying self-issued(non-fungible["Seat"]) × [arg0]
   exports  handle for clause 1, handle for clause 2, arg1, arg0
 
 seated(nf-bucket) — infallible
-  takes    arg0 carrying self-issued(non-fungible["seat"])
+  takes    arg0 carrying self-issued(non-fungible["Seat"])
   declares
-      0  read self.instance[self-issued(non-fungible["seat"]), only(ids-of(arg0))]
+      0  read self.instance[self-issued(non-fungible["Seat"]), only(ids-of(arg0))]
       1  write self.noted
   yields   edge 0 carrying resource-of(arg0) × ids-of(arg0)
   exports  handle for clause 0, handle for clause 1, edge arg0
@@ -154,7 +154,7 @@ spread(u64) — infallible
   costs    clause 0's list — read, write, footprint and retention
   exports  handle for clause 1, arg0
 
-spread-to(u64, address) — infallible
+spread_to(u64, address) — infallible
   declares
       0  for each of config.sides
         1  when element == arg1 → write self.owed[element]
@@ -176,10 +176,10 @@ stow(nf-bucket) — infallible
   exports  handle for clause 0, edge arg0
 
 survey(nf-bucket) — infallible
-  takes    arg0 carrying self-issued(non-fungible["seat"])
+  takes    arg0 carrying self-issued(non-fungible["Seat"])
   declares
       0  for each of ids-of(arg0)
-        1  read self.instance[self-issued(non-fungible["seat"]), element]
+        1  read self.instance[self-issued(non-fungible["Seat"]), element]
       2  write self.noted
   costs    clause 0's list — read and footprint
   yields   edge 0 carrying resource-of(arg0) × ids-of(arg0)
@@ -207,7 +207,7 @@ take(resource-address, u128) — infallible
   yields   edge 0 carrying arg0
   exports  handle for clause 0
 
-take-noting(resource-address, u128) — infallible, answers
+take_noting(resource-address, u128) — infallible, answers
   declares
       0  reserve arg1 self.till[arg0]
       1  read self.noted
@@ -224,18 +224,18 @@ tally(u64) — infallible
       0  write self.noted
   exports  handle for clause 0, arg0
 
-tally-plainly(u64) — infallible
+tally_plainly(u64) — infallible
   declares
       0  write self.noted
   exports  handle for clause 0, arg0
 
 unseat(nf-bucket) — infallible
-  takes    arg0 carrying self-issued(non-fungible["seat"])
-  burns    "seat" non-fungible
+  takes    arg0 carrying self-issued(non-fungible["Seat"])
+  burns    "Seat" non-fungible
   declares
       0  for each of ids-of(arg0)
-        1  requires self.instance[self-issued(non-fungible["seat"]), element] is present
-        2  write self.instance[self-issued(non-fungible["seat"]), element]
+        1  requires self.instance[self-issued(non-fungible["Seat"]), element] is present
+        2  write self.instance[self-issued(non-fungible["Seat"]), element]
   costs    clause 0's list — read, write, footprint and retention
   exports  handle for clause 2, edge arg0
 

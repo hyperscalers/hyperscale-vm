@@ -115,7 +115,7 @@ proptest! {
                 funds = funds.min(min).max(max);
             }
             if let Some(taken) = t.split {
-                let [taken, rest] = b.call(splitter(), "in-lots", (funds, taken));
+                let [taken, rest] = b.call(splitter(), "in_lots", (funds, taken));
                 let [] = b.call(ACCOUNTS[t.to], "deposit", (taken,));
                 let [] = b.call(ACCOUNTS[0], "deposit", (rest,));
             } else {
@@ -148,7 +148,7 @@ proptest! {
                 funds = funds.min(min).max(max);
             }
             if let Some(taken) = t.split {
-                let [taken, rest] = b.call(splitter(), "in-lots", (funds, taken)).unwrap().into_array().unwrap();
+                let [taken, rest] = b.call(splitter(), "in_lots", (funds, taken)).unwrap().into_array().unwrap();
                 b.call(ACCOUNTS[t.to], "deposit", (taken,)).unwrap().none().unwrap();
                 b.call(ACCOUNTS[0], "deposit", (rest,)).unwrap().none().unwrap();
             } else {

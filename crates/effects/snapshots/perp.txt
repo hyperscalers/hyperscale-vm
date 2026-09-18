@@ -4,7 +4,7 @@ state
      17  mark — one leaf, holding [u8; 32], at most 32 bytes
      18  funding_charged — one leaf, holding [u8; 32], at most 32 bytes
      19  funding_credited — one leaf, holding [u8; 32], at most 32 bytes
-     20  position — one leaf, holding position, at most 128 bytes
+     20  position — one leaf, holding Position, at most 128 bytes
 config
       0  collateral
       1  oracle
@@ -12,14 +12,14 @@ config
       3  liquidation_bonus
       4  long
 errors
-      0  mark-unset
-      1  empty-position
-      2  below-maintenance
-      3  still-covered
+      0  MarkUnset
+      1  EmptyPosition
+      2  BelowMaintenance
+      3  StillCovered
 types
-  position = { size: u128, margin: u128, entry: [u8; 32], entry_charged: [u8; 32], entry_credited: [u8; 32] }
+  Position = { size: u128, margin: u128, entry: [u8; 32], entry_charged: [u8; 32], entry_credited: [u8; 32] }
 
-charge-longs(u256) — infallible
+charge_longs(u256) — infallible
   declares
       0  requires claim config.oracle
       1  write self.funding_charged
@@ -36,7 +36,7 @@ close() — infallible
   yields   edge 0 carrying config.collateral
   exports  handle for clause 0, handles for clauses 2–5, config.long
 
-credit-longs(u256) — infallible
+credit_longs(u256) — infallible
   declares
       0  requires claim config.oracle
       1  write self.funding_credited
@@ -70,7 +70,7 @@ open(bucket, u128) — fallible
       5  write self.position
   exports  handles for clauses 0–3, handle for clause 5, edge arg0, arg1, config.maintenance_margin
 
-post-mark(u256) — infallible
+post_mark(u256) — infallible
   declares
       0  requires claim config.oracle
       1  write self.mark

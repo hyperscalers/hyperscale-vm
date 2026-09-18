@@ -1098,7 +1098,7 @@ fn withdraw_nf(account: PrincipalAddr, resource: impl Into<Address>, id: u64) ->
     GraphNode::signed(
         account,
         account,
-        "withdraw-nf",
+        "withdraw_nf",
         vec![
             GraphArg::Literal(Value::Address(resource.into())),
             GraphArg::Literal(Value::List(vec![Value::U64(id)])),
@@ -1144,7 +1144,7 @@ fn an_edge_filling_a_socket_is_judged_by_its_kind() {
     // The same yield into `deposit-nf` admits.
     let right = nf_tree(GraphNode::new(
         ALICE,
-        "deposit-nf",
+        "deposit_nf",
         vec![GraphArg::give(give(0, 0), Vec::new())],
     ));
     admit_composed(&right).expect("an NF yield binds an NF parameter");
@@ -1153,7 +1153,7 @@ fn an_edge_filling_a_socket_is_judged_by_its_kind() {
     let mut crossed = composed_tree(100);
     crossed.root.graph.nodes[1] = GraphNode::new(
         ALICE,
-        "deposit-nf",
+        "deposit_nf",
         vec![GraphArg::give(give(0, 0), Vec::new())],
     );
     assert!(matches!(

@@ -2571,12 +2571,12 @@ mod tests {
         };
         let text = explain(&package(
             "issues",
-            declaring(vec![read(ticket(granting(b"owner-badge")))]),
+            declaring(vec![read(ticket(granting(b"OwnerBadge")))]),
         ));
         assert!(
             text.contains(
                 "resources\n  non-fungible[\"ticket\"] — granting deposit to whoever \
-                 holds the issuer's \"owner-badge\" badge"
+                 holds the issuer's \"OwnerBadge\" badge"
             ),
             "{text}"
         );
@@ -2590,14 +2590,14 @@ mod tests {
         let text = explain(&package(
             "issues",
             declaring(vec![
-                read(ticket(granting(b"owner-badge"))),
+                read(ticket(granting(b"OwnerBadge"))),
                 read(ticket(granting(b"court-badge"))),
             ]),
         ));
         assert!(
             text.contains(
                 "read self-issued(non-fungible[\"ticket\"]), granting deposit to \
-                 whoever holds the issuer's \"owner-badge\" badge"
+                 whoever holds the issuer's \"OwnerBadge\" badge"
             ),
             "{text}"
         );

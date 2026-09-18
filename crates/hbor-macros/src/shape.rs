@@ -8,6 +8,11 @@
 //! What is emitted is a static tree: one `const` naming the fields' own
 //! constants, which is the form a generic impl can state and a type that
 //! reaches itself cannot.
+//!
+//! A declared name is the identifier that declared it. Rust names a
+//! type's members once each, so two of them cannot reach one name — where
+//! a rendering that folded case would let them, and would need a refusal
+//! to say so.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -35,7 +40,7 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
                 transparent(&data.fields)?
             } else {
                 let content = fields(&data.fields)?;
-                let declared = kebab(&name.to_string());
+                let declared = name.to_string();
                 quote! {
                     &__hbor::ShapeNode::Named {
                         name: #declared,
@@ -53,11 +58,11 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
             }
             let mut variants = TokenStream::new();
             for (variant, tag) in data.variants.iter().zip(variant_tags(data)?) {
-                let variant_name = kebab(&variant.ident.to_string());
+                let variant_name = variant.ident.to_string();
                 let content = fields(&variant.fields)?;
                 variants.extend(quote!((#variant_name, #tag, #content),));
             }
-            let declared = kebab(&name.to_string());
+            let declared = name.to_string();
             quote! {
                 &__hbor::ShapeNode::Named {
                     name: #declared,
@@ -134,26 +139,4 @@ fn fields(fields: &Fields) -> Result<TokenStream> {
             quote!(&__hbor::ShapeNode::Tuple(&[#(#nodes),*]))
         }
     })
-}
-
-/// A Rust type or variant name as the name a package declares it under:
-/// `ValidatorRegistered` is `validator-registered`.
-///
-/// The same rendering the metadata's own name tables use, so a table
-/// entry and the type it describes agree on what to call it.
-fn kebab(name: &str) -> String {
-    let mut out = String::new();
-    for (index, ch) in name.char_indices() {
-        if ch == '_' {
-            out.push('-');
-        } else if ch.is_uppercase() {
-            if index > 0 {
-                out.push('-');
-            }
-            out.extend(ch.to_lowercase());
-        } else {
-            out.push(ch);
-        }
-    }
-    out
 }

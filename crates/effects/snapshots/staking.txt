@@ -1,97 +1,97 @@
 state
   the protocol's own — config, resource, instance
      16  pool — one leaf, holding u128, at most 16 bytes, denominated in config.staked_resource
-     17  validators — a leaf per key, holding validator, at most 48 bytes
-     18  vote — one leaf, holding param-vote, at most 48 bytes
+     17  validators — a leaf per key, holding Validator, at most 48 bytes
+     18  vote — one leaf, holding ParamVote, at most 48 bytes
 config
       0  staked_resource
       1  founder
 resources
-  fungible["stake-unit"] — granting mint to the issuer and burn to the issuer
-  non-fungible["owner-badge"]
+  fungible["StakeUnit"] — granting mint to the issuer and burn to the issuer
+  non-fungible["OwnerBadge"]
 events
-      0  staked
-      1  unstaked
-      2  validator-registered
-      3  validator-deactivated
-      4  validator-unjailed
-      5  param-vote-cast
-      6  param-vote-cleared
+      0  Staked
+      1  Unstaked
+      2  ValidatorRegistered
+      3  ValidatorDeactivated
+      4  ValidatorUnjailed
+      5  ParamVoteCast
+      6  ParamVoteCleared
 types
-  param-vote = { split_bytes: u64, split_fullness: u64, impound_epochs: u64, price_floor_bp: u64, price_ceiling_bp: u64, activate_at: u64 }
-  param-vote-cast = (param-vote)
-  param-vote-cleared = ()
-  staked = { amount: u128 }
-  unstaked = { amount: u128 }
-  validator = { pubkey: [u8; 48] }
-  validator-deactivated = { validator_id: u64 }
-  validator-registered = { validator_id: u64, pubkey: [u8; 48], possession_proof: [u8; 96] }
-  validator-unjailed = { validator_id: u64 }
+  ParamVote = { split_bytes: u64, split_fullness: u64, impound_epochs: u64, price_floor_bp: u64, price_ceiling_bp: u64, activate_at: u64 }
+  ParamVoteCast = (ParamVote)
+  ParamVoteCleared = ()
+  Staked = { amount: u128 }
+  Unstaked = { amount: u128 }
+  Validator = { pubkey: [u8; 48] }
+  ValidatorDeactivated = { validator_id: u64 }
+  ValidatorRegistered = { validator_id: u64, pubkey: [u8; 48], possession_proof: [u8; 96] }
+  ValidatorUnjailed = { validator_id: u64 }
 
-cast-param-vote(u64, u64, u64, u64, u64, u64) — infallible
-  emits    param-vote-cast — at most 86 bytes
+cast_param_vote(u64, u64, u64, u64, u64, u64) — infallible
+  emits    ParamVoteCast — at most 86 bytes
   declares
-      0  requires claim self-issued(non-fungible["owner-badge"])
+      0  requires claim self-issued(non-fungible["OwnerBadge"])
       1  write self.vote
   exports  handle for clause 1, arg0, arg1, arg2, arg3, arg4, arg5
 
-clear-param-vote() — infallible
-  emits    param-vote-cleared — at most 38 bytes
+clear_param_vote() — infallible
+  emits    ParamVoteCleared — at most 38 bytes
   declares
-      0  requires claim self-issued(non-fungible["owner-badge"])
+      0  requires claim self-issued(non-fungible["OwnerBadge"])
       1  write self.vote
   exports  handle for clause 1
 
-deactivate-validator(u64) — infallible
-  emits    validator-deactivated — at most 46 bytes
+deactivate_validator(u64) — infallible
+  emits    ValidatorDeactivated — at most 46 bytes
   declares
-      0  requires claim self-issued(non-fungible["owner-badge"])
+      0  requires claim self-issued(non-fungible["OwnerBadge"])
       1  requires self.validators[arg0] is present
       2  write self.validators[arg0]
   exports  arg0
 
 instantiate() — infallible
-  mints    "owner-badge" non-fungible
+  mints    "OwnerBadge" non-fungible
   declares
       0  requires claim config.founder
       1  requires self.config is absent
       2  write self.config
-      3  requires self.resource[self-issued(non-fungible["owner-badge"])] is absent
-      4  write self.resource[self-issued(non-fungible["owner-badge"])]
-      5  requires self.resource[self-issued(fungible["stake-unit"])] is absent
-      6  write self.resource[self-issued(fungible["stake-unit"])]
-      7  requires self.instance[self-issued(non-fungible["owner-badge"]), 0] is absent
-      8  write self.instance[self-issued(non-fungible["owner-badge"]), 0]
-  yields   edge 0 carrying self-issued(non-fungible["owner-badge"]) × [0]
+      3  requires self.resource[self-issued(non-fungible["OwnerBadge"])] is absent
+      4  write self.resource[self-issued(non-fungible["OwnerBadge"])]
+      5  requires self.resource[self-issued(fungible["StakeUnit"])] is absent
+      6  write self.resource[self-issued(fungible["StakeUnit"])]
+      7  requires self.instance[self-issued(non-fungible["OwnerBadge"]), 0] is absent
+      8  write self.instance[self-issued(non-fungible["OwnerBadge"]), 0]
+  yields   edge 0 carrying self-issued(non-fungible["OwnerBadge"]) × [0]
   exports  handle for clause 2, handle for clause 4, handle for clause 6, handle for clause 8, self.record
 
-register-validator(u64, [u8; 48], [u8; 96]) — infallible
-  emits    validator-registered — at most 190 bytes
+register_validator(u64, [u8; 48], [u8; 96]) — infallible
+  emits    ValidatorRegistered — at most 190 bytes
   declares
-      0  requires claim self-issued(non-fungible["owner-badge"])
+      0  requires claim self-issued(non-fungible["OwnerBadge"])
       1  requires self.validators[arg0] is absent
       2  write self.validators[arg0]
   exports  handle for clause 2, arg1, arg0, arg2
 
 stake(bucket) — infallible
-  emits    staked — at most 54 bytes
+  emits    Staked — at most 54 bytes
   takes    arg0 carrying config.staked_resource
-  mints    "stake-unit" fungible
+  mints    "StakeUnit" fungible
   declares
       0  credit self.pool[config.staked_resource]
-  yields   edge 0 carrying self-issued(fungible["stake-unit"])
+  yields   edge 0 carrying self-issued(fungible["StakeUnit"])
   exports  handle for clause 0, edge arg0
 
 unjail(u64) — infallible
-  emits    validator-unjailed — at most 46 bytes
+  emits    ValidatorUnjailed — at most 46 bytes
   declares
-      0  requires claim self-issued(non-fungible["owner-badge"])
+      0  requires claim self-issued(non-fungible["OwnerBadge"])
       1  requires self.validators[arg0] is present
       2  write self.validators[arg0]
   exports  arg0
 
 unstake(bucket) — infallible
-  emits    unstaked — at most 54 bytes
-  takes    arg0 carrying self-issued(fungible["stake-unit"])
-  burns    "stake-unit" fungible
+  emits    Unstaked — at most 54 bytes
+  takes    arg0 carrying self-issued(fungible["StakeUnit"])
+  burns    "StakeUnit" fungible
   exports  edge arg0

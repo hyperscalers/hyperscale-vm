@@ -1611,7 +1611,7 @@ mod tests {
                 ..MethodSignature::default()
             })
         };
-        assert_eq!(issues(b"unit"), Ok(()));
+        assert_eq!(issues(b"Unit"), Ok(()));
         assert_eq!(
             issues(b""),
             Err(DeclarationError::UnmarkedIssuance { issuance: 0 })
@@ -1641,7 +1641,7 @@ mod tests {
         let issues = |direction, grants: GrantsExpr| {
             check_declarations(&MethodSignature {
                 issues: Capped::new(vec![Issuance {
-                    mark: b"unit".to_vec(),
+                    mark: b"Unit".to_vec(),
                     kind: ResourceKind::Fungible,
                     direction,
                     grants,
@@ -1713,7 +1713,7 @@ mod tests {
     #[test]
     fn founding_is_the_frame_writing_its_own_record_and_not_a_caller_reaching_it() {
         let issuance = || Issuance {
-            mark: b"unit".to_vec(),
+            mark: b"Unit".to_vec(),
             kind: ResourceKind::Fungible,
             direction: Issued::Minted,
             grants: minting(),
@@ -1737,7 +1737,7 @@ mod tests {
         let own = vec![Expr::SelfResource {
             kind: ResourceKind::Fungible,
             grants: minting(),
-            material: vec![Expr::Literal(Value::Bytes(b"unit".to_vec()))],
+            material: vec![Expr::Literal(Value::Bytes(b"Unit".to_vec()))],
         }];
         assert!(
             founds_its_resource(&issuance(), &record(own)),
@@ -3249,7 +3249,7 @@ mod tests {
         let own = |grants: GrantsExpr| Expr::SelfResource {
             kind: ResourceKind::Fungible,
             grants,
-            material: vec![Expr::Literal(Value::Bytes(b"seat".to_vec()))],
+            material: vec![Expr::Literal(Value::Bytes(b"Seat".to_vec()))],
         };
         let freezing = || {
             let mut grants = GrantsExpr::new();

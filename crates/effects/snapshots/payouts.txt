@@ -7,9 +7,9 @@ config
       2  treasury
       3  referrer
 errors
-      0  share-unclaimed
-      1  below-one-lot
-      2  over-claimed
+      0  ShareUnclaimed
+      1  BelowOneLot
+      2  OverClaimed
 
 disburse(bucket) — infallible
   takes    arg0 carrying config.asset
@@ -23,7 +23,7 @@ disburse(bucket) — infallible
 divides(u128, u128) — infallible, answers
   exports  arg0, arg1
 
-in-lots(bucket, u128) — fallible
+in_lots(bucket, u128) — fallible
   yields   edge 0 carrying resource-of(arg0)
   yields   edge 1 carrying resource-of(arg0)
   exports  edge arg0, arg1

@@ -26,11 +26,11 @@ operate() — infallible
   declares
       0  requires claim config[0]
 
-operate-instance() — infallible
+operate_instance() — infallible
   declares
       0  requires claim (config[0], config[1])
 
-operate-quorum() — infallible
+operate_quorum() — infallible
   declares
       0  requires 2 of (claim (config[0], config[1]), claim (config[0], config[2]), claim (config[0], config[3]))
 

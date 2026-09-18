@@ -1176,17 +1176,17 @@ mod tests {
         }]));
         let leaf = push(TypeShape::Enum(vec![
             ShapeVariant {
-                name: "nothing".into(),
+                name: "Nothing".into(),
                 discriminant: 0,
                 content: unit,
             },
             ShapeVariant {
-                name: "pair".into(),
+                name: "Pair".into(),
                 discriminant: 7,
                 content: pair,
             },
             ShapeVariant {
-                name: "named".into(),
+                name: "Named".into(),
                 discriminant: 9,
                 content: named_text,
             },
@@ -1559,11 +1559,11 @@ mod tests {
     #[test]
     fn a_declared_tree_measures_as_its_folds_and_shares_its_subtrees() {
         const ELEMENT: &ShapeNode = &ShapeNode::Named {
-            name: "element",
+            name: "Element",
             shape: &ShapeNode::Struct(&[("a", &ShapeNode::U8), ("b", &ShapeNode::U64)]),
         };
         const ROOT: &ShapeNode = &ShapeNode::Named {
-            name: "root",
+            name: "Root",
             shape: &ShapeNode::Struct(&[
                 ("one", ELEMENT),
                 ("two", &ShapeNode::Option(ELEMENT)),
@@ -1581,7 +1581,7 @@ mod tests {
         assert_eq!(table.most(root), max_encoded_len(ROOT));
         assert_eq!(table.least(root), min_encoded_len(ROOT));
         assert_eq!(table.depth(root), max_depth(ROOT));
-        let element = table.named("element").unwrap();
+        let element = table.named("Element").unwrap();
         assert_eq!(table.most(element), max_encoded_len(ELEMENT));
         // u8, u64, the struct, its name, the option, the sequence, the
         // root's struct and its name: eight nodes for three mentions.

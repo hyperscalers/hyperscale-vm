@@ -147,7 +147,7 @@ fn a_split_binds_both_halves_and_numbers_the_repeat() {
     assert_eq!(
         render(&graph, &chain, &TestHasher, NETWORK, &vocabulary()).unwrap(),
         "let token = alice.withdraw(@token, 100);\n\
-         let token2, token3 = splitter.in-lots(token, 30);\n\
+         let token2, token3 = splitter.in_lots(token, 30);\n\
          bob.deposit(token2{>= 1});\n\
          alice.deposit(token3);\n"
     );

@@ -2956,7 +2956,7 @@ mod tests {
     fn a_self_resource_over_a_mark_literal_is_the_issued_resource() {
         let context = inputs(&[], &[]);
         for kind in [ResourceKind::Fungible, ResourceKind::NonFungible] {
-            for mark in [&b"unit"[..], b"owner-badge"] {
+            for mark in [&b"Unit"[..], b"OwnerBadge"] {
                 let material = vec![Expr::Literal(Value::Bytes(mark.to_vec()))];
                 assert_eq!(
                     evaluate_expr(

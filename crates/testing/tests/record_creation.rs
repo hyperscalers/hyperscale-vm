@@ -262,7 +262,7 @@ fn an_instance_cell_decodes_from_metadata_alone() {
 #[test]
 fn a_marks_material_is_the_name_its_schema_is_declared_under() {
     let metadata = issuer::blueprint().metadata();
-    assert_eq!(issuer::SEASON_PASS, b"season-pass");
+    assert_eq!(issuer::SEASON_PASS, b"SeasonPass");
     let name = core::str::from_utf8(issuer::SEASON_PASS).expect("a mark is its name");
     let declared = metadata
         .types
@@ -271,7 +271,7 @@ fn a_marks_material_is_the_name_its_schema_is_declared_under() {
     assert!(metadata.types.matches(
         declared,
         &ShapeNode::Named {
-            name: "season-pass",
+            name: "SeasonPass",
             shape: &ShapeNode::Struct(&[("season", &ShapeNode::U64)]),
         }
     ));
@@ -284,12 +284,12 @@ fn a_record_no_event_names_still_declares_its_shape() {
     let metadata = issuer::blueprint().metadata();
     let holding = metadata
         .types
-        .named("holding")
+        .named("Holding")
         .expect("a record declares its shape");
     assert!(metadata.types.matches(
         holding,
         &ShapeNode::Named {
-            name: "holding",
+            name: "Holding",
             shape: &ShapeNode::Struct(&[("since", &ShapeNode::U64)]),
         }
     ));

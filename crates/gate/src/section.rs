@@ -310,7 +310,7 @@ mod tests {
         metadata
             .methods
             .insert("another".into(), MethodSignature::default());
-        metadata.events = vec!["withdrawn".into(), "deposited".into()];
+        metadata.events = vec!["Withdrawn".into(), "Deposited".into()];
         metadata.types = units(&metadata.events);
         // A declared event has a method that may emit it; the empty
         // shape encodes to nothing, so the bound is the framing the

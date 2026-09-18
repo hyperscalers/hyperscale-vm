@@ -494,7 +494,7 @@ fn an_event_decodes_from_metadata_alone() -> Result<()> {
         .read_event(&raw)
         .expect("the index names a declared type")
         .expect("the payload is what the shape says");
-    assert_eq!(name, "validator-registered");
+    assert_eq!(name, "ValidatorRegistered");
     assert_eq!(
         read,
         ShapeValue::Struct(vec![
@@ -767,7 +767,7 @@ fn a_pool_cannot_speak_about_a_validator_it_never_took_on() -> Result<()> {
     // the beacon refuses a witness naming another pool's validator, and
     // the pool refuses to produce one in the first place.
     let world = world();
-    for method in ["deactivate-validator", "unjail"] {
+    for method in ["deactivate_validator", "unjail"] {
         let graph = operator_graph(method, VALIDATOR);
         let entry = batch_entry(&world, &single_intent(OPERATOR, graph))?;
         let (outcome, _) = run_both(&operator_store(), std::slice::from_ref(&entry));
@@ -788,7 +788,7 @@ fn retiring_and_unjailing_name_the_validator_and_nothing_else() -> Result<()> {
     let mut store = operator_store();
     store.write(validator_leaf(pool(), VALIDATOR), registered_bytes());
 
-    for (method, event_type) in [("deactivate-validator", 3), ("unjail", 4)] {
+    for (method, event_type) in [("deactivate_validator", 3), ("unjail", 4)] {
         let graph = operator_graph(method, VALIDATOR);
         let entry = batch_entry(&world, &single_intent(OPERATOR, graph))?;
         let (outcome, end) = run_both(&store, std::slice::from_ref(&entry));

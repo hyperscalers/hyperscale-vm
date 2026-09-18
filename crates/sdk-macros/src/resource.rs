@@ -13,9 +13,9 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::spanned::Spanned;
 
-use crate::kebab;
 use crate::role::Role;
 use crate::rule::{RuleAst, calls, config_slot, diagnose_bare_name, parse_rule};
+use crate::snake;
 use crate::state::distinct_band;
 use crate::term::emit_behaviour;
 
@@ -449,7 +449,7 @@ pub fn granted_badge(
         ));
     };
     let (rules, reads_config) = (&granted.rendered, granted.reads_config);
-    let mark = syn::LitByteStr::new(kebab(&named).as_bytes(), badge.ident.span());
+    let mark = syn::LitByteStr::new(named.as_bytes(), badge.ident.span());
     let kind = match badge.kind {
         ResourceKind::Fungible => quote!(::hyperscale_vm_sdk::ResourceKind::Fungible),
         ResourceKind::NonFungible => {
@@ -989,5 +989,5 @@ pub fn instance_surface(name: &str, schema: bool, stub: &TokenStream2) -> Vec<sy
 /// A Rust type name as the constant naming it: `OwnerBadge` is
 /// `OWNER_BADGE`.
 pub fn screaming(name: &str) -> String {
-    kebab(name).replace('-', "_").to_uppercase()
+    snake(name).to_uppercase()
 }

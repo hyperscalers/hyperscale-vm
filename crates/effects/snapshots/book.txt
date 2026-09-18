@@ -8,11 +8,11 @@ config
       1  quote
       2  tick
 errors
-      0  unpriced-ask
-      1  self-paired
-      2  unpriced-tick
+      0  UnpricedAsk
+      1  SelfPaired
+      2  UnpricedTick
 
-fill-asks(u64, u64, bucket) — infallible
+fill_asks(u64, u64, bucket) — infallible
   takes    arg2 carrying config.quote
   declares
       0  write self.asks over pack(arg0, 0)..=pack(arg1, u64::MAX), at most 64 entries
@@ -30,7 +30,7 @@ instantiate() — fallible
       1  write self.config
   exports  handle for clause 1, self.record, config.tick, config.base, config.quote
 
-place-ask(u64, bucket) — fallible
+place_ask(u64, bucket) — fallible
   takes    arg1 carrying config.base
   declares
       0  write self.asks at pack(arg0, fresh-id(0))

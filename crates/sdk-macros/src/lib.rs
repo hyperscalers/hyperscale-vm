@@ -396,16 +396,17 @@ fn serves(attr: &TokenStream2) -> syn::Result<client::Serves> {
     }
 }
 
-/// A Rust name as the protocol spells it: the published form of a method,
-/// an event, or an error code.
-fn kebab(name: &str) -> String {
+/// A Rust type name as the snake-case identifier derived from it:
+/// `OwnerBadge` is `owner_badge`.
+///
+/// For the identifiers the macro builds — an accessor, a constant — and
+/// never for a published name, which is the item's own identifier.
+fn snake(name: &str) -> String {
     let mut out = String::new();
     for (index, ch) in name.char_indices() {
-        if ch == '_' {
-            out.push('-');
-        } else if ch.is_uppercase() {
+        if ch.is_uppercase() {
             if index > 0 {
-                out.push('-');
+                out.push('_');
             }
             out.extend(ch.to_lowercase());
         } else {
@@ -530,11 +531,14 @@ fn param_type(ty: &syn::Type) -> syn::Result<TokenStream2> {
     Ok(quote!(::hyperscale_vm_sdk::ParamType::#variant))
 }
 
-/// The published name of a method: its Rust name as the protocol spells
-/// names, which is how every other published name — the module's
-/// exports, its events, its errors — is already derived.
+/// The published name of a method: its own identifier.
+///
+/// What every other published name is too — an event, an error, a mark,
+/// a declared type. A rendering between the two would be a second
+/// spelling to keep in step, and one that folded case would let two
+/// items reach one name.
 fn method_name(method: &syn::ImplItemFn) -> String {
-    kebab(&method.sig.ident.to_string())
+    method.sig.ident.to_string()
 }
 
 /// The macro's own attributes, which are read and then removed so what it
@@ -1057,7 +1061,7 @@ fn decline_impls(items: &[syn::Item]) -> TokenStream2 {
             .collect();
         let names = item.variants.iter().map(|variant| {
             let ident = &variant.ident;
-            let published = kebab(&ident.to_string());
+            let published = ident.to_string();
             quote!(Self::#ident => #published)
         });
         impls.extend(quote!(
@@ -1481,7 +1485,6 @@ fn lower_methods(
     serves: client::Serves,
 ) -> syn::Result<Vec<Lowered>> {
     let mut lowered = Vec::new();
-    let mut published: Vec<String> = Vec::new();
     let mut bring_up: Option<syn::ImplItemFn> = None;
     let helpers = inline::helpers(items, state_name, declared.accessors)?;
     for item in items {
@@ -1518,38 +1521,16 @@ fn lower_methods(
                 )?;
             }
             if matches!(method.vis, syn::Visibility::Public(_)) {
-                // The published name rather than the Rust one: two
-                // identifiers can spell one published name, and the
-                // builder would catch that as a panic from inside a
-                // generated `blueprint()` rather than at the line that
-                // wrote it.
-                let name = method_name(method);
-                let at = || method.sig.ident.span();
+                // Two published names cannot collide: a method publishes
+                // under its own identifier, and Rust names the inherent
+                // methods of one type once each.
                 if matches!(serves, client::Serves::Instances) && method.sig.ident == INSTANTIATE {
-                    // The bring-up's body, by the Rust name: what the
-                    // author wrote is spliced into the seal the macro
-                    // synthesizes, rather than lowered as a method of its
-                    // own.
-                    if published.contains(&name) {
-                        return Err(syn::Error::new(
-                            at(),
-                            "a package brings up one way — this is a second `instantiate`",
-                        ));
-                    }
-                    published.push(name);
+                    // The bring-up's body: what the author wrote is
+                    // spliced into the seal the macro synthesizes, rather
+                    // than lowered as a method of its own.
                     bring_up = Some(inline::splice(method, &helpers)?);
                     continue;
                 }
-                if published.contains(&name) {
-                    return Err(syn::Error::new(
-                        at(),
-                        format!(
-                            "another method already publishes as `{name}`, and a \
-                             published name names one export"
-                        ),
-                    ));
-                }
-                published.push(name);
                 let method = inline::splice(method, &helpers)?;
                 lowered.push(lower_method(&method, declared, serves, None)?);
             }
