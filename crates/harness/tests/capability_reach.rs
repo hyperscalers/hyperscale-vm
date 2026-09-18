@@ -161,18 +161,18 @@ fn guest(site: u32) -> Vec<u8> {
       (i64.extend_i32_u (call $site_get (i32.const {site}) (i32.const 0)))))
 
   ;; The same read, at a rep the table has no entry for.
-  (func (export "read-past-the-table") (param $handed i32)
+  (func (export "read_past_the_table") (param $handed i32)
     (call $answered
       (i64.extend_i32_u (call $site_get (i32.const {PAST_THE_TABLE}) (i32.const 0)))))
 
   ;; The same read, through the site the body was handed.
-  (func (export "read-handed") (param $handed i32)
+  (func (export "read_handed") (param $handed i32)
     (call $answered
       (i64.extend_i32_u (call $site_get (local.get $handed) (i32.const 0)))))
 
   ;; A write through the site the body was handed, whatever mode it was
   ;; declared at.
-  (func (export "write-handed") (param $handed i32)
+  (func (export "write_handed") (param $handed i32)
     (call $site_set (local.get $handed) (i32.const 0) (i32.const 0) (i32.const 1))
     (call $answered (i64.const 0))))
 "#
@@ -243,7 +243,7 @@ fn a_body_cannot_reach_a_site_it_was_not_handed() -> Result<()> {
     );
 
     // And through the site it was handed, the same cell answers.
-    let answered = invoked(&fx, readable, "read-handed", readable)?.scalar()?;
+    let answered = invoked(&fx, readable, "read_handed", readable)?.scalar()?;
     assert_eq!(
         answered,
         READABLE.len() as u64,
@@ -261,7 +261,7 @@ fn a_site_past_the_table_is_refused() -> Result<()> {
     let probe = session(&fx);
     let readable = rep_of(&probe, fx.readable, Mode::Read);
 
-    let ended = invoked(&fx, readable, "read-past-the-table", readable)?;
+    let ended = invoked(&fx, readable, "read_past_the_table", readable)?;
     assert_eq!(ended.result, Invoked::Aborted(AbortReason::HandleUnknown));
     Ok(())
 }
@@ -279,12 +279,12 @@ fn a_site_refuses_the_operation_it_never_granted() -> Result<()> {
     let readable = rep_of(&probe, fx.readable, Mode::Read);
     let writable = rep_of(&probe, fx.writable, Mode::Write { moves: Moves::Both });
 
-    let ended = invoked(&fx, readable, "write-handed", readable)?;
+    let ended = invoked(&fx, readable, "write_handed", readable)?;
     assert_eq!(ended.result, Invoked::Aborted(AbortReason::HandleWrongMode));
 
     // And the same body handed the site that does grant it completes,
     // so what the refusal above answered is the mode and not the reach.
-    let ended = invoked(&fx, readable, "write-handed", writable)?;
+    let ended = invoked(&fx, readable, "write_handed", writable)?;
     assert!(
         matches!(ended.result, Invoked::Produced { .. }),
         "{:?}",

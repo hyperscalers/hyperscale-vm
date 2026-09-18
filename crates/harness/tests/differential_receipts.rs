@@ -175,9 +175,9 @@ fn both_engines_classify_exhaustion_as_exhaustion() -> Result<()> {
 fn ending_guest() -> Result<Vec<u8>> {
     module(
         r#"
-  (func (export "unit-yes")
+  (func (export "unit_yes")
     (call $reply (i32.const 0) (i32.const 0)))
-  (func (export "unit-no") (result i32)
+  (func (export "unit_no") (result i32)
     (i32.const 10))
   (func (export "answer")
     (i32.store8 (i32.const 64) (i32.const 4))
@@ -185,7 +185,7 @@ fn ending_guest() -> Result<Vec<u8>> {
     (i32.store8 (i32.const 66) (i32.const 6))
     (call $answer (i32.const 64) (i32.const 3))
     (call $reply (i32.const 0) (i32.const 0)))
-  (func (export "answer-or-decline") (result i32)
+  (func (export "answer_or_decline") (result i32)
     (i32.store8 (i32.const 128) (i32.const 1))
     (i32.store8 (i32.const 129) (i32.const 2))
     (call $answer (i32.const 128) (i32.const 2))
@@ -200,13 +200,13 @@ fn both_engines_read_what_a_method_hands_back_the_same_way() -> Result<()> {
 
     for (export, expected) in [
         (
-            "unit-yes",
+            "unit_yes",
             Invoked::Produced {
                 edges: Vec::new(),
                 answer: None,
             },
         ),
-        ("unit-no", Invoked::Declined(9)),
+        ("unit_no", Invoked::Declined(9)),
         (
             "answer",
             Invoked::Produced {
@@ -215,7 +215,7 @@ fn both_engines_read_what_a_method_hands_back_the_same_way() -> Result<()> {
             },
         ),
         (
-            "answer-or-decline",
+            "answer_or_decline",
             Invoked::Produced {
                 edges: Vec::new(),
                 answer: Some(vec![1, 2]),

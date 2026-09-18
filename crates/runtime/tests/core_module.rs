@@ -218,14 +218,14 @@ fn a_decline_is_the_return_value() {
     let body = r#"
   (func (export "no") (param $code i64) (result i32)
     local.get $code i32.wrap_i64 i32.const 1 i32.add)
-  (func (export "no-after-reply") (param $code i64) (result i32)
+  (func (export "no_after_reply") (param $code i64) (result i32)
     i32.const 0 i32.const 0 call $reply
     local.get $code i32.wrap_i64 i32.const 1 i32.add)
   (func (export "yes") (param $code i64) (result i32)
     i32.const 0 i32.const 0 call $reply
     i32.const 0)"#;
     let wat = module(body);
-    for export in ["no", "no-after-reply"] {
+    for export in ["no", "no_after_reply"] {
         let (ended, _) = run(&engine, &wat, export, &[GuestArg::U64(3)]);
         assert_eq!(ended.result, Invoked::Declined(3), "{export}");
     }
@@ -249,12 +249,12 @@ fn a_reply_is_exactly_once() {
   (func (export "twice")
     i32.const 0 i32.const 0 call $reply
     i32.const 0 i32.const 0 call $reply)
-  (func (export "answers-twice")
+  (func (export "answers_twice")
     i32.const 0 i32.const 0 call $answer
     i32.const 0 i32.const 0 call $answer
     i32.const 0 i32.const 0 call $reply)"#;
     let wat = module(body);
-    for export in ["silent", "twice", "answers-twice"] {
+    for export in ["silent", "twice", "answers_twice"] {
         let (ended, _) = run(&engine, &wat, export, &[]);
         assert_eq!(aborted(&ended), AbortReason::BadReturnShape, "{export}");
     }
@@ -267,23 +267,23 @@ fn register_and_memory_misuse_are_abi_violations() {
     let engine = engine();
     let body = r#"
   (func (export "stale") i32.const 0 call $take)
-  (func (export "scalar-arg") (param i64) i32.const 0 i32.const 0 call $arg)
-  (func (export "twice-arg") (param i32)
+  (func (export "scalar_arg") (param i64) i32.const 0 i32.const 0 call $arg)
+  (func (export "twice_arg") (param i32)
     i32.const 0 i32.const 0 call $arg
     i32.const 0 i32.const 0 call $arg)
   (func (export "wild")
     i32.const 0 i32.const 0 i32.const 65530 i32.const 16 call $site_set)
-  (func (export "wild-out")
+  (func (export "wild_out")
     i32.const 0 i32.const 0 i32.const 65530 call $site_balance)
-  (func (export "bad-rounding")
+  (func (export "bad_rounding")
     i32.const 0 i32.const 0 i32.const 0 i32.const 9 i32.const 64 call $mul_div)"#;
     let wat = module(body);
     let cases: [(&str, &[GuestArg<'_>]); 5] = [
         ("stale", &[]),
-        ("scalar-arg", &[GuestArg::U64(1)]),
-        ("twice-arg", &[GuestArg::Bytes(b"x")]),
+        ("scalar_arg", &[GuestArg::U64(1)]),
+        ("twice_arg", &[GuestArg::Bytes(b"x")]),
         ("wild", &[]),
-        ("bad-rounding", &[]),
+        ("bad_rounding", &[]),
     ];
     for (export, args) in cases {
         let (ended, kernel) = run(&engine, &wat, export, args);
@@ -292,7 +292,7 @@ fn register_and_memory_misuse_are_abi_violations() {
     }
     // An out-pointer is judged when the result is written, so the host
     // has answered by then; the violation is the guest's all the same.
-    let (ended, _) = run(&engine, &wat, "wild-out", &[]);
+    let (ended, _) = run(&engine, &wat, "wild_out", &[]);
     assert_eq!(aborted(&ended), AbortReason::AbiViolation);
 }
 

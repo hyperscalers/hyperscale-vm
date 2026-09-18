@@ -162,13 +162,13 @@ fn guest() -> String {
     (call $reply (i32.const 0) (i32.const 0)))
 
   ;; The bytes argument, collected where the caller says and answered.
-  (func (export "collect-arg") (param $payload i32) (param $ptr i64)
+  (func (export "collect_arg") (param $payload i32) (param $ptr i64)
     (call $arg (i32.const 0) (i32.wrap_i64 (local.get $ptr)))
     (call $answer (i32.wrap_i64 (local.get $ptr)) (local.get $payload))
     (call $reply (i32.const 0) (i32.const 0)))
 
   ;; A site parameter carries no register.
-  (func (export "scalar-arg") (param $c i32)
+  (func (export "scalar_arg") (param $c i32)
     (call $arg (i32.const 0) (i32.const 0))
     (call $reply (i32.const 0) (i32.const 0)))
 
@@ -279,7 +279,7 @@ fn a_register_is_judged_the_same_by_both() -> Result<()> {
         }
     );
     let ended = both(
-        "collect-arg",
+        "collect_arg",
         &[GuestArg::Bytes(b"payload"), GuestArg::U64(96)],
     )?;
     assert_eq!(
@@ -297,9 +297,9 @@ fn a_register_is_judged_the_same_by_both() -> Result<()> {
     )?;
     violates(
         "an input register past the end",
-        "collect-arg",
+        "collect_arg",
         &[GuestArg::Bytes(b"payload"), GuestArg::U64(END - 6)],
     )?;
-    violates("a parameter with no register", "scalar-arg", &[CELL])?;
+    violates("a parameter with no register", "scalar_arg", &[CELL])?;
     violates("an answer register never filled", "stale", &[])
 }

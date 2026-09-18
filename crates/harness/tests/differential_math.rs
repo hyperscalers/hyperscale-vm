@@ -97,7 +97,7 @@ fn guest() -> String {
     (call $done (i32.const 96)))
 
   ;; The second limb of the same call, so a result past 64 bits is visible.
-  (func (export "mul_div-high") (param $a i64) (param $b i64) (param $c i64)
+  (func (export "mul_div_high") (param $a i64) (param $b i64) (param $c i64)
     (call $wide (i32.const 0) (local.get $a))
     (call $wide (i32.const 32) (local.get $b))
     (call $wide (i32.const 64) (local.get $c))
@@ -120,10 +120,10 @@ fn guest() -> String {
     (call $wide (i32.const 96) (local.get $bd))
     (call $fraction_compose (i32.const 0) (i32.const 32) (i32.const 64) (i32.const 96)
                             (i32.const 128) (i32.const 160)))
-  (func (export "compose-num") (param $an i64) (param $ad i64) (param $bn i64) (param $bd i64)
+  (func (export "compose_num") (param $an i64) (param $ad i64) (param $bn i64) (param $bd i64)
     (call $compose (local.get $an) (local.get $ad) (local.get $bn) (local.get $bd))
     (call $done (i32.const 128)))
-  (func (export "compose-den") (param $an i64) (param $ad i64) (param $bn i64) (param $bd i64)
+  (func (export "compose_den") (param $an i64) (param $ad i64) (param $bn i64) (param $bd i64)
     (call $compose (local.get $an) (local.get $ad) (local.get $bn) (local.get $bd))
     (call $done (i32.const 160)))
 
@@ -240,7 +240,7 @@ fn the_product_is_held_past_the_operand_width() {
     // `(2^64 - 1) * (2^64 - 1) / 1` needs both limbs of the result, so a
     // result written one limb wide would lose the high half.
     assert_eq!(
-        value("mul_div-high", &[u64::MAX, u64::MAX, 1]),
+        value("mul_div_high", &[u64::MAX, u64::MAX, 1]),
         u64::MAX - 1
     );
 }
@@ -266,8 +266,8 @@ fn a_geometric_mean_crosses_the_product_width() {
 fn a_composition_lands_at_two_out_pointers() {
     // Composition writes two wides, each through its own pointer; the
     // denominator sits where the guest asked for it and nowhere else.
-    assert_eq!(value("compose-num", &[2, 4, 3, 9]), 6);
-    assert_eq!(value("compose-den", &[2, 4, 3, 9]), 36);
+    assert_eq!(value("compose_num", &[2, 4, 3, 9]), 6);
+    assert_eq!(value("compose_den", &[2, 4, 3, 9]), 36);
 }
 
 #[test]
@@ -281,7 +281,7 @@ fn a_comparison_crosses_as_a_tag() {
 fn a_zero_denominator_refuses_identically() {
     assert_eq!(refusal("cmp", &[1, 0, 1, 1]), AbortReason::MathDivideByZero);
     assert_eq!(
-        refusal("compose-num", &[1, 0, 1, 1]),
+        refusal("compose_num", &[1, 0, 1, 1]),
         AbortReason::MathDivideByZero
     );
 }

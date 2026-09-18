@@ -181,23 +181,23 @@ fn prowler(foreign: u32) -> Vec<u8> {
     (call $reply (i32.const 0) (i32.const 0)))
 
   ;; Read the other node's cell, and answer what it holds the length of.
-  (func (export "read-foreign") (param $site i32)
+  (func (export "read_foreign") (param $site i32)
     (call $answered
       (i64.extend_i32_u (call $site_get (i32.const {foreign}) (i32.const 0)))))
 
   ;; Write one byte over it.
-  (func (export "write-foreign") (param $site i32)
+  (func (export "write_foreign") (param $site i32)
     (i32.store8 (i32.const 0) (i32.const {OVERWRITTEN}))
     (call $site_set (i32.const {foreign}) (i32.const 0) (i32.const 0) (i32.const 1))
     (call $answered (i64.const 0)))
 
   ;; Read the cell its own node was lent, through the site it was handed.
-  (func (export "read-own") (param $site i32)
+  (func (export "read_own") (param $site i32)
     (call $answered
       (i64.extend_i32_u (call $site_get (local.get $site) (i32.const 0)))))
 
   ;; Write one byte over that cell, through the site it was handed.
-  (func (export "write-own") (param $site i32)
+  (func (export "write_own") (param $site i32)
     (i32.store8 (i32.const 0) (i32.const {OVERWRITTEN}))
     (call $site_set (local.get $site) (i32.const 0) (i32.const 0) (i32.const 1))
     (call $answered (i64.const 0))))
@@ -300,7 +300,7 @@ fn each_node_reaches_the_site_it_was_lent() -> Result<()> {
 
     let lanes = lanes(kept);
     for backend in lanes.engine_backends() {
-        let answers = walked(&fx, manifest(&fx, &probe, "read-own"), backend)?;
+        let answers = walked(&fx, manifest(&fx, &probe, "read_own"), backend)?;
         assert_eq!(answered(&answers, 0)?, KEPT.len() as u64, "the keeper");
         assert_eq!(answered(&answers, 1)?, PROWLED.len() as u64, "the prowler");
     }
@@ -325,7 +325,7 @@ fn a_node_cannot_read_a_cell_declared_for_another_node() -> Result<()> {
     for foreign in [kept, prowled] {
         let lanes = lanes(foreign);
         for backend in lanes.engine_backends() {
-            let outcome = aborted(&fx, manifest(&fx, &probe, "read-foreign"), backend)?;
+            let outcome = aborted(&fx, manifest(&fx, &probe, "read_foreign"), backend)?;
             assert_eq!(
                 outcome,
                 Outcome::UserError {
@@ -348,7 +348,7 @@ fn a_node_cannot_write_a_cell_declared_for_another_node() -> Result<()> {
 
     let lanes = lanes(kept);
     for backend in lanes.engine_backends() {
-        let outcome = aborted(&fx, manifest(&fx, &probe, "write-foreign"), backend)?;
+        let outcome = aborted(&fx, manifest(&fx, &probe, "write_foreign"), backend)?;
         assert_eq!(
             outcome,
             Outcome::UserError {
@@ -374,7 +374,7 @@ fn a_node_cannot_exceed_the_mode_its_own_cell_was_declared_at() -> Result<()> {
 
     let lanes = lanes(kept);
     for backend in lanes.engine_backends() {
-        let outcome = aborted(&fx, manifest(&fx, &probe, "write-own"), backend)?;
+        let outcome = aborted(&fx, manifest(&fx, &probe, "write_own"), backend)?;
         assert_eq!(
             outcome,
             Outcome::UserError {
