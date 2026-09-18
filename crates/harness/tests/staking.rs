@@ -17,6 +17,7 @@
 
 use std::sync::LazyLock;
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::vocabulary::CONFIG;
 use hyperscale_vm_effects::{
     AdmissionError, Hash32, Hasher, InstanceMeta, Intent, IntentHeader, IntentTree, ManifestGraph,
@@ -149,10 +150,11 @@ fn world() -> Records {
 fn pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: staking_pkg(),
-        config: vec![
+        config: Capped::new(vec![
             Value::Address(TOKEN.address()),
             Value::Address(OPERATOR.address()),
-        ],
+        ])
+        .unwrap(),
         salt: Hash32([2; 32]),
     }
 }

@@ -18,6 +18,7 @@
 
 use std::sync::Arc;
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, ChainRecords, Clause, Declaration, Expr, GraphArg, GraphNode, Hash32,
     Hasher, InstanceMeta, Intent, IntentHeader, IntentTree, ManifestGraph, MethodSignature,
@@ -111,7 +112,7 @@ fn world() -> (Records, ComponentAddr) {
         &TestHasher,
         InstanceMeta {
             package: package(),
-            config: Vec::new(),
+            config: Capped::empty(),
             salt: Hash32([7; 32]),
         },
     );
@@ -122,11 +123,11 @@ fn world() -> (Records, ComponentAddr) {
 /// naming the victim.
 fn drain_graph(instance: ComponentAddr) -> ManifestGraph {
     ManifestGraph {
-        nodes: vec![GraphNode::new(
+        nodes: Capped::from_array([GraphNode::new(
             instance,
             "drain",
             vec![GraphArg::Literal(Value::Address(VICTIM.address()))],
-        )],
+        )]),
     }
 }
 

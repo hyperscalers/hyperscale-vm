@@ -9,6 +9,7 @@
 //! single entry costs, which is what conflict-by-interval-overlap makes
 //! expensive for everyone else.
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{effect_units, footprint};
 use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, LocalKey, Mode, Moves,
@@ -222,7 +223,7 @@ fn a_move_of_more_instances_prices_above_fewer() {
         ];
         let record = InstanceMeta {
             package: PackageHash(Hash32([1; 32])),
-            config: Vec::new(),
+            config: Capped::empty(),
             salt: Hash32([2; 32]),
         };
         let budget = EvalBudget::default();

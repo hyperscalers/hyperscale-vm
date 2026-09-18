@@ -4,8 +4,7 @@
 //! rather than regenerated: a diff here is a change to what a wallet shows
 //! somebody before they sign.
 
-use std::collections::BTreeSet;
-
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, Value,
 };
@@ -29,7 +28,7 @@ fn pkg(name: &str) -> PackageHash {
 fn instance(package: &str, config: Vec<Value>) -> InstanceMeta {
     InstanceMeta {
         package: pkg(package),
-        config,
+        config: Capped::new(config).unwrap(),
         salt: Hash32([2; 32]),
     }
 }
@@ -190,12 +189,15 @@ fn a_socket_renders_as_the_opening_it_is() {
     let mut graph = b.build().unwrap();
     // The socket reference arrives the way one reaches a renderer: in a
     // declaration composed elsewhere, not from a token this graph minted.
-    graph.nodes.push(GraphNode {
-        target: ALICE.into(),
-        method: "deposit".into(),
-        args: vec![GraphArg::socket(0)],
-        evidence: BTreeSet::new(),
-    });
+    graph
+        .nodes
+        .push(GraphNode {
+            target: ALICE.into(),
+            method: "deposit".into(),
+            args: vec![GraphArg::socket(0)],
+            evidence: Capped::default(),
+        })
+        .unwrap();
 
     let text = render(&graph, &chain, &TestHasher, NETWORK, &vocabulary()).unwrap();
     // The exported edge has no consumer in this graph, so nothing names

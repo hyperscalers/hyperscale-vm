@@ -16,6 +16,7 @@
 
 use std::sync::LazyLock;
 
+use hyperscale_hbor::{Bytes, Capped};
 use hyperscale_vm_effects::vocabulary::CONFIG;
 use hyperscale_vm_effects::{
     AdmissionError, GrantedBehaviour, GraphArg, GraphNode, Hash32, InstanceMeta, Intent,
@@ -66,7 +67,7 @@ fn world() -> Records {
 fn pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("flashloan"),
-        config: vec![Value::Address(TOKEN.address())],
+        config: Capped::new(vec![Value::Address(TOKEN.address())]).unwrap(),
         salt: Hash32([2; 32]),
     }
 }
@@ -100,7 +101,10 @@ fn debt_record() -> ResourceMeta {
     ResourceMeta {
         namespace: pool_addr().into(),
         kind: issuance.kind,
-        material: vec![Value::Bytes(b"debt".to_vec()).canonical_bytes()],
+        material: Capped::new(vec![
+            Bytes::new(Value::Bytes(b"debt".to_vec()).canonical_bytes()).unwrap(),
+        ])
+        .unwrap(),
         rules: issuance
             .grants
             .resolve(&TestHasher, pool_addr().into(), &pool_meta().config)
@@ -141,7 +145,7 @@ fn graph(write: impl FnOnce(&mut TypedBuilder<'_>) -> Result<(), TypedError>) ->
 /// must, since a `Restricted` address says its rules bind a movement.
 fn intent(account: PrincipalAddr, graph: ManifestGraph) -> IntentTree {
     let mut tree = IntentTree::of_one(Intent::leaf(TEST_HEADER, account, graph));
-    tree.resources = vec![debt_record()];
+    tree.resources = Capped::new(vec![debt_record()]).unwrap();
     tree
 }
 
@@ -203,12 +207,13 @@ fn a_loan_nobody_repaid_is_refused_before_it_routes() {
     // graph a forgetful composer would sign is one it declines to
     // produce. What is under test is the verdict beneath that.
     let unrepaid = ManifestGraph {
-        nodes: vec![GraphNode {
+        nodes: Capped::new(vec![GraphNode {
             target: pool_addr().into(),
             method: "draw".into(),
             args: vec![GraphArg::Literal(Value::U128(100))],
-            evidence: std::collections::BTreeSet::default(),
-        }],
+            evidence: Capped::new(std::collections::BTreeSet::default()).unwrap(),
+        }])
+        .unwrap(),
     };
     let tree = intent(ALICE, unrepaid);
     let refusal = admit_tree(&tree, tree.hash(&TestHasher), &world(), &TestHasher)
@@ -255,7 +260,7 @@ fn the_obligation_cannot_be_routed_into_a_vault() {
     // derivation rule itself is security.rs's pin.
     assert_eq!(debt().address().class(), AddressClass::Restricted);
     let mut withheld = tree;
-    withheld.resources = Vec::new();
+    withheld.resources = Capped::empty();
     let refusal = admit_tree(&withheld, withheld.hash(&TestHasher), &world(), &TestHasher)
         .expect_err("a restricted resource moved with no record is refused");
     assert!(

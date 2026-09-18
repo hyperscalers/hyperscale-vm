@@ -7,6 +7,7 @@
 //! ordinary claim, and what makes it a composition is which declaration
 //! it crosses.
 
+use hyperscale_hbor::{Bytes, Capped};
 use hyperscale_vm_effects::{
     AdmissionError, Binding, Claim, ClaimRef, Constraint, EdgeRef, GiveRef, GrantedBehaviour,
     GraphArg, Hash32, Hasher, InstanceMeta, Intent, IntentHeader, IntentRecord, IntentTree,
@@ -357,7 +358,10 @@ fn an_adopted_socket_consumed_from_the_other_channel_is_refused() {
 
     // A value socket, presented as evidence by the consuming node.
     let mut request = payment_request(100);
-    request.graph.nodes[0].evidence.insert(ClaimRef::Socket(0));
+    request.graph.nodes[0]
+        .evidence
+        .insert(ClaimRef::Socket(0))
+        .unwrap();
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert_eq!(
         root.adopt(request).map(|_| ()),
@@ -402,7 +406,7 @@ fn a_presented_record_too_deep_to_encode_refuses_at_build() {
         .build_presenting(
             vec![InstanceMeta {
                 package: pkg(),
-                config: vec![nested],
+                config: Capped::new(vec![nested]).unwrap(),
                 salt: Hash32([3; 32]),
             }],
             Vec::new(),
@@ -449,7 +453,8 @@ fn a_presented_declaration_that_discharges_nothing_is_refused() {
     let mut malformed = payment_request(100);
     malformed
         .sockets
-        .push(payment_request(50).sockets.remove(0));
+        .push(payment_request(50).sockets.remove(0))
+        .unwrap();
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert!(matches!(
         root.adopt(malformed),
@@ -506,7 +511,7 @@ fn a_hole_two_arguments_consume_is_refused() {
     // declaration assembled elsewhere.
     let mut malformed = payment_request(100);
     let again = malformed.graph.nodes[0].clone();
-    malformed.graph.nodes.push(again);
+    malformed.graph.nodes.push(again).unwrap();
     let mut root = IntentBuilder::new(&chain, &TestHasher, ALICE, TEST_HEADER);
     assert!(matches!(
         root.adopt(malformed),
@@ -840,7 +845,7 @@ fn note_meta() -> ResourceMeta {
     ResourceMeta {
         namespace: MINTER,
         kind: ResourceKind::Fungible,
-        material: vec![b"note".to_vec()],
+        material: Capped::new(vec![Bytes::new(b"note".to_vec()).unwrap()]).unwrap(),
         rules,
     }
 }

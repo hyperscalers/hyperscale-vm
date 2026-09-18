@@ -2,6 +2,7 @@
 //! tree of one leaf the chain would carry it as.
 #![allow(dead_code)] // shared between test binaries; each uses a subset
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, ChainRecords, Hasher, Intent, IntentHeader, IntentTree,
     ManifestGraph, ResourceMeta, admit_tree,
@@ -26,11 +27,11 @@ pub fn leaf_tree(
 ) -> IntentTree {
     IntentTree {
         root: Intent {
-            attested_by: attested_by.to_vec(),
+            attested_by: Capped::new(attested_by.to_vec()).unwrap(),
             ..Intent::leaf(HEADER, account, graph.clone())
         },
-        instances: Vec::new(),
-        resources: records.to_vec(),
+        instances: Capped::empty(),
+        resources: Capped::new(records.to_vec()).unwrap(),
     }
 }
 

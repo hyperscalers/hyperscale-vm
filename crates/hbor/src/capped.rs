@@ -22,6 +22,7 @@
 //! removal, since a shorter value is under any cap the longer one met.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::ops::{Deref, Index, IndexMut};
 
 use crate::decode::Decoder;
@@ -65,11 +66,15 @@ mod sealed {
     pub trait Sealed {}
 }
 
-/// A collection [`Capped`] may hold: one with a length, and a read that
-/// refuses a claimed length past a cap before allocating for it.
+/// A collection [`Capped`] may hold: one with a length.
 pub trait Collection: sealed::Sealed + Sized {
     /// How many elements the value holds.
     fn length(&self) -> usize;
+}
+
+/// A collection with a read that refuses a claimed length past a cap
+/// before allocating for it.
+pub trait CappedDecode: Collection {
     /// Read a value of at most `max` elements.
     ///
     /// # Errors
@@ -81,11 +86,13 @@ pub trait Collection: sealed::Sealed + Sized {
 
 impl<T> sealed::Sealed for Vec<T> {}
 
-impl<T: HborDecode> Collection for Vec<T> {
+impl<T> Collection for Vec<T> {
     fn length(&self) -> usize {
         self.len()
     }
+}
 
+impl<T: HborDecode> CappedDecode for Vec<T> {
     fn decode_capped(decoder: &mut Decoder<'_>, max: usize) -> Result<Self, DecodeError> {
         bounded::decode_bounded_vec(decoder, max)
     }
@@ -93,11 +100,13 @@ impl<T: HborDecode> Collection for Vec<T> {
 
 impl<T> sealed::Sealed for BTreeSet<T> {}
 
-impl<T: HborDecode + Ord> Collection for BTreeSet<T> {
+impl<T> Collection for BTreeSet<T> {
     fn length(&self) -> usize {
         self.len()
     }
+}
 
+impl<T: HborDecode + Ord> CappedDecode for BTreeSet<T> {
     fn decode_capped(decoder: &mut Decoder<'_>, max: usize) -> Result<Self, DecodeError> {
         bounded::decode_bounded_btree_set(decoder, max)
     }
@@ -105,11 +114,13 @@ impl<T: HborDecode + Ord> Collection for BTreeSet<T> {
 
 impl<K, V> sealed::Sealed for BTreeMap<K, V> {}
 
-impl<K: HborDecode + Ord, V: HborDecode> Collection for BTreeMap<K, V> {
+impl<K, V> Collection for BTreeMap<K, V> {
     fn length(&self) -> usize {
         self.len()
     }
+}
 
+impl<K: HborDecode + Ord, V: HborDecode> CappedDecode for BTreeMap<K, V> {
     fn decode_capped(decoder: &mut Decoder<'_>, max: usize) -> Result<Self, DecodeError> {
         bounded::decode_bounded_btree_map(decoder, max)
     }
@@ -119,8 +130,16 @@ impl<K: HborDecode + Ord, V: HborDecode> Collection for BTreeMap<K, V> {
 ///
 /// Encodes exactly as the collection it holds; what the type adds is the
 /// cap, held at construction and checked at decode.
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Capped<C, const N: usize>(C);
+
+/// Rendered as the collection it holds: the cap is the type's, and a
+/// value's rendering is the value's.
+impl<C: fmt::Debug, const N: usize> fmt::Debug for Capped<C, N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 impl<C: Collection, const N: usize> Capped<C, N> {
     /// The most elements a value may hold.
@@ -171,9 +190,46 @@ impl<T, const N: usize> Capped<Vec<T>, N> {
         self.0.get_mut(index)
     }
 
+    /// Every element through `map`, under the same cap: the length is
+    /// kept, so the result cannot outgrow it.
+    pub fn map<U>(&self, map: impl FnMut(&T) -> U) -> Capped<Vec<U>, N> {
+        Capped(self.0.iter().map(map).collect())
+    }
+
+    /// Every element through `map`, under the same cap, or the first
+    /// refusal `map` answers with.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `map` refuses with.
+    pub fn try_map<U, E>(
+        &self,
+        map: impl FnMut(&T) -> Result<U, E>,
+    ) -> Result<Capped<Vec<U>, N>, E> {
+        self.0.iter().map(map).collect::<Result<_, E>>().map(Capped)
+    }
+
     /// Remove the last element, where there is one.
     pub fn pop(&mut self) -> Option<T> {
         self.0.pop()
+    }
+
+    /// Remove the element at `index`, closing the gap.
+    ///
+    /// # Panics
+    ///
+    /// As `Vec::remove`, past the end.
+    pub fn remove(&mut self, index: usize) -> T {
+        self.0.remove(index)
+    }
+
+    /// Exchange two elements in place.
+    ///
+    /// # Panics
+    ///
+    /// As `<[T]>::swap`, past the end.
+    pub fn swap(&mut self, a: usize, b: usize) {
+        self.0.swap(a, b);
     }
 
     /// Keep the first `len` elements.
@@ -213,6 +269,16 @@ impl<T, const N: usize> Capped<Vec<T>, N> {
 }
 
 impl<T: Ord, const N: usize> Capped<BTreeSet<T>, N> {
+    /// A set written out, whose member count the compiler holds under
+    /// the cap.
+    #[must_use]
+    pub fn from_members<const M: usize>(items: [T; M]) -> Self {
+        const {
+            assert!(M <= N, "a set written past its cap");
+        }
+        Self(BTreeSet::from(items))
+    }
+
     /// Remove `item`, saying whether it was a member.
     pub fn remove(&mut self, item: &T) -> bool {
         self.0.remove(item)
@@ -309,6 +375,24 @@ impl<'a, T, const N: usize> IntoIterator for &'a mut Capped<Vec<T>, N> {
     }
 }
 
+impl<T: PartialEq, const N: usize, const M: usize> PartialEq<[T; M]> for Capped<Vec<T>, N> {
+    fn eq(&self, other: &[T; M]) -> bool {
+        self.0 == other
+    }
+}
+
+impl<T: PartialEq, const N: usize> PartialEq<[T]> for Capped<Vec<T>, N> {
+    fn eq(&self, other: &[T]) -> bool {
+        self.0 == other
+    }
+}
+
+impl<T: PartialEq, const N: usize> PartialEq<Vec<T>> for Capped<Vec<T>, N> {
+    fn eq(&self, other: &Vec<T>) -> bool {
+        &self.0 == other
+    }
+}
+
 impl<T, const N: usize> AsRef<[T]> for Capped<Vec<T>, N> {
     fn as_ref(&self) -> &[T] {
         &self.0
@@ -336,7 +420,7 @@ where
     }
 }
 
-impl<T: HborDecode, const N: usize> TryFrom<Vec<T>> for Capped<Vec<T>, N> {
+impl<T, const N: usize> TryFrom<Vec<T>> for Capped<Vec<T>, N> {
     type Error = Overflow;
 
     fn try_from(list: Vec<T>) -> Result<Self, Overflow> {
@@ -344,7 +428,7 @@ impl<T: HborDecode, const N: usize> TryFrom<Vec<T>> for Capped<Vec<T>, N> {
     }
 }
 
-impl<T: HborDecode + Ord, const N: usize> TryFrom<BTreeSet<T>> for Capped<BTreeSet<T>, N> {
+impl<T, const N: usize> TryFrom<BTreeSet<T>> for Capped<BTreeSet<T>, N> {
     type Error = Overflow;
 
     fn try_from(set: BTreeSet<T>) -> Result<Self, Overflow> {
@@ -352,9 +436,7 @@ impl<T: HborDecode + Ord, const N: usize> TryFrom<BTreeSet<T>> for Capped<BTreeS
     }
 }
 
-impl<K: HborDecode + Ord, V: HborDecode, const N: usize> TryFrom<BTreeMap<K, V>>
-    for Capped<BTreeMap<K, V>, N>
-{
+impl<K, V, const N: usize> TryFrom<BTreeMap<K, V>> for Capped<BTreeMap<K, V>, N> {
     type Error = Overflow;
 
     fn try_from(map: BTreeMap<K, V>) -> Result<Self, Overflow> {
@@ -366,14 +448,14 @@ impl<C, const N: usize> HborWidth for Capped<C, N> {
     const MIN_ENCODED_LEN: usize = 1;
 }
 
-impl<C: Collection + HborEncode, const N: usize> HborEncode for Capped<C, N> {
+impl<C: HborEncode, const N: usize> HborEncode for Capped<C, N> {
     fn encode<S: Sink>(&self, encoder: &mut Encoder<S>) -> Result<(), EncodeError> {
         expressible!(N);
         self.0.encode(encoder)
     }
 }
 
-impl<C: Collection, const N: usize> HborDecode for Capped<C, N> {
+impl<C: CappedDecode, const N: usize> HborDecode for Capped<C, N> {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
         expressible!(N);
         C::decode_capped(decoder, N).map(Self)
@@ -405,8 +487,14 @@ impl<K: HborShape, V: HborShape, const N: usize> HborShape for Capped<BTreeMap<K
 ///
 /// Encodes as `Vec<u8>` does — a length then the bytes — in one copy each
 /// way, which is the path a generic element loop cannot take.
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Bytes<const N: usize>(Vec<u8>);
+
+impl<const N: usize> fmt::Debug for Bytes<N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 impl<const N: usize> Bytes<N> {
     /// The most bytes a value may hold.
@@ -585,8 +673,14 @@ impl<const N: usize> HborShape for Bytes<N> {
 /// The cap counts bytes, not characters: it bounds the wire, and a
 /// character count would not. Nothing normalizes the text — two byte
 /// strings that look alike are two values.
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Text<const N: usize>(String);
+
+impl<const N: usize> fmt::Debug for Text<N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 impl<const N: usize> Text<N> {
     /// The most bytes a value may hold.

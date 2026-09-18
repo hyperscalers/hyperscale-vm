@@ -100,6 +100,7 @@ pub fn per_shard(admitted: &Admitted, shards: &dyn ShardResolver) -> BTreeMap<Sh
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
+    use hyperscale_hbor::Capped;
     use hyperscale_vm_types::{
         Address, AddressClass, CallTarget, Effect, EffectConflict, EffectSet, EffectTarget,
         MAX_MANIFEST_NODES, Mode, Moves, NetworkId, PrincipalAddr,
@@ -153,7 +154,7 @@ mod tests {
             target: target.into(),
             method: method.into(),
             args,
-            evidence: BTreeSet::new(),
+            evidence: Capped::default(),
         }
     }
 
@@ -163,7 +164,7 @@ mod tests {
 
     fn one_node(target: impl Into<CallTarget>) -> ManifestGraph {
         ManifestGraph {
-            nodes: vec![node(target, "m", vec![])],
+            nodes: Capped::new(vec![node(target, "m", vec![])]).unwrap(),
         }
     }
 
@@ -185,7 +186,7 @@ mod tests {
     fn frames_carry_the_clause_order_materialization_walks() {
         let (chain, _) = payer_payee_world();
         let graph = ManifestGraph {
-            nodes: vec![
+            nodes: Capped::new(vec![
                 node(
                     instance_of("payer"),
                     "pay",
@@ -195,7 +196,8 @@ mod tests {
                     ],
                 ),
                 node(instance_of("payee"), "recv", vec![edge(0, 0)]),
-            ],
+            ])
+            .unwrap(),
         };
         let admitted = routed(&graph, &chain);
 
@@ -293,7 +295,7 @@ mod tests {
     fn unknown_lookups_are_distinct_errors() {
         let ghost_meta = InstanceMeta {
             package: pkg("ghost"),
-            config: vec![],
+            config: Capped::empty(),
             salt: Hash32([8; 32]),
         };
         let a_1_4 = ghost_meta.address(&TestHasher);
@@ -367,7 +369,7 @@ mod tests {
         chain.packages.publish_unchecked(pkg("oracle"), meta);
         chain.instances.create(&TestHasher, meta_of("oracle"));
         let graph = ManifestGraph {
-            nodes: vec![node(instance_of("oracle"), "peek", vec![])],
+            nodes: Capped::new(vec![node(instance_of("oracle"), "peek", vec![])]).unwrap(),
         };
         let admitted = routed(&graph, &chain);
         // A read declares its target like any other mode; whether the
@@ -399,17 +401,24 @@ mod tests {
             let graph = ManifestGraph {
                 nodes: (0..count)
                     .map(|_| node(instance_of("wide"), "m", vec![]))
-                    .collect(),
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap(),
             };
             admit_leaf(&graph, alice(), &chain, &TestHasher).map(|admitted| sets(&admitted))
         };
 
-        // A size well inside the cap, and the cap itself.
+        // A size well inside the cap, and the cap itself. One past it is
+        // not a graph the type can hold, so admission never sees one.
         assert!(admit_at(1_025).is_ok());
         assert!(admit_at(MAX_MANIFEST_NODES).is_ok());
-        assert_eq!(
-            admit_at(MAX_MANIFEST_NODES + 1).err(),
-            Some(AdmissionError::TooManyNodes)
+        assert!(
+            Capped::<Vec<GraphNode>, MAX_MANIFEST_NODES>::new(
+                (0..=MAX_MANIFEST_NODES)
+                    .map(|_| node(instance_of("wide"), "m", vec![]))
+                    .collect()
+            )
+            .is_err()
         );
     }
 
@@ -451,7 +460,7 @@ mod tests {
         assert_eq!(
             admit_leaf(
                 &ManifestGraph {
-                    nodes: vec![take(), take()],
+                    nodes: Capped::new(vec![take(), take()]).unwrap(),
                 },
                 alice(),
                 &chain,
@@ -493,7 +502,7 @@ mod tests {
         let zeros = Address::new([0; 31], AddressClass::Component);
         let ids: Vec<ShardId> = (0..=63)
             .map(|bits| PrefixShardResolver { bits }.shard_of(zeros))
-            .collect();
+            .collect::<Vec<_>>();
         let unique: BTreeSet<ShardId> = ids.iter().copied().collect();
         assert_eq!(unique.len(), ids.len(), "two depths collided on one id");
         assert_eq!(ids[63], ShardId(1 << 63), "the deepest leaf fills `u64`");
@@ -560,7 +569,7 @@ mod tests {
             &TestHasher,
             InstanceMeta {
                 package: pkg("spread"),
-                config: vec![Value::List(spread)],
+                config: Capped::new(vec![Value::List(spread)]).unwrap(),
                 salt: Hash32([15; 32]),
             },
         );
@@ -601,7 +610,7 @@ mod tests {
             &TestHasher,
             InstanceMeta {
                 package: pkg("spread"),
-                config: vec![Value::List(spread), Value::Bool(taken)],
+                config: Capped::new(vec![Value::List(spread), Value::Bool(taken)]).unwrap(),
                 salt: Hash32([16; 32]),
             },
         );
@@ -694,7 +703,7 @@ mod tests {
             &TestHasher,
             InstanceMeta {
                 package: pkg("guarded"),
-                config: vec![left, right],
+                config: Capped::new(vec![left, right]).unwrap(),
                 salt: Hash32([21; 32]),
             },
         );
@@ -801,11 +810,12 @@ mod tests {
             &TestHasher,
             InstanceMeta {
                 package: pkg("looped"),
-                config: vec![Value::List(vec![
+                config: Capped::new(vec![Value::List(vec![
                     Value::U64(1),
                     Value::U64(2),
                     Value::U64(3),
-                ])],
+                ])])
+                .unwrap(),
                 salt: Hash32([22; 32]),
             },
         );
@@ -919,7 +929,9 @@ mod tests {
                 totality: Totality::Fallible,
                 outputs: vec![Expr::Literal(Value::Bucket {
                     resource: resource(0xE1),
-                    content: EdgeContent::NonFungible { ids },
+                    content: EdgeContent::NonFungible {
+                        ids: Capped::new(ids).unwrap(),
+                    },
                 })],
                 ..MethodSignature::default()
             },
@@ -928,15 +940,18 @@ mod tests {
         chain.packages.publish_unchecked(pkg("nf"), package);
         chain.instances.create(&TestHasher, meta_of("nf"));
         let graph = ManifestGraph {
-            nodes: vec![
+            nodes: Capped::new(vec![
                 node(instance_of("nf"), "make", vec![]),
                 node(instance_of("nf"), "take", vec![edge(0, 0)]),
-            ],
+            ])
+            .unwrap(),
         };
         let admitted = routed(&graph, &chain);
         assert_eq!(
             admitted.calls()[0].outputs,
-            vec![EdgeContent::NonFungible { ids: vec![3, 9] }]
+            vec![EdgeContent::NonFungible {
+                ids: Capped::new(vec![3, 9]).unwrap()
+            }]
         );
         let edge = &admitted.calls()[1].edges[0];
         assert_eq!((edge.source, edge.output), (0, 0));
@@ -973,7 +988,7 @@ mod tests {
         chain.packages.publish_unchecked(pkg("edges"), package);
         chain.instances.create(&TestHasher, meta_of("edges"));
         let graph = ManifestGraph {
-            nodes: vec![
+            nodes: Capped::new(vec![
                 node(instance_of("edges"), "make", vec![]),
                 node(
                     instance_of("edges"),
@@ -989,7 +1004,8 @@ mod tests {
                         ),
                     ],
                 ),
-            ],
+            ])
+            .unwrap(),
         };
         let admitted = routed(&graph, &chain);
         assert_eq!(
@@ -1041,7 +1057,7 @@ mod tests {
         chain.packages.publish_unchecked(pkg("router"), router);
         chain.instances.create(&TestHasher, meta_of("router"));
         let graph = ManifestGraph {
-            nodes: vec![
+            nodes: Capped::new(vec![
                 node(instance_of("router"), "make", vec![]),
                 node(
                     instance_of("router"),
@@ -1054,7 +1070,8 @@ mod tests {
                         vec![Constraint::MinAmount(42)],
                     )],
                 ),
-            ],
+            ])
+            .unwrap(),
         };
         (chain, graph)
     }
@@ -1114,11 +1131,12 @@ mod tests {
             chain.packages.publish_unchecked(pkg("reacher"), package);
             chain.instances.create(&TestHasher, meta_of("reacher"));
             let graph = ManifestGraph {
-                nodes: vec![node(
+                nodes: Capped::new(vec![node(
                     instance_of("reacher"),
                     "reach",
                     vec![GraphArg::Literal(Value::Address(victim))],
-                )],
+                )])
+                .unwrap(),
             };
             admit_leaf(&graph, alice(), &chain, &TestHasher)
         };

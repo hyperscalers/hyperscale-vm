@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, LazyLock};
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG};
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, Authority, Claim, Hash32, Hasher, InstanceMeta, Intent, IntentHeader,
@@ -71,8 +72,8 @@ pub const HEADER: IntentHeader = IntentHeader {
 /// each account's prefix.
 pub fn acting_as(accounts: &[PrincipalAddr], graph: ManifestGraph) -> IntentTree {
     IntentTree::of_one(Intent {
-        accounts: accounts.to_vec(),
-        attested_by: accounts.to_vec(),
+        accounts: Capped::new(accounts.to_vec()).unwrap(),
+        attested_by: Capped::new(accounts.to_vec()).unwrap(),
         ..Intent::leaf(HEADER, accounts[0], graph)
     })
 }
@@ -287,11 +288,12 @@ pub fn pool_meta() -> InstanceMeta {
         // spliced into the record. Thirty basis points, at the scale
         // the bounded type holds — the range was checked when the value
         // was made, and the cell carries what it made.
-        config: vec![
+        config: Capped::new(vec![
             Value::Address(RES_X.address()),
             Value::Address(RES_Y.address()),
             Value::U128(30 * (1_000_000_000_000_000_000 / 10_000)),
-        ],
+        ])
+        .unwrap(),
         salt: Hash32([2; 32]),
     }
 }
@@ -305,7 +307,7 @@ pub fn pool() -> amm::Amm {
 pub fn shares_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("shares"),
-        config: vec![Value::Address(RES_X.address())],
+        config: Capped::new(vec![Value::Address(RES_X.address())]).unwrap(),
         salt: Hash32([11; 32]),
     }
 }
@@ -336,11 +338,12 @@ pub const ONE_PER_TICK: u128 = 1_000_000_000_000_000_000_000_000_000_000_000_000
 pub fn book_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("book"),
-        config: vec![
+        config: Capped::new(vec![
             Value::Address(BASE.address()),
             Value::Address(QUOTE.address()),
             scaled_rate(ONE_PER_TICK),
-        ],
+        ])
+        .unwrap(),
         salt: Hash32([3; 32]),
     }
 }
@@ -357,11 +360,12 @@ pub fn book() -> book::Book {
 pub fn fine_book_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("book"),
-        config: vec![
+        config: Capped::new(vec![
             Value::Address(BASE.address()),
             Value::Address(QUOTE.address()),
             scaled_rate(ONE_PER_TICK / 2),
-        ],
+        ])
+        .unwrap(),
         salt: Hash32([13; 32]),
     }
 }
@@ -374,7 +378,7 @@ pub fn fine_book() -> book::Book {
 pub fn registry_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("registry"),
-        config: vec![],
+        config: Capped::empty(),
         salt: Hash32([5; 32]),
     }
 }
@@ -387,7 +391,7 @@ pub fn registry_addr() -> ComponentAddr {
 pub fn nf_issuer_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("nf"),
-        config: vec![],
+        config: Capped::empty(),
         salt: Hash32([6; 32]),
     }
 }
@@ -406,7 +410,7 @@ pub fn nf_resource() -> ResourceAddr {
 pub fn nf_holder_meta(salt: u8) -> InstanceMeta {
     InstanceMeta {
         package: pkg("nf"),
-        config: vec![],
+        config: Capped::empty(),
         salt: Hash32([salt; 32]),
     }
 }
@@ -421,7 +425,7 @@ pub fn nf_holder(salt: u8) -> ComponentAddr {
 pub fn gated_meta(badge: Address, salt: u8) -> InstanceMeta {
     InstanceMeta {
         package: pkg("nf"),
-        config: vec![Value::Address(badge)],
+        config: Capped::new(vec![Value::Address(badge)]).unwrap(),
         salt: Hash32([salt; 32]),
     }
 }
@@ -434,7 +438,7 @@ pub fn gated_by(badge: Address, salt: u8) -> ComponentAddr {
 pub fn lottery_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("lottery"),
-        config: vec![],
+        config: Capped::empty(),
         salt: Hash32([11; 32]),
     }
 }
@@ -455,7 +459,7 @@ pub const fn terms() -> security::Terms {
 pub fn issuer_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("security"),
-        config: vec![Value::Address(REGISTRAR.address())],
+        config: Capped::new(vec![Value::Address(REGISTRAR.address())]).unwrap(),
         salt: Hash32([12; 32]),
     }
 }
@@ -490,11 +494,12 @@ pub fn approved() -> ResourceAddr {
 pub fn register_pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("amm"),
-        config: vec![
+        config: Capped::new(vec![
             Value::Address(share().address()),
             Value::Address(RES_X.address()),
             Value::U128(30 * (1_000_000_000_000_000_000 / 10_000)),
-        ],
+        ])
+        .unwrap(),
         salt: Hash32([13; 32]),
     }
 }
@@ -554,11 +559,12 @@ pub fn register_pool() -> amm::Amm {
 pub fn approval_pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("amm"),
-        config: vec![
+        config: Capped::new(vec![
             Value::Address(approved().address()),
             Value::Address(RES_X.address()),
             Value::U128(30 * (1_000_000_000_000_000_000 / 10_000)),
-        ],
+        ])
+        .unwrap(),
         salt: Hash32([14; 32]),
     }
 }
@@ -811,11 +817,11 @@ pub fn leaf_tree(
 ) -> IntentTree {
     IntentTree {
         root: Intent {
-            attested_by: attested_by.to_vec(),
+            attested_by: Capped::new(attested_by.to_vec()).unwrap(),
             ..Intent::leaf(HEADER, account, graph.clone())
         },
-        instances: Vec::new(),
-        resources: graph_records(graph, world, &TestHasher),
+        instances: Capped::empty(),
+        resources: Capped::new(graph_records(graph, world, &TestHasher)).unwrap(),
     }
 }
 

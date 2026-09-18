@@ -3,8 +3,7 @@
 //! declaration names exactly the key an execution creating at that slot
 //! writes.
 
-use std::collections::BTreeSet;
-
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, ChainRecords, Clause, Expr, GraphNode, Hash32, Hasher, InstanceMeta,
     Intent, IntentHeader, IntentTree, ManifestGraph, MethodSignature, ModeExpr, PackageHash,
@@ -96,7 +95,7 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
         &TestHasher,
         InstanceMeta {
             package: package_hash,
-            config: vec![],
+            config: Capped::empty(),
             salt: Hash32([1; 32]),
         },
     );
@@ -104,20 +103,21 @@ fn a_routed_fresh_key_is_the_key_the_kernel_creates() {
     // Two manifest nodes so the created object comes from a non-zero node
     // index — the namespacing the derivation must carry.
     let graph = ManifestGraph {
-        nodes: vec![
+        nodes: Capped::new(vec![
             GraphNode {
                 target: creator.into(),
                 method: "spawn".into(),
                 args: vec![],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
             GraphNode {
                 target: creator.into(),
                 method: "spawn".into(),
                 args: vec![],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
-        ],
+        ])
+        .unwrap(),
     };
     let admitted = admit_leaf(&graph, COMPOSER, &chain, &TestHasher).expect("admits");
     let identity = admitted.identity();

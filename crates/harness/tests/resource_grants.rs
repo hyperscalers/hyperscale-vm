@@ -11,6 +11,7 @@
 
 use std::sync::LazyLock;
 
+use hyperscale_hbor::{Bytes, Capped};
 use hyperscale_vm_effects::{
     AdmissionError, GrantedBehaviour, Holding, IntentHeader, IntentTree, Records, ResourceGrants,
     ResourceKind, ResourceMeta, RuleBytes, StoredRule, TestHasher, Totality, admit_tree,
@@ -84,7 +85,7 @@ fn governed_meta(entry: RuleBytes) -> ResourceMeta {
     ResourceMeta {
         namespace: MINTER,
         kind: ResourceKind::Fungible,
-        material: vec![b"governed".to_vec()],
+        material: Capped::new(vec![Bytes::new(b"governed".to_vec()).unwrap()]).unwrap(),
         rules,
     }
 }
@@ -210,7 +211,7 @@ fn a_changed_rule_is_a_different_resource() -> Result<()> {
     // stays unpresented.
     let forged = governed_meta(sealed(&StoredRule::CountOf {
         count: 0,
-        rules: Vec::new(),
+        rules: Capped::empty(),
     }));
     assert_ne!(forged.address(&TestHasher), governed(entry));
     let tree = root
@@ -443,7 +444,7 @@ fn admitting_meta(entry: RuleBytes) -> ResourceMeta {
     ResourceMeta {
         namespace: MINTER,
         kind: ResourceKind::Fungible,
-        material: vec![b"admitting".to_vec()],
+        material: Capped::new(vec![Bytes::new(b"admitting".to_vec()).unwrap()]).unwrap(),
         rules,
     }
 }

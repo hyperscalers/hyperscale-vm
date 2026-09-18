@@ -7,6 +7,7 @@
 
 use std::collections::BTreeSet;
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     Hash32, Hasher, InstanceMeta, Intent, IntentHeader, IntentTree, ManifestGraph, PackageHash,
     PrefixShardResolver, Records, ResourceKind, ShardId, ShardResolver, TestHasher, Value,
@@ -40,7 +41,7 @@ fn pkg(name: &str) -> PackageHash {
 fn instance(package: &str, config: Vec<Value>) -> InstanceMeta {
     InstanceMeta {
         package: pkg(package),
-        config,
+        config: Capped::new(config).unwrap(),
         salt: Hash32([2; 32]),
     }
 }

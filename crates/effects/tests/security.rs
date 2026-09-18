@@ -23,6 +23,7 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::{ALICE, BOB, pkg, world};
+use hyperscale_hbor::{Bytes, Capped};
 use hyperscale_vm_effects::{
     AdmissionError, Binding, Claim, ClaimRef, EdgeRef, GrantedBehaviour, GraphArg, GraphNode,
     Hash32, InstanceMeta, Intent, IntentHeader, IntentTree, Issuance, JudgedLeaf, LegRole,
@@ -63,7 +64,7 @@ fn issuer() -> (Records, ComponentAddr) {
         .publish_unchecked(pkg("security"), security::metadata());
     let meta = InstanceMeta {
         package: pkg("security"),
-        config: config(),
+        config: Capped::new(config()).unwrap(),
         salt: Hash32([0x5E; 32]),
     };
     let address: ComponentAddr = meta.address(&TestHasher);
@@ -100,7 +101,10 @@ fn record(issuer: ComponentAddr, mark: &[u8]) -> ResourceMeta {
     ResourceMeta {
         namespace: issuer.into(),
         kind: issuance.kind,
-        material: vec![Value::Bytes(mark.to_vec()).canonical_bytes()],
+        material: Capped::new(vec![
+            Bytes::new(Value::Bytes(mark.to_vec()).canonical_bytes()).unwrap(),
+        ])
+        .unwrap(),
         rules: issuance
             .grants
             .resolve(&TestHasher, issuer.into(), &config())
@@ -139,7 +143,7 @@ fn transfer_to(resource: ResourceAddr, recipient: PrincipalAddr) -> IntentTree {
             TEST_HEADER,
             ALICE,
             ManifestGraph {
-                nodes: vec![
+                nodes: Capped::new(vec![
                     GraphNode {
                         target: ALICE.into(),
                         method: "withdraw".into(),
@@ -147,7 +151,7 @@ fn transfer_to(resource: ResourceAddr, recipient: PrincipalAddr) -> IntentTree {
                             GraphArg::Literal(Value::Address(resource.address())),
                             GraphArg::Literal(Value::U128(40)),
                         ],
-                        evidence: BTreeSet::from([ClaimRef::Account(ALICE)]),
+                        evidence: Capped::new(BTreeSet::from([ClaimRef::Account(ALICE)])).unwrap(),
                     },
                     GraphNode {
                         target: recipient.into(),
@@ -159,13 +163,14 @@ fn transfer_to(resource: ResourceAddr, recipient: PrincipalAddr) -> IntentTree {
                             },
                             Vec::new(),
                         )],
-                        evidence: BTreeSet::default(),
+                        evidence: Capped::new(BTreeSet::default()).unwrap(),
                     },
-                ],
+                ])
+                .unwrap(),
             },
         ),
-        instances: Vec::new(),
-        resources: Vec::new(),
+        instances: Capped::empty(),
+        resources: Capped::empty(),
     }
 }
 
@@ -218,7 +223,7 @@ fn an_authored_rule_governs_a_holder_the_package_never_named() {
     let registered = issued(issuer, b"registered");
 
     let mut env = transfer(share);
-    env.resources = vec![record(issuer, b"share")];
+    env.resources = Capped::new(vec![record(issuer, b"share")]).unwrap();
     let admitted =
         admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher).expect("the transfer admits");
     let declaration = admitted.declaration();
@@ -273,7 +278,7 @@ fn each_side_of_a_transfer_answers_for_its_own_register_entry() {
     let registered = issued(issuer, b"registered");
 
     let mut env = transfer_to(share, BOB);
-    env.resources = vec![record(issuer, b"share")];
+    env.resources = Capped::new(vec![record(issuer, b"share")]).unwrap();
     let admitted =
         admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher).expect("the transfer admits");
     let conditions: Vec<_> = admitted.declaration().required().cloned().collect();
@@ -317,7 +322,7 @@ fn the_register_entry_is_soulbound() {
     let (chain, issuer) = issuer();
 
     let mut env = transfer(issued(issuer, b"registered"));
-    env.resources = vec![record(issuer, b"registered")];
+    env.resources = Capped::new(vec![record(issuer, b"registered")]).unwrap();
     let refusal = admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher)
         .expect_err("no holder may debit their own register entry");
     // The sentence itself — "grants Withdraw to nobody", per direction —
@@ -354,17 +359,17 @@ fn a_member_presenting_a_granted_claim_is_the_cores_off_the_granters_shard() {
     );
 
     let bobs = Intent {
-        sockets: vec![Socket::Authority(Claim::of_subject(REGISTRAR))],
+        sockets: Capped::new(vec![Socket::Authority(Claim::of_subject(REGISTRAR))]).unwrap(),
         ..Intent::leaf(
             TEST_HEADER,
             BOB,
             ManifestGraph {
-                nodes: vec![
+                nodes: Capped::new(vec![
                     GraphNode {
                         target: issuer.into(),
                         method: "register".into(),
                         args: vec![GraphArg::Literal(Value::U64(7))],
-                        evidence: BTreeSet::from([ClaimRef::Socket(0)]),
+                        evidence: Capped::new(BTreeSet::from([ClaimRef::Socket(0)])).unwrap(),
                     },
                     GraphNode {
                         target: BOB.into(),
@@ -376,19 +381,27 @@ fn a_member_presenting_a_granted_claim_is_the_cores_off_the_granters_shard() {
                             },
                             Vec::new(),
                         )],
-                        evidence: BTreeSet::default(),
+                        evidence: Capped::new(BTreeSet::default()).unwrap(),
                     },
-                ],
+                ])
+                .unwrap(),
             },
         )
     };
-    let mut root = Intent::leaf(TEST_HEADER, REGISTRAR, ManifestGraph { nodes: Vec::new() });
-    root.members = vec![Member {
+    let mut root = Intent::leaf(
+        TEST_HEADER,
+        REGISTRAR,
+        ManifestGraph {
+            nodes: Capped::empty(),
+        },
+    );
+    root.members = Capped::new(vec![Member {
         signed: SignedIntent::unsigned(bobs),
-        wiring: vec![Binding::Authority(ClaimRef::Account(REGISTRAR))],
-    }];
+        wiring: Capped::new(vec![Binding::Authority(ClaimRef::Account(REGISTRAR))]).unwrap(),
+    }])
+    .unwrap();
     let mut env = IntentTree::of_one(root);
-    env.resources = vec![record(issuer, b"registered")];
+    env.resources = Capped::new(vec![record(issuer, b"registered")]).unwrap();
     let admitted = admit_tree(&env, env.hash(&TestHasher), &chain, &TestHasher)
         .expect("the registrar grants what Bob's socket asks");
 

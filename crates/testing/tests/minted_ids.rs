@@ -8,6 +8,7 @@
 //! this is the walk holding it — both refusals landing where the edge
 //! comes back, before anything downstream can file or consume it.
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     Expr, GrantRuleExpr, GrantSubject, GrantedBehaviour, GrantsExpr, Issuance, Issued,
     MethodSignature, PackageMetadata, ResourceKind, Totality, Value,
@@ -43,12 +44,13 @@ fn issuer() -> PackageMetadata {
         "mint".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            issues: vec![Issuance {
+            issues: Capped::new(vec![Issuance {
                 mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
                 direction: Issued::Minted,
                 grants: badge_grants(),
-            }],
+            }])
+            .unwrap(),
             abi: vec![],
             outputs: vec![Expr::NfBucket {
                 resource: Box::new(Expr::SelfResource {
@@ -76,12 +78,13 @@ fn miscast_issuer() -> PackageMetadata {
         "mint".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            issues: vec![Issuance {
+            issues: Capped::new(vec![Issuance {
                 mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
                 direction: Issued::Minted,
                 grants: badge_grants(),
-            }],
+            }])
+            .unwrap(),
             abi: vec![],
             outputs: vec![Expr::SelfResource {
                 kind: ResourceKind::NonFungible,

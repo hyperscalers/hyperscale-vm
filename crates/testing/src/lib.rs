@@ -44,6 +44,7 @@
 
 use std::sync::{Arc, OnceLock};
 
+use hyperscale_hbor::Capped;
 /// The slots the protocol names under every owner, which a test reads a
 /// cell at.
 pub use hyperscale_vm_effects::vocabulary;
@@ -444,7 +445,7 @@ impl Chain {
         self.created += 1;
         let meta = InstanceMeta {
             package,
-            config,
+            config: Capped::new(config).expect("a fixture's configuration fits the record cap"),
             salt: salt(self.created),
         };
         let address = meta.address(&TestHasher);
@@ -756,8 +757,10 @@ impl Chain {
         let resources = graph_records(&graph, &self.records, &TestHasher);
         let tree = IntentTree {
             root: Intent::leaf(header, signer, graph),
-            instances: Vec::new(),
-            resources,
+            instances: Capped::empty(),
+            resources: resources
+                .try_into()
+                .expect("a fixture presents fewer records than the node cap"),
         };
         let admitted = admit_tree(&tree, tree.hash(&TestHasher), &self.records, &TestHasher)?;
         let declaration = admitted.declaration().clone();

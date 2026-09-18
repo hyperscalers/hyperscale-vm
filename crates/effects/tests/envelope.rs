@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 
-use hyperscale_hbor::from_slice_with_depth;
+use hyperscale_hbor::{Capped, from_slice_with_depth};
 mod common;
 
 use common::admit_leaf;
@@ -119,9 +119,15 @@ fn intent(
     gives: Vec<ValueRef>,
 ) -> Intent {
     Intent {
-        sockets,
-        gives,
-        ..Intent::leaf(TEST_HEADER, account, ManifestGraph { nodes })
+        sockets: Capped::new(sockets).unwrap(),
+        gives: Capped::new(gives).unwrap(),
+        ..Intent::leaf(
+            TEST_HEADER,
+            account,
+            ManifestGraph {
+                nodes: Capped::new(nodes).unwrap(),
+            },
+        )
     }
 }
 
@@ -131,9 +137,11 @@ fn compose(mut composer: Intent, members: Vec<(Intent, Vec<Binding>)>) -> Intent
         .into_iter()
         .map(|(intent, wiring)| Member {
             signed: SignedIntent::unsigned(intent),
-            wiring,
+            wiring: Capped::new(wiring).unwrap(),
         })
-        .collect();
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap();
     composer
 }
 
@@ -189,7 +197,7 @@ fn shape(admitted: &Admitted) -> Vec<(Address, String)> {
         .nodes
         .iter()
         .map(|node| (node.target, node.method.clone()))
-        .collect()
+        .collect::<Vec<_>>()
 }
 
 /// An intent acts as an account and is attested by keys, and the two are
@@ -201,8 +209,8 @@ fn shape(admitted: &Admitted) -> Vec<(Address, String)> {
 #[test]
 fn an_intent_is_attested_by_keys_the_account_need_not_derive() {
     let mut tree = composed_tree(100);
-    tree.root.attested_by = vec![BOB];
-    tree.root.members[0].signed.intent.attested_by = vec![ALICE];
+    tree.root.attested_by = Capped::new(vec![BOB]).unwrap();
+    tree.root.members[0].signed.intent.attested_by = Capped::new(vec![ALICE]).unwrap();
     let identity = tree.hash(&TestHasher);
     let admitted = admit_tree(&tree, identity, &world(), &TestHasher)
         .expect("a key that derives neither account still admits");
@@ -237,27 +245,29 @@ fn an_attesting_set_is_non_empty_bounded_and_repeats_nobody() {
     );
 
     let mut twice = composed_tree(100);
-    twice.root.attested_by = vec![ALICE, ALICE];
+    twice.root.attested_by = Capped::new(vec![ALICE, ALICE]).unwrap();
     assert_eq!(
         admit_composed(&twice),
         Err(AdmissionError::DuplicateAttester { intent: 0 })
     );
 
-    let mut crowd = composed_tree(100);
-    crowd.root.attested_by = (0x80u8..)
-        .take(MAX_ATTESTATIONS + 1)
-        .map(|byte| PrincipalAddr::new([byte; 31]))
-        .collect();
-    assert_eq!(
-        admit_composed(&crowd),
-        Err(AdmissionError::TooManyAttesters { intent: 0 })
+    // One attester past the cap is not a set the type can hold, so
+    // admission never sees one.
+    assert!(
+        Capped::<Vec<PrincipalAddr>, MAX_ATTESTATIONS>::new(
+            (0x80u8..)
+                .take(MAX_ATTESTATIONS + 1)
+                .map(|byte| PrincipalAddr::new([byte; 31]))
+                .collect()
+        )
+        .is_err()
     );
 
     // The set is signed content: another set is another intent, and so
     // another nullifier.
     let base = composed_tree(100).root.hash(&TestHasher);
     let mut delegated = composed_tree(100).root;
-    delegated.attested_by = vec![BOB];
+    delegated.attested_by = Capped::new(vec![BOB]).unwrap();
     assert_ne!(base, delegated.hash(&TestHasher));
 }
 
@@ -266,7 +276,7 @@ fn an_attesting_set_is_non_empty_bounded_and_repeats_nobody() {
 #[test]
 fn an_intent_acts_as_no_account_twice() {
     let mut twice = composed_tree(100);
-    twice.root.accounts = vec![ALICE, ALICE];
+    twice.root.accounts = Capped::new(vec![ALICE, ALICE]).unwrap();
     assert_eq!(
         admit_composed(&twice),
         Err(AdmissionError::DuplicateAccount { intent: 0 })
@@ -437,9 +447,9 @@ fn routing_carries_the_nullifier_creation_write() {
 #[test]
 fn two_intents_acting_as_one_account_each_nullify() {
     let mut tree = composed_tree(100);
-    tree.root.members[0].signed.intent.accounts = vec![ALICE];
+    tree.root.members[0].signed.intent.accounts = Capped::new(vec![ALICE]).unwrap();
     tree.root.members[0].signed.intent.graph.nodes =
-        vec![withdraw(ALICE, RES_Y, 10), deposit_param(ALICE, 0)];
+        Capped::new(vec![withdraw(ALICE, RES_Y, 10), deposit_param(ALICE, 0)]).unwrap();
     let admitted = admit_composed(&tree).expect("one account may offer twice");
     let [own, again] = admitted.intents() else {
         panic!("two intents, two records");
@@ -470,8 +480,8 @@ fn an_intent_acting_as_two_accounts_nullifies_and_signs_in_for_each() {
         Vec::new(),
         Vec::new(),
     );
-    root.accounts = vec![ALICE, BOB];
-    root.attested_by = vec![ALICE, BOB];
+    root.accounts = Capped::new(vec![ALICE, BOB]).unwrap();
+    root.attested_by = Capped::new(vec![ALICE, BOB]).unwrap();
     let tree = IntentTree::of_one(root);
     let admitted = admit_composed(&tree).expect("one intent acts as both");
     let [record] = admitted.intents() else {
@@ -520,7 +530,7 @@ fn an_intent_at_the_account_ceiling_costs_one_cell_per_account() {
     let accounts: Vec<PrincipalAddr> = (0x80u8..)
         .take(MAX_ACCOUNTS + 1)
         .map(|byte| PrincipalAddr::new([byte; 31]))
-        .collect();
+        .collect::<Vec<_>>();
     let acting_as = |accounts: &[PrincipalAddr]| {
         let mut root = intent(
             accounts[0],
@@ -531,7 +541,7 @@ fn an_intent_at_the_account_ceiling_costs_one_cell_per_account() {
             Vec::new(),
             Vec::new(),
         );
-        root.accounts = accounts.to_vec();
+        root.accounts = Capped::new(accounts.to_vec()).unwrap();
         tree(root)
     };
 
@@ -566,10 +576,9 @@ fn an_intent_at_the_account_ceiling_costs_one_cell_per_account() {
     assert_eq!(sign_ins, MAX_ACCOUNTS);
     assert_eq!(decode_tree(&encode_tree(&full)).as_ref(), Ok(&full));
 
-    assert_eq!(
-        admit_composed(&acting_as(&accounts)),
-        Err(AdmissionError::TooManyAccounts { intent: 0 })
-    );
+    // One account past the cap is not a list the type can hold, so
+    // admission never sees one.
+    assert!(Capped::<Vec<PrincipalAddr>, MAX_ACCOUNTS>::new(accounts).is_err());
 }
 
 #[test]
@@ -949,7 +958,7 @@ fn the_intent_hash_covers_the_interface() {
     };
     assert_ne!(decl.hash(&TestHasher), retyped.hash(&TestHasher));
     let mut regiven = decl.clone();
-    regiven.gives = vec![ValueRef::Edge(edge(0, 1))];
+    regiven.gives = Capped::new(vec![ValueRef::Edge(edge(0, 1))]).unwrap();
     assert_ne!(decl.hash(&TestHasher), regiven.hash(&TestHasher));
     let mut ungiven = decl.clone();
     ungiven.gives.clear();
@@ -965,7 +974,7 @@ fn the_intent_hash_covers_accounts_members_and_wiring() {
     let base = root.hash(&TestHasher);
 
     let mut reacted = root.clone();
-    reacted.accounts.push(BOB);
+    reacted.accounts.push(BOB).unwrap();
     assert_ne!(base, reacted.hash(&TestHasher));
 
     let mut recomposed = root.clone();
@@ -973,8 +982,8 @@ fn the_intent_hash_covers_accounts_members_and_wiring() {
     assert_ne!(base, recomposed.hash(&TestHasher));
     let mut widened = root.clone();
     let mut another = widened.members[0].clone();
-    another.signed.intent.accounts = vec![CAROL];
-    widened.members.push(another);
+    another.signed.intent.accounts = Capped::new(vec![CAROL]).unwrap();
+    widened.members.push(another).unwrap();
     assert_ne!(base, widened.hash(&TestHasher));
     let mut uncomposed = root.clone();
     uncomposed.members.clear();
@@ -992,7 +1001,8 @@ fn the_intent_hash_covers_accounts_members_and_wiring() {
     let mut extended = root.clone();
     extended.members[0]
         .wiring
-        .push(Binding::Value(ValueRef::Edge(edge(0, 0))));
+        .push(Binding::Value(ValueRef::Edge(edge(0, 0))))
+        .unwrap();
     assert_ne!(base, extended.hash(&TestHasher));
     let mut unwired = root;
     unwired.members[0].wiring.clear();
@@ -1036,17 +1046,20 @@ fn the_tree_hash_covers_the_records_and_the_order() {
     let tree = composed_tree(100);
     let plain = tree.hash(&TestHasher);
     let mut recorded = tree.clone();
-    recorded.instances.push(InstanceMeta {
-        package: pkg(),
-        config: vec![Value::U64(1)],
-        salt: Hash32([9; 32]),
-    });
+    recorded
+        .instances
+        .push(InstanceMeta {
+            package: pkg(),
+            config: Capped::new(vec![Value::U64(1)]).unwrap(),
+            salt: Hash32([9; 32]),
+        })
+        .unwrap();
     assert_ne!(recorded.hash(&TestHasher), plain);
 
     let mut second = tree.root.members[0].clone();
-    second.signed.intent.accounts = vec![CAROL];
+    second.signed.intent.accounts = Capped::new(vec![CAROL]).unwrap();
     let mut two = tree;
-    two.root.members.push(second);
+    two.root.members.push(second).unwrap();
     let mut reordered = two.clone();
     reordered.root.members.swap(0, 1);
     assert_ne!(reordered.hash(&TestHasher), two.hash(&TestHasher));
@@ -1057,8 +1070,9 @@ fn mutual_sockets_with_no_order_are_a_cycle() {
     // Each intent's only node consumes what the other yields; neither
     // can produce first.
     let mut tree = composed_tree(100);
-    tree.root.members[0].signed.intent.graph.nodes = vec![deposit_param(BOB, 0)];
-    tree.root.graph.nodes = vec![deposit_give(ALICE, 0, 0, Vec::new())];
+    tree.root.members[0].signed.intent.graph.nodes =
+        Capped::new(vec![deposit_param(BOB, 0)]).unwrap();
+    tree.root.graph.nodes = Capped::new(vec![deposit_give(ALICE, 0, 0, Vec::new())]).unwrap();
     assert_eq!(admit_composed(&tree), Err(AdmissionError::CyclicSockets));
 }
 
@@ -1169,7 +1183,8 @@ fn socket_consumption_is_exactly_once() {
         .intent
         .graph
         .nodes
-        .push(deposit_param(BOB, 0));
+        .push(deposit_param(BOB, 0))
+        .unwrap();
     assert_eq!(
         admit_composed(&reused),
         Err(AdmissionError::SocketReused {
@@ -1199,7 +1214,8 @@ fn give_consumption_is_exactly_once() {
         .root
         .graph
         .nodes
-        .push(deposit_give(ALICE, 0, 0, Vec::new()));
+        .push(deposit_give(ALICE, 0, 0, Vec::new()))
+        .unwrap();
     assert_eq!(
         admit_composed(&twice),
         Err(AdmissionError::GiveReused {
@@ -1210,7 +1226,7 @@ fn give_consumption_is_exactly_once() {
     );
 
     let mut rooted = composed_tree(100);
-    rooted.root.gives = vec![ValueRef::Edge(edge(0, 0))];
+    rooted.root.gives = Capped::new(vec![ValueRef::Edge(edge(0, 0))]).unwrap();
     assert_eq!(
         admit_composed(&rooted),
         Err(AdmissionError::RootGives { give: 0 })
@@ -1223,14 +1239,16 @@ fn give_consumption_is_exactly_once() {
 #[test]
 fn a_give_names_what_the_intent_holds() {
     let mut past_graph = composed_tree(100);
-    past_graph.root.members[0].signed.intent.gives = vec![ValueRef::Edge(edge(7, 0))];
+    past_graph.root.members[0].signed.intent.gives =
+        Capped::new(vec![ValueRef::Edge(edge(7, 0))]).unwrap();
     assert_eq!(
         admit_composed(&past_graph),
         Err(AdmissionError::UnknownGive { intent: 1, give: 0 })
     );
 
     let mut past_members = composed_tree(100);
-    past_members.root.members[0].signed.intent.gives = vec![ValueRef::Give(give(0, 0))];
+    past_members.root.members[0].signed.intent.gives =
+        Capped::new(vec![ValueRef::Give(give(0, 0))]).unwrap();
     assert_eq!(
         admit_composed(&past_members),
         Err(AdmissionError::UnknownGive { intent: 1, give: 0 })
@@ -1240,7 +1258,12 @@ fn a_give_names_what_the_intent_holds() {
     internal.root.members[0].signed.intent.graph.nodes[1] = deposit_edge(BOB, 0);
     internal.root.members[0].signed.intent.sockets.clear();
     internal.root.members[0].wiring.clear();
-    internal.root.graph.nodes.push(deposit_edge(ALICE, 0));
+    internal
+        .root
+        .graph
+        .nodes
+        .push(deposit_edge(ALICE, 0))
+        .unwrap();
     assert!(matches!(
         admit_composed(&internal),
         Err(AdmissionError::DoubleConsumption { .. })
@@ -1310,7 +1333,7 @@ fn wiring_must_cover_the_declared_sockets() {
 fn two_wirings_cannot_consume_one_output() {
     // A second member is wired the same root output the first consumes.
     let mut second = bobs_offer();
-    second.accounts = vec![CAROL];
+    second.accounts = Capped::new(vec![CAROL]).unwrap();
     second.graph.nodes[0] = withdraw(CAROL, RES_Y, 10);
     second.graph.nodes[1] = deposit_param(CAROL, 0);
     let root = intent(
@@ -1350,12 +1373,13 @@ fn two_wirings_cannot_consume_one_output() {
 fn duplicate_intents_reject() {
     let mut beside = composed_tree(100);
     let copy = beside.root.members[0].clone();
-    beside.root.members.push(copy);
+    beside.root.members.push(copy).unwrap();
     beside
         .root
         .graph
         .nodes
-        .push(deposit_give(ALICE, 1, 0, Vec::new()));
+        .push(deposit_give(ALICE, 1, 0, Vec::new()))
+        .unwrap();
     assert_eq!(
         admit_composed(&beside),
         Err(AdmissionError::DuplicateIntent { index: 2 })
@@ -1371,16 +1395,21 @@ fn duplicate_intents_reject() {
         Vec::new(),
         vec![ValueRef::Give(give(0, 0))],
     );
-    carol.members = vec![beneath.root.members[0].clone()];
-    beneath.root.members.push(Member {
-        signed: SignedIntent::unsigned(carol),
-        wiring: Vec::new(),
-    });
+    carol.members = Capped::new(vec![beneath.root.members[0].clone()]).unwrap();
+    beneath
+        .root
+        .members
+        .push(Member {
+            signed: SignedIntent::unsigned(carol),
+            wiring: Capped::empty(),
+        })
+        .unwrap();
     beneath
         .root
         .graph
         .nodes
-        .push(deposit_give(ALICE, 1, 0, Vec::new()));
+        .push(deposit_give(ALICE, 1, 0, Vec::new()))
+        .unwrap();
     assert_eq!(
         admit_composed(&beneath),
         Err(AdmissionError::DuplicateIntent { index: 3 })
@@ -1389,21 +1418,15 @@ fn duplicate_intents_reject() {
 
 #[test]
 fn an_intent_cannot_declare_unbounded_sockets() {
+    // The socket list holds its cap: it fills to the cap and refuses the
+    // next, so an intent past it cannot be built, let alone admitted.
     let mut tree = composed_tree(100);
-    let socket = tree.root.members[0].signed.intent.sockets[0].clone();
-    let binding = tree.root.members[0].wiring[0];
-    for _ in 0..MAX_SOCKETS {
-        tree.root.members[0]
-            .signed
-            .intent
-            .sockets
-            .push(socket.clone());
-        tree.root.members[0].wiring.push(binding);
+    let intent = &mut tree.root.members[0].signed.intent;
+    let socket = intent.sockets[0].clone();
+    while intent.sockets.len() < MAX_SOCKETS {
+        intent.sockets.push(socket.clone()).unwrap();
     }
-    assert_eq!(
-        admit_composed(&tree),
-        Err(AdmissionError::TooManySockets { intent: 1 })
-    );
+    assert!(intent.sockets.push(socket).is_err());
 }
 
 #[test]
@@ -1445,8 +1468,9 @@ fn a_socket_cannot_fill_a_value_parameter() {
 fn an_authority_socket_is_presented_not_passed() {
     let mut tree = composed_tree(100);
     tree.root.members[0].signed.intent.sockets =
-        vec![Socket::Authority(Claim::of_subject(ALICE.address()))];
-    tree.root.members[0].wiring = vec![Binding::Authority(ClaimRef::Account(ALICE))];
+        Capped::new(vec![Socket::Authority(Claim::of_subject(ALICE.address()))]).unwrap();
+    tree.root.members[0].wiring =
+        Capped::new(vec![Binding::Authority(ClaimRef::Account(ALICE))]).unwrap();
     // Bob's deposit is the last node emitted: both withdrawals and the
     // root's deposit, which takes Bob's give, come before it.
     assert_eq!(
@@ -1466,7 +1490,7 @@ fn delegated_offer(wants: Claim) -> Intent {
     intent(
         BOB,
         vec![GraphNode {
-            evidence: BTreeSet::from([ClaimRef::Socket(0)]),
+            evidence: Capped::new(BTreeSet::from([ClaimRef::Socket(0)])).unwrap(),
             ..GraphNode::new(
                 ALICE,
                 "withdraw",
@@ -1789,7 +1813,8 @@ fn a_group_interface_must_agree_with_what_it_passes_through() {
     tree.root
         .graph
         .nodes
-        .push(deposit_give(ALICE, 0, 1, Vec::new()));
+        .push(deposit_give(ALICE, 0, 1, Vec::new()))
+        .unwrap();
     assert_eq!(
         admit_composed(&tree),
         Err(AdmissionError::GiveReused {
@@ -1850,8 +1875,8 @@ fn a_claim_granted_two_levels_deep_resolves_only_where_every_level_regranted_it(
     );
     let carol = &mut mismatched.root.members[0].signed.intent;
     let mut presenting = withdraw(CAROL, RES_Y, 1);
-    presenting.evidence.insert(ClaimRef::Socket(0));
-    carol.graph.nodes = vec![presenting, deposit_edge(CAROL, 0)];
+    presenting.evidence.insert(ClaimRef::Socket(0)).unwrap();
+    carol.graph.nodes = Capped::new(vec![presenting, deposit_edge(CAROL, 0)]).unwrap();
     assert_eq!(
         admit_composed(&mismatched),
         Err(AdmissionError::GrantClaimMismatch {
@@ -1866,8 +1891,8 @@ fn a_claim_granted_two_levels_deep_resolves_only_where_every_level_regranted_it(
     );
     let carol = &mut unheld.root.members[0].signed.intent;
     let mut presenting = withdraw(CAROL, RES_Y, 1);
-    presenting.evidence.insert(ClaimRef::Socket(0));
-    carol.graph.nodes = vec![presenting, deposit_edge(CAROL, 0)];
+    presenting.evidence.insert(ClaimRef::Socket(0)).unwrap();
+    carol.graph.nodes = Capped::new(vec![presenting, deposit_edge(CAROL, 0)]).unwrap();
     assert_eq!(
         admit_composed(&unheld),
         Err(AdmissionError::GrantNotHeld {
@@ -1881,7 +1906,7 @@ fn a_claim_granted_two_levels_deep_resolves_only_where_every_level_regranted_it(
         vec![Binding::Authority(ClaimRef::Socket(0))],
         vec![Binding::Authority(ClaimRef::Account(BOB))],
     );
-    root_as_bob.root.accounts = vec![BOB];
+    root_as_bob.root.accounts = Capped::new(vec![BOB]).unwrap();
     assert_eq!(
         admit_composed(&root_as_bob),
         Err(AdmissionError::GrantClaimMismatch {
@@ -1913,10 +1938,11 @@ fn a_tree_is_bounded_in_depth() {
                 Vec::new(),
                 vec![ValueRef::Give(give(0, 0))],
             );
-            group.members = vec![Member {
+            group.members = Capped::new(vec![Member {
                 signed: SignedIntent::unsigned(below),
-                wiring: Vec::new(),
-            }];
+                wiring: Capped::empty(),
+            }])
+            .unwrap();
             below = group;
         }
         let mut root = intent(
@@ -1925,10 +1951,11 @@ fn a_tree_is_bounded_in_depth() {
             Vec::new(),
             Vec::new(),
         );
-        root.members = vec![Member {
+        root.members = Capped::new(vec![Member {
             signed: SignedIntent::unsigned(below),
-            wiring: Vec::new(),
-        }];
+            wiring: Capped::empty(),
+        }])
+        .unwrap();
         tree(root)
     };
     let deepest = chain(MAX_TREE_DEPTH);
@@ -1974,10 +2001,11 @@ fn the_wire_depth_is_pinned_to_the_deepest_admissible_tree() {
             Vec::new(),
             Vec::new(),
         );
-        group.members = vec![Member {
+        group.members = Capped::new(vec![Member {
             signed: SignedIntent::unsigned(below),
-            wiring: Vec::new(),
-        }];
+            wiring: Capped::empty(),
+        }])
+        .unwrap();
         below = group;
     }
     let deepest = tree(below);
@@ -1998,7 +2026,7 @@ fn as_u32(index: usize) -> u32 {
 fn a_bare_graph_admits_no_sockets_or_gives() {
     let chain = world();
     let graph = ManifestGraph {
-        nodes: vec![deposit_param(ALICE, 0)],
+        nodes: Capped::new(vec![deposit_param(ALICE, 0)]).unwrap(),
     };
     assert_eq!(
         admit_leaf(&graph, ALICE, &chain, &TestHasher),
@@ -2009,7 +2037,7 @@ fn a_bare_graph_admits_no_sockets_or_gives() {
         })
     );
     let graph = ManifestGraph {
-        nodes: vec![deposit_give(ALICE, 0, 0, Vec::new())],
+        nodes: Capped::new(vec![deposit_give(ALICE, 0, 0, Vec::new())]).unwrap(),
     };
     assert_eq!(
         admit_leaf(&graph, ALICE, &chain, &TestHasher),
@@ -2046,7 +2074,7 @@ fn the_intent_cap_is_checked_before_anything_else() {
     // here the duplicate scan. One past it, the count is the verdict.
     let mut at_cap = composed_tree(100);
     let copy = at_cap.root.members[0].clone();
-    at_cap.root.members.resize(MAX_INTENTS - 1, copy.clone());
+    at_cap.root.members = Capped::new(vec![copy.clone(); MAX_INTENTS - 1]).unwrap();
     // Every copy's give taken, so the shape holds and the duplicate
     // scan is what speaks.
     for member in 1..as_u32(MAX_INTENTS - 1) {
@@ -2054,7 +2082,8 @@ fn the_intent_cap_is_checked_before_anything_else() {
             .root
             .graph
             .nodes
-            .push(deposit_give(ALICE, member, 0, Vec::new()));
+            .push(deposit_give(ALICE, member, 0, Vec::new()))
+            .unwrap();
     }
     assert_eq!(
         admit_composed(&at_cap),
@@ -2062,7 +2091,7 @@ fn the_intent_cap_is_checked_before_anything_else() {
     );
 
     let mut past_cap = at_cap;
-    past_cap.root.members.push(copy);
+    past_cap.root.members.push(copy).unwrap();
     assert_eq!(
         admit_composed(&past_cap),
         Err(AdmissionError::TooManyIntents)
@@ -2082,12 +2111,13 @@ fn the_node_cap_is_over_the_tree_and_checked_at_decode() {
     let mut wide = composed_tree(100);
     // Everything the member declares, the root now also deposits: the
     // member's give is taken once, so the padding consumes nothing.
-    let padding = MAX_MANIFEST_NODES - 2;
-    wide.root
-        .graph
-        .nodes
-        .extend((0..padding).map(|_| deposit_edge(ALICE, 0)));
-    assert_eq!(wide.node_count(), MAX_MANIFEST_NODES + 2);
+    // The root's graph is padded to exactly its own cap, which the type
+    // admits; the member's nodes are what carry the tree past it.
+    let mut nodes = wide.root.graph.nodes.clone().into_inner();
+    let padding = MAX_MANIFEST_NODES - nodes.len();
+    nodes.extend((0..padding).map(|_| deposit_edge(ALICE, 0)));
+    wide.root.graph.nodes = Capped::new(nodes).unwrap();
+    assert!(wide.node_count() > MAX_MANIFEST_NODES);
     assert_eq!(
         decode_tree(&encode_tree(&wide)),
         Err(TreeDecodeError::Shape(AdmissionError::TooManyNodes))
@@ -2100,13 +2130,16 @@ fn the_node_cap_is_over_the_tree_and_checked_at_decode() {
 #[test]
 fn the_tree_hashes_bottom_up_as_each_intent_hashes_itself() {
     let mut inner = composed_tree(100).root;
-    inner.accounts = vec![CAROL];
-    inner.attested_by = vec![CAROL];
+    inner.accounts = Capped::new(vec![CAROL]).unwrap();
+    inner.attested_by = Capped::new(vec![CAROL]).unwrap();
     let mut tree = composed_tree(100);
-    tree.root.members.push(Member {
-        signed: SignedIntent::unsigned(inner),
-        wiring: Vec::new(),
-    });
+    tree.root
+        .members
+        .push(Member {
+            signed: SignedIntent::unsigned(inner),
+            wiring: Capped::empty(),
+        })
+        .unwrap();
     let expected: Vec<IntentHash> = tree
         .intents()
         .iter()
@@ -2152,11 +2185,13 @@ fn a_deep_instance_config_value_refuses_at_admission() {
     for _ in 0..MAX_VALUE_DEPTH {
         value = Value::Tuple(vec![value]);
     }
-    tree.instances.push(InstanceMeta {
-        package: pkg(),
-        config: vec![value],
-        salt: Hash32([9; 32]),
-    });
+    tree.instances
+        .push(InstanceMeta {
+            package: pkg(),
+            config: Capped::new(vec![value]).unwrap(),
+            salt: Hash32([9; 32]),
+        })
+        .unwrap();
     assert!(matches!(
         admit_composed(&tree),
         Err(AdmissionError::InstanceValueTooDeep { .. })
@@ -2183,7 +2218,7 @@ fn a_record_stands_for_a_seal_and_for_no_other_call() {
 
     let meta = InstanceMeta {
         package: drawing,
-        config: Vec::new(),
+        config: Capped::empty(),
         salt: Hash32([5; 32]),
     };
     let round = meta.address(&TestHasher);
@@ -2192,16 +2227,17 @@ fn a_record_stands_for_a_seal_and_for_no_other_call() {
             TEST_HEADER,
             ALICE,
             ManifestGraph {
-                nodes: vec![GraphNode {
+                nodes: Capped::new(vec![GraphNode {
                     target: round.into(),
                     method: method.into(),
                     args,
-                    evidence: BTreeSet::new(),
-                }],
+                    evidence: Capped::default(),
+                }])
+                .unwrap(),
             },
         ),
-        instances: records,
-        resources: Vec::new(),
+        instances: Capped::new(records).unwrap(),
+        resources: Capped::empty(),
     };
     let admit_with = |tree: &IntentTree, chain: &dyn ChainRecords| {
         admit_tree(tree, tree.hash(&TestHasher), chain, &TestHasher)

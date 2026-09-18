@@ -1,6 +1,7 @@
 //! Shared test worlds: small published packages, their instances, and
 //! the manifests that call them.
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_types::{Address, AddressClass, ComponentAddr, Moves, ResourceAddr};
 
 use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
@@ -26,7 +27,7 @@ pub fn addr(byte: u8) -> Address {
 pub fn meta_of(package: &str) -> InstanceMeta {
     InstanceMeta {
         package: pkg(package),
-        config: vec![],
+        config: Capped::empty(),
         salt: Hash32([0; 32]),
     }
 }

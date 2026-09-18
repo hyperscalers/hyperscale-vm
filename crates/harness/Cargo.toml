@@ -21,6 +21,8 @@ hyperscale-vm-testing.workspace = true
 wasmtime.workspace = true
 
 [dev-dependencies]
+# The capped lists and bytes a test's envelopes and records carry.
+hyperscale-hbor.workspace = true
 arbitrary.workspace = true
 hyperscale-vm-fixtures.workspace = true
 hyperscale-vm-manifest-builder.workspace = true

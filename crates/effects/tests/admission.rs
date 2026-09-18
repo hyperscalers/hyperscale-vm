@@ -11,6 +11,7 @@ use common::{
     ALICE, BOB, RES_X, admit_leaf, admit_leaf_presenting, meta_granting, payouts, pkg, resolver,
     shard_of, vault, world,
 };
+use hyperscale_hbor::{Bytes, Capped};
 use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, HALT, VAULT};
 use hyperscale_vm_effects::{
     AbiParam, AdmissionError, Claim, ClaimRef, Clause, Condition, Constraint, EdgeRef, EvalError,
@@ -33,12 +34,13 @@ const QUARTER: u128 = 1_000_000_000_000_000_000 / 4;
 fn splitter_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("payouts"),
-        config: vec![
+        config: Capped::new(vec![
             Value::Address(RES_X.address()),
             Value::U128(QUARTER),
             Value::U128(QUARTER),
             Value::U128(2 * QUARTER),
-        ],
+        ])
+        .unwrap(),
         salt: Hash32([1; 32]),
     }
 }
@@ -73,7 +75,7 @@ fn sorter_metadata() -> PackageMetadata {
 fn sorter_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("sorter"),
-        config: vec![],
+        config: Capped::empty(),
         salt: Hash32([9; 32]),
     }
 }
@@ -95,7 +97,7 @@ fn setup() -> Records {
 /// rest back to Alice — the rest-edge shape, fully consumed.
 fn valid_graph() -> ManifestGraph {
     ManifestGraph {
-        nodes: vec![
+        nodes: Capped::new(vec![
             GraphNode {
                 target: ALICE.into(),
                 method: "withdraw".into(),
@@ -103,7 +105,7 @@ fn valid_graph() -> ManifestGraph {
                     GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(100)),
                 ],
-                evidence: [ClaimRef::Account(ALICE)].into(),
+                evidence: Capped::from_members([ClaimRef::Account(ALICE)]),
             },
             GraphNode {
                 target: splitter().into(),
@@ -118,7 +120,7 @@ fn valid_graph() -> ManifestGraph {
                     ),
                     GraphArg::Literal(Value::U128(30)),
                 ],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
             GraphNode {
                 target: BOB.into(),
@@ -130,7 +132,7 @@ fn valid_graph() -> ManifestGraph {
                     },
                     vec![Constraint::MinAmount(30), Constraint::MaxAmount(30)],
                 )],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
             GraphNode {
                 target: ALICE.into(),
@@ -142,9 +144,10 @@ fn valid_graph() -> ManifestGraph {
                     },
                     vec![],
                 )],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
-        ],
+        ])
+        .unwrap(),
     }
 }
 
@@ -204,7 +207,7 @@ fn constraint_changes_reach_lowering_and_the_fresh_id_root() {
 fn evidence_is_presented_exactly_where_it_is_required() {
     let chain = setup();
     let mut extra = valid_graph();
-    extra.nodes[1].evidence = [ClaimRef::Account(ALICE)].into();
+    extra.nodes[1].evidence = Capped::from_members([ClaimRef::Account(ALICE)]);
     assert_eq!(
         admit_leaf(&extra, ALICE, &chain, &TestHasher),
         Err(AdmissionError::UnexpectedEvidence { node: 1 })
@@ -223,7 +226,7 @@ fn evidence_is_presented_exactly_where_it_is_required() {
 /// signed-gate shape, fully consumed.
 fn proof_graph() -> ManifestGraph {
     ManifestGraph {
-        nodes: vec![
+        nodes: Capped::new(vec![
             GraphNode {
                 target: ALICE.into(),
                 method: "withdraw".into(),
@@ -231,7 +234,7 @@ fn proof_graph() -> ManifestGraph {
                     GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(100)),
                 ],
-                evidence: [ClaimRef::Account(ALICE)].into(),
+                evidence: Capped::from_members([ClaimRef::Account(ALICE)]),
             },
             GraphNode {
                 target: BOB.into(),
@@ -243,9 +246,10 @@ fn proof_graph() -> ManifestGraph {
                     },
                     vec![],
                 )],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
-        ],
+        ])
+        .unwrap(),
     }
 }
 
@@ -368,7 +372,7 @@ fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, Com
     chain.packages.publish_unchecked(pkg("custodian"), package);
     let meta = InstanceMeta {
         package: pkg("custodian"),
-        config,
+        config: Capped::new(config).unwrap(),
         salt: Hash32([9; 32]),
     };
     let custodian = meta.address(&TestHasher);
@@ -380,20 +384,21 @@ fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, Com
 /// no signature reaches — and operate on what the custodian minted.
 fn custodian_graph(custodian: ComponentAddr) -> ManifestGraph {
     ManifestGraph {
-        nodes: vec![
+        nodes: Capped::new(vec![
             GraphNode {
                 target: custodian.into(),
                 method: "present".into(),
                 args: vec![],
-                evidence: [ClaimRef::Account(ALICE)].into(),
+                evidence: Capped::from_members([ClaimRef::Account(ALICE)]),
             },
             GraphNode {
                 target: custodian.into(),
                 method: "operate".into(),
                 args: vec![],
-                evidence: [ClaimRef::Node(0)].into(),
+                evidence: Capped::from_members([ClaimRef::Node(0)]),
             },
-        ],
+        ])
+        .unwrap(),
     }
 }
 
@@ -489,7 +494,7 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
 
     // Its own node: not earlier.
     let mut own = proof_graph();
-    own.nodes[0].evidence = [ClaimRef::Node(0)].into();
+    own.nodes[0].evidence = Capped::from_members([ClaimRef::Node(0)]);
     assert_eq!(
         admit_leaf(&own, ALICE, &chain, &TestHasher),
         Err(AdmissionError::ForwardProof {
@@ -501,7 +506,7 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
 
     // A later node, which is also every out-of-range index.
     let mut later = proof_graph();
-    later.nodes[0].evidence = [ClaimRef::Node(1)].into();
+    later.nodes[0].evidence = Capped::from_members([ClaimRef::Node(1)]);
     assert_eq!(
         admit_leaf(&later, ALICE, &chain, &TestHasher),
         Err(AdmissionError::ForwardProof {
@@ -516,15 +521,18 @@ fn a_proof_is_drawn_from_an_earlier_minting_node_or_refused() {
     // precedes linearity, so the appended node's dangling output never
     // gets judged.
     let mut unminting = proof_graph();
-    unminting.nodes.push(GraphNode {
-        target: ALICE.into(),
-        method: "withdraw".into(),
-        args: vec![
-            GraphArg::Literal(Value::Address(RES_X.address())),
-            GraphArg::Literal(Value::U128(1)),
-        ],
-        evidence: [ClaimRef::Node(1)].into(),
-    });
+    unminting
+        .nodes
+        .push(GraphNode {
+            target: ALICE.into(),
+            method: "withdraw".into(),
+            args: vec![
+                GraphArg::Literal(Value::Address(RES_X.address())),
+                GraphArg::Literal(Value::U128(1)),
+            ],
+            evidence: Capped::from_members([ClaimRef::Node(1)]),
+        })
+        .unwrap();
     assert_eq!(
         admit_leaf(&unminting, ALICE, &chain, &TestHasher),
         Err(AdmissionError::ProvesNothing {
@@ -608,10 +616,11 @@ fn an_unsatisfied_gate_reads_back_leaf_by_leaf() {
                 guard: None,
                 rule: RuleExpr::CountOf {
                     count: 2,
-                    rules: vec![
+                    rules: Capped::new(vec![
                         RuleExpr::claim(Expr::Config(0)),
                         RuleExpr::claim(Expr::Config(1)),
-                    ],
+                    ])
+                    .unwrap(),
                 },
             }],
             ..MethodSignature::default()
@@ -620,10 +629,11 @@ fn an_unsatisfied_gate_reads_back_leaf_by_leaf() {
     chain.packages.publish_unchecked(pkg("gatekeeper"), package);
     let meta = InstanceMeta {
         package: pkg("gatekeeper"),
-        config: vec![
+        config: Capped::new(vec![
             Value::Address(held.address()),
             Value::Address(missing.address()),
-        ],
+        ])
+        .unwrap(),
         salt: Hash32([11; 32]),
     };
     let gatekeeper = meta.address(&TestHasher);
@@ -920,7 +930,7 @@ fn a_denomination_reads_a_parameter_bound_after_the_one_it_constrains() {
         .publish_unchecked(pkg("sorter"), sorter_metadata());
     chain.instances.create(&TestHasher, sorter_meta());
     let sorted = |resource: ResourceAddr| ManifestGraph {
-        nodes: vec![
+        nodes: Capped::new(vec![
             valid_graph().nodes[0].clone(),
             GraphNode {
                 target: sorter().into(),
@@ -935,9 +945,10 @@ fn a_denomination_reads_a_parameter_bound_after_the_one_it_constrains() {
                     ),
                     GraphArg::Literal(Value::Address(resource.address())),
                 ],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
-        ],
+        ])
+        .unwrap(),
     };
 
     // The edge carries what the later argument names.
@@ -967,7 +978,7 @@ fn a_component_address_where_a_resource_belongs_is_refused() {
     chain.instances.create(&TestHasher, sorter_meta());
     let component = Address::new([0x44; 31], AddressClass::Component);
     let graph = ManifestGraph {
-        nodes: vec![
+        nodes: Capped::new(vec![
             valid_graph().nodes[0].clone(),
             valid_graph().nodes[1].clone(),
             GraphNode {
@@ -983,9 +994,10 @@ fn a_component_address_where_a_resource_belongs_is_refused() {
                     ),
                     GraphArg::Literal(Value::Address(component)),
                 ],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
-        ],
+        ])
+        .unwrap(),
     };
     let refused =
         admit_leaf(&graph, ALICE, &chain, &TestHasher).expect_err("a component is not a resource");
@@ -1060,19 +1072,20 @@ fn a_refusal_names_the_listed_clause_that_declared_it() {
     chain.packages.publish_unchecked(pkg("grabber"), package);
     let meta = InstanceMeta {
         package: pkg("grabber"),
-        config: Vec::new(),
+        config: Capped::empty(),
         salt: Hash32([0x6B; 32]),
     };
     let grabber = meta.address(&TestHasher);
     chain.instances.create(&TestHasher, meta);
 
     let graph = ManifestGraph {
-        nodes: vec![GraphNode {
+        nodes: Capped::new(vec![GraphNode {
             target: grabber.into(),
             method: "grab".into(),
             args: vec![],
-            evidence: BTreeSet::new(),
-        }],
+            evidence: Capped::default(),
+        }])
+        .unwrap(),
     };
     let refusal = admit_leaf(&graph, ALICE, &chain, &TestHasher)
         .expect_err("a foreign prefix with no reach refuses");
@@ -1130,19 +1143,20 @@ fn an_unbindable_abi_param_is_explained_as_a_binding() {
     chain.packages.publish_unchecked(pkg("poker"), package);
     let meta = InstanceMeta {
         package: pkg("poker"),
-        config: Vec::new(),
+        config: Capped::empty(),
         salt: Hash32([0x7E; 32]),
     };
     let poker = meta.address(&TestHasher);
     chain.instances.create(&TestHasher, meta);
 
     let graph = ManifestGraph {
-        nodes: vec![GraphNode {
+        nodes: Capped::new(vec![GraphNode {
             target: poker.into(),
             method: "poke".into(),
             args: vec![GraphArg::Literal(Value::U64(42))],
-            evidence: BTreeSet::new(),
-        }],
+            evidence: Capped::default(),
+        }])
+        .unwrap(),
     };
     let refusal =
         admit_leaf(&graph, ALICE, &chain, &TestHasher).expect_err("nothing binds guard 7");
@@ -1179,7 +1193,7 @@ fn a_halted_non_fungible_class_fences_the_interval_movement() {
     let record = ResourceMeta {
         namespace: BOB.address(),
         kind: ResourceKind::NonFungible,
-        material: vec![b"seat".to_vec()],
+        material: Capped::new(vec![Bytes::new(b"seat".to_vec()).unwrap()]).unwrap(),
         rules,
     };
     let seat = record.address(&TestHasher);
@@ -1187,7 +1201,7 @@ fn a_halted_non_fungible_class_fences_the_interval_movement() {
     let chain = setup();
 
     let graph = ManifestGraph {
-        nodes: vec![
+        nodes: Capped::new(vec![
             GraphNode {
                 target: ALICE.into(),
                 method: "withdraw-nf".into(),
@@ -1195,7 +1209,7 @@ fn a_halted_non_fungible_class_fences_the_interval_movement() {
                     GraphArg::Literal(Value::Address(seat.address())),
                     GraphArg::Literal(Value::List(vec![Value::U64(7)])),
                 ],
-                evidence: [ClaimRef::Account(ALICE)].into(),
+                evidence: Capped::from_members([ClaimRef::Account(ALICE)]),
             },
             GraphNode {
                 target: BOB.into(),
@@ -1207,9 +1221,10 @@ fn a_halted_non_fungible_class_fences_the_interval_movement() {
                     },
                     vec![],
                 )],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
-        ],
+        ])
+        .unwrap(),
     };
     let admitted = admit_leaf_presenting(&graph, ALICE, &[ALICE], &chain, presented, &TestHasher)
         .expect("admits");
@@ -1252,7 +1267,7 @@ fn a_double_destruction_asks_the_burn_question_once() {
     let record = ResourceMeta {
         namespace: ALICE.address(),
         kind: ResourceKind::Fungible,
-        material: Vec::new(),
+        material: Capped::empty(),
         rules,
     };
     let shreddable = record.address(&TestHasher);
@@ -1264,7 +1279,7 @@ fn a_double_destruction_asks_the_burn_question_once() {
         MethodSignature {
             totality: Totality::Fallible,
             params: vec![ParamType::Bucket, ParamType::Bucket],
-            destroys: vec![0, 1],
+            destroys: Capped::new(vec![0, 1]).unwrap(),
             ..MethodSignature::default()
         },
     );
@@ -1272,7 +1287,7 @@ fn a_double_destruction_asks_the_burn_question_once() {
     chain.packages.publish_unchecked(pkg("shredder"), package);
     let meta = InstanceMeta {
         package: pkg("shredder"),
-        config: Vec::new(),
+        config: Capped::empty(),
         salt: Hash32([0x3D; 32]),
     };
     let shredder = meta.address(&TestHasher);
@@ -1285,7 +1300,7 @@ fn a_double_destruction_asks_the_burn_question_once() {
             GraphArg::Literal(Value::Address(shreddable.address())),
             GraphArg::Literal(Value::U128(amount)),
         ],
-        evidence: [ClaimRef::Account(ALICE)].into(),
+        evidence: Capped::from_members([ClaimRef::Account(ALICE)]),
     };
     let edge = |producer: u32| {
         GraphArg::edge(
@@ -1297,16 +1312,17 @@ fn a_double_destruction_asks_the_burn_question_once() {
         )
     };
     let graph = ManifestGraph {
-        nodes: vec![
+        nodes: Capped::new(vec![
             withdraw(5),
             withdraw(7),
             GraphNode {
                 target: shredder.into(),
                 method: "shred".into(),
                 args: vec![edge(0), edge(1)],
-                evidence: [ClaimRef::Account(ALICE)].into(),
+                evidence: Capped::from_members([ClaimRef::Account(ALICE)]),
             },
-        ],
+        ])
+        .unwrap(),
     };
     let admitted = admit_leaf_presenting(&graph, ALICE, &[ALICE], &chain, presented, &TestHasher)
         .expect("admits");
@@ -1342,12 +1358,16 @@ fn the_injection_dedup_scan_is_charged_work() {
             ResourceMeta {
                 namespace: ALICE.address(),
                 kind: ResourceKind::Fungible,
-                material: vec![
-                    u32::try_from(i)
-                        .expect("a small roster")
-                        .to_le_bytes()
-                        .to_vec(),
-                ],
+                material: Capped::new(vec![
+                    Bytes::new(
+                        u32::try_from(i)
+                            .expect("a small roster")
+                            .to_le_bytes()
+                            .to_vec(),
+                    )
+                    .unwrap(),
+                ])
+                .unwrap(),
                 rules,
             }
         })
@@ -1399,19 +1419,20 @@ fn the_injection_dedup_scan_is_charged_work() {
     chain.packages.publish_unchecked(pkg("mover"), package);
     let meta = InstanceMeta {
         package: pkg("mover"),
-        config: Vec::new(),
+        config: Capped::empty(),
         salt: Hash32([0x5C; 32]),
     };
     let mover = meta.address(&TestHasher);
     chain.instances.create(&TestHasher, meta);
 
     let graph = ManifestGraph {
-        nodes: vec![GraphNode {
+        nodes: Capped::new(vec![GraphNode {
             target: mover.into(),
             method: "drain".into(),
             args: vec![],
-            evidence: BTreeSet::new(),
-        }],
+            evidence: Capped::default(),
+        }])
+        .unwrap(),
     };
     let refused = admit_leaf_presenting(&graph, ALICE, &[ALICE], &chain, presented, &TestHasher)
         .expect_err("the scan is charged, and this shape exhausts the envelope");
@@ -1526,10 +1547,11 @@ fn conditional_component(chain: &mut Records) -> ComponentAddr {
                     guard: None,
                     rule: RuleExpr::CountOf {
                         count: 1,
-                        rules: vec![
+                        rules: Capped::new(vec![
                             RuleExpr::claim(Expr::Config(0)),
                             RuleExpr::Require(RuleLeaf::Stored { cell: auth_cell() }),
-                        ],
+                        ])
+                        .unwrap(),
                     },
                 },
             ],
@@ -1545,7 +1567,7 @@ fn conditional_component(chain: &mut Records) -> ComponentAddr {
         .expect("publishes");
     let meta = InstanceMeta {
         package: pkg("conditional"),
-        config: vec![Value::Address(ALICE.address())],
+        config: Capped::new(vec![Value::Address(ALICE.address())]).unwrap(),
         salt: Hash32([4; 32]),
     };
     let target = meta.address(&TestHasher);
@@ -1564,12 +1586,13 @@ fn a_signature_presents_the_account_to_any_rule_naming_it() {
     let target = conditional_component(&mut chain);
 
     let signed = ManifestGraph {
-        nodes: vec![GraphNode {
+        nodes: Capped::new(vec![GraphNode {
             target: target.into(),
             method: "act".into(),
             args: vec![],
-            evidence: [ClaimRef::Account(ALICE)].into(),
-        }],
+            evidence: Capped::from_members([ClaimRef::Account(ALICE)]),
+        }])
+        .unwrap(),
     };
     let admitted = admit_leaf(&signed, ALICE, &chain, &TestHasher).expect("admits");
     assert_eq!(
@@ -1591,12 +1614,13 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
     let target = conditional_component(&mut chain);
 
     let graph = ManifestGraph {
-        nodes: vec![GraphNode {
+        nodes: Capped::new(vec![GraphNode {
             target: target.into(),
             method: "act".into(),
             args: vec![],
-            evidence: [ClaimRef::Account(ALICE)].into(),
-        }],
+            evidence: Capped::from_members([ClaimRef::Account(ALICE)]),
+        }])
+        .unwrap(),
     };
     let admitted = admit_leaf(&graph, ALICE, &chain, &TestHasher).expect("admits");
 
@@ -1634,10 +1658,11 @@ fn a_condition_lowers_to_the_call_and_the_union_declaration() {
         admitted.calls()[0].requires,
         vec![Rule::CountOf {
             count: 1,
-            rules: vec![
+            rules: Capped::new(vec![
                 Rule::Require(JudgedLeaf::Claim(Claim::of_subject(ALICE))),
                 Rule::Require(JudgedLeaf::Stored { cell: key }),
-            ],
+            ])
+            .unwrap(),
         }]
     );
 }
@@ -1679,7 +1704,7 @@ fn evidence_follows_the_conditions_this_call_evaluated() {
     chain.packages.publish_unchecked(pkg("settler"), package);
     let meta = InstanceMeta {
         package: pkg("settler"),
-        config: vec![],
+        config: Capped::empty(),
         salt: Hash32([11; 32]),
     };
     let settler = meta.address(&TestHasher);
@@ -1688,12 +1713,13 @@ fn evidence_follows_the_conditions_this_call_evaluated() {
     // Alice's sign-in ahead of the settler, whose stored rule is its
     // own and takes a proof.
     let call = |guarded: bool, evidence: BTreeSet<ClaimRef>| ManifestGraph {
-        nodes: vec![GraphNode {
+        nodes: Capped::new(vec![GraphNode {
             target: settler.into(),
             method: "settle".into(),
             args: vec![GraphArg::Literal(Value::U64(u64::from(guarded)))],
-            evidence,
-        }],
+            evidence: Capped::new(evidence).unwrap(),
+        }])
+        .unwrap(),
     };
 
     // The guard fires: the condition is there, so a claim is required
@@ -1776,7 +1802,7 @@ fn bailiff_world() -> (Records, ComponentAddr) {
     chain.packages.publish_unchecked(pkg("bailiff"), package);
     let meta = InstanceMeta {
         package: pkg("bailiff"),
-        config: vec![],
+        config: Capped::empty(),
         salt: Hash32([0xB1; 32]),
     };
     let issuer = meta.address(&TestHasher);
@@ -1801,7 +1827,7 @@ fn a_reach_may_not_name_the_prefix_of_the_reaching_instance() {
     let (chain, issuer) = bailiff_world();
     let presented = std::slice::from_ref(&record);
     let reaching = |owner: Address| ManifestGraph {
-        nodes: vec![
+        nodes: Capped::new(vec![
             GraphNode {
                 target: issuer.into(),
                 method: "seize".into(),
@@ -1810,7 +1836,7 @@ fn a_reach_may_not_name_the_prefix_of_the_reaching_instance() {
                     GraphArg::Literal(Value::U64(u64::from(VAULT.0))),
                     GraphArg::Literal(Value::Address(seized.address())),
                 ],
-                evidence: [ClaimRef::Account(ALICE)].into(),
+                evidence: Capped::from_members([ClaimRef::Account(ALICE)]),
             },
             GraphNode {
                 target: ALICE.into(),
@@ -1822,9 +1848,10 @@ fn a_reach_may_not_name_the_prefix_of_the_reaching_instance() {
                     },
                     Vec::new(),
                 )],
-                evidence: BTreeSet::default(),
+                evidence: Capped::new(BTreeSet::default()).unwrap(),
             },
-        ],
+        ])
+        .unwrap(),
     };
 
     // Somebody else's prefix, which is what the authority is for.
@@ -1860,7 +1887,7 @@ fn a_reach_is_admitted_by_the_reached_resource_and_by_nothing_else() {
     let seized = record.address(&TestHasher);
     let (chain, issuer) = bailiff_world();
     let graph = |evidence: BTreeSet<ClaimRef>| ManifestGraph {
-        nodes: vec![
+        nodes: Capped::new(vec![
             GraphNode {
                 target: issuer.into(),
                 method: "seize".into(),
@@ -1869,7 +1896,7 @@ fn a_reach_is_admitted_by_the_reached_resource_and_by_nothing_else() {
                     GraphArg::Literal(Value::U64(u64::from(VAULT.0))),
                     GraphArg::Literal(Value::Address(seized.address())),
                 ],
-                evidence,
+                evidence: Capped::new(evidence).unwrap(),
             },
             GraphNode {
                 target: ALICE.into(),
@@ -1881,9 +1908,10 @@ fn a_reach_is_admitted_by_the_reached_resource_and_by_nothing_else() {
                     },
                     Vec::new(),
                 )],
-                evidence: BTreeSet::default(),
+                evidence: Capped::new(BTreeSet::default()).unwrap(),
             },
-        ],
+        ])
+        .unwrap(),
     };
     let presented = std::slice::from_ref(&record);
     let reaching = [ClaimRef::Account(ALICE)].into();
@@ -1947,7 +1975,7 @@ fn keeper_metadata() -> PackageMetadata {
 fn keeper_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("keeper"),
-        config: vec![],
+        config: Capped::empty(),
         salt: Hash32([11; 32]),
     }
 }
@@ -1962,12 +1990,13 @@ fn bytes_at_the_wrong_width_are_refused_naming_the_width() {
         .publish_unchecked(pkg("keeper"), keeper_metadata());
     chain.instances.create(&TestHasher, keeper_meta());
     let filed = |bytes: Vec<u8>| ManifestGraph {
-        nodes: vec![GraphNode {
+        nodes: Capped::new(vec![GraphNode {
             target: keeper_meta().address(&TestHasher).into(),
             method: "file".into(),
             args: vec![GraphArg::Literal(Value::Bytes(bytes))],
-            evidence: BTreeSet::new(),
-        }],
+            evidence: Capped::default(),
+        }])
+        .unwrap(),
     };
     assert_eq!(
         admit_leaf(&filed(vec![7; 4]), ALICE, &chain, &TestHasher).map(|_| ()),

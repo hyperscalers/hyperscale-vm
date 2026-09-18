@@ -1408,7 +1408,7 @@ fn check_mints(flat: &[&Clause]) -> Result<(), DeclarationError> {
 
 #[cfg(test)]
 mod tests {
-
+    use hyperscale_hbor::Capped;
     use hyperscale_vm_types::{Address, AddressClass, Moves, Presence};
 
     use super::super::fixtures::{a_resource, one_clause, own_interval, own_point};
@@ -1601,12 +1601,13 @@ mod tests {
     fn an_issuance_under_no_mark_is_refused() {
         let issues = |mark: &[u8]| {
             check_declarations(&MethodSignature {
-                issues: vec![Issuance {
+                issues: Capped::new(vec![Issuance {
                     mark: mark.to_vec(),
                     kind: ResourceKind::Fungible,
                     direction: Issued::Minted,
                     grants: minting(),
-                }],
+                }])
+                .unwrap(),
                 ..MethodSignature::default()
             })
         };
@@ -1639,12 +1640,13 @@ mod tests {
     fn issuing_a_resource_whose_entry_withholds_it_is_refused() {
         let issues = |direction, grants: GrantsExpr| {
             check_declarations(&MethodSignature {
-                issues: vec![Issuance {
+                issues: Capped::new(vec![Issuance {
                     mark: b"unit".to_vec(),
                     kind: ResourceKind::Fungible,
                     direction,
                     grants,
-                }],
+                }])
+                .unwrap(),
                 ..MethodSignature::default()
             })
         };
@@ -1717,7 +1719,7 @@ mod tests {
             grants: minting(),
         };
         let record = |material: Vec<Expr>| MethodSignature {
-            issues: vec![issuance()],
+            issues: Capped::new(vec![issuance()]).unwrap(),
             effects: vec![Clause::Effect {
                 reach: None,
                 guard: None,

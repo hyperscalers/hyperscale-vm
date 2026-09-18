@@ -31,6 +31,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     ChainRecords, Constraint, EdgeContent, EdgeRef, GraphArg, Hasher, ManifestGraph, ParamType,
     Value, ValueRef, u256_decimal,
@@ -341,7 +342,9 @@ fn edge_types(
                         // edge's own ids are the producing node's and
                         // this pass does not resolve them.
                         content: if signature.params.get(at) == Some(&ParamType::NfBucket) {
-                            EdgeContent::NonFungible { ids: Vec::new() }
+                            EdgeContent::NonFungible {
+                                ids: Capped::empty(),
+                            }
                         } else {
                             EdgeContent::Fungible
                         },

@@ -7,6 +7,7 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::{ALICE, account, admit_leaf, pkg, resolver, shard_of, vault};
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     ClaimRef, EdgeContent, EdgeRef, EvalBudget, EvalInputs, Expr, GraphArg, GraphNode, Hash32,
     InstanceMeta, InstanceRegistry, ManifestGraph, ManifestHash, PresentedGrants, Records, SlotId,
@@ -35,7 +36,7 @@ fn instance(instances: &mut InstanceRegistry, package: &str, lane: u8, seed: u8)
         &TestHasher,
         InstanceMeta {
             package: pkg(package),
-            config: vec![],
+            config: Capped::empty(),
             salt: salt(lane, seed),
         },
     )
@@ -52,7 +53,7 @@ fn arb_value() -> impl Strategy<Value = Value> {
             Value::Bucket {
                 resource: ResourceAddr::new([byte; 31]),
                 content: ids.map_or(EdgeContent::Fungible, |ids| EdgeContent::NonFungible {
-                    ids,
+                    ids: Capped::new(ids).unwrap(),
                 }),
             }
         }),
@@ -120,7 +121,7 @@ proptest! {
     ) {
         let record = InstanceMeta {
             package: pkg("determinism"),
-            config,
+            config: Capped::new(config).unwrap(),
             salt: Hash32(seed),
         };
         let budget = EvalBudget::default();
@@ -155,7 +156,7 @@ proptest! {
         let sender = PrincipalAddr::new([sender_byte; 31]);
         let recipient = instance(&mut chain.instances, "account", 1, recipient_byte);
         let graph = ManifestGraph {
-            nodes: vec![
+            nodes: Capped::new(vec![
                 GraphNode {
                     target: sender.into(),
                     method: "withdraw".into(),
@@ -163,15 +164,15 @@ proptest! {
                         GraphArg::Literal(Value::Address(resource)),
                         GraphArg::Literal(Value::U128(amount)),
                     ],
-                    evidence: [ClaimRef::Account(sender)].into(),
+                    evidence: Capped::from_members([ClaimRef::Account(sender)]),
                 },
                 GraphNode {
                     target: recipient.into(),
                     method: "deposit".into(),
                     args: vec![GraphArg::edge(EdgeRef { producer: 0, output: 0 }, vec![])],
-                    evidence: BTreeSet::new(),
+                    evidence: Capped::default(),
                 },
-            ],
+            ]).unwrap(),
         };
         let admitted = admit_leaf(&graph, sender, &chain, &TestHasher).unwrap();
         let first = per_shard(&admitted, &resolver());
@@ -211,7 +212,7 @@ proptest! {
         let recipient = instance(&mut chain.instances, "account", 1, recipient_byte);
         let sender = ALICE;
         let graph = ManifestGraph {
-            nodes: vec![
+            nodes: Capped::new(vec![
                 GraphNode {
                     target: sender.into(),
                     method: "withdraw".into(),
@@ -219,15 +220,15 @@ proptest! {
                         GraphArg::Literal(Value::Address(resource)),
                         GraphArg::Literal(Value::U128(1)),
                     ],
-                    evidence: [ClaimRef::Account(sender)].into(),
+                    evidence: Capped::from_members([ClaimRef::Account(sender)]),
                 },
                 GraphNode {
                     target: recipient.into(),
                     method: "deposit".into(),
                     args: vec![GraphArg::edge(EdgeRef { producer: 0, output: 0 }, vec![])],
-                    evidence: BTreeSet::new(),
+                    evidence: Capped::default(),
                 },
-            ],
+            ]).unwrap(),
         };
         let admitted = admit_leaf(&graph, ALICE, &chain, &TestHasher).unwrap();
         let first = per_shard(&admitted, &resolver());
@@ -249,8 +250,8 @@ proptest! {
 /// a shift in any encoding under them moves a value here rather than
 /// passing quietly.
 mod golden {
-    use std::collections::BTreeSet;
 
+    use hyperscale_hbor::Capped;
     use hyperscale_vm_effects::{
         ClaimRef, EdgeRef, GraphArg, GraphNode, ManifestGraph, SlotId, TestHasher, Value,
         child_key, fresh_id, fresh_local,
@@ -291,12 +292,12 @@ mod golden {
     #[test]
     fn fresh_derivations_are_pinned() {
         let graph = ManifestGraph {
-            nodes: vec![
+            nodes: Capped::new(vec![
                 GraphNode {
                     target: ComponentAddr::new([0x10; 31]).into(),
                     method: "withdraw".into(),
                     args: vec![GraphArg::Literal(Value::U128(7))],
-                    evidence: [ClaimRef::Account(super::ALICE)].into(),
+                    evidence: Capped::from_members([ClaimRef::Account(super::ALICE)]),
                 },
                 GraphNode {
                     target: ComponentAddr::new([0x20; 31]).into(),
@@ -308,9 +309,10 @@ mod golden {
                         },
                         vec![],
                     )],
-                    evidence: BTreeSet::new(),
+                    evidence: Capped::default(),
                 },
-            ],
+            ])
+            .unwrap(),
         };
         let identity = graph.hash(&TestHasher);
         assert_eq!(

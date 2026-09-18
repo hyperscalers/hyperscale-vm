@@ -5,13 +5,14 @@
 
 mod common;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use common::{
     ALICE, ASKS, BASE, BOB, FILL_CAP, QUOTE, RES_X, RES_Y, admit_leaf, auth, book, config_leaf,
     declared_vault, effect_set, nullifier_write, pkg, pool, quarantine, refused, resolver, shapes,
     shard_of, vault, wide_account_metadata, world,
 };
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     AdmissionError, ClaimRef, Composed, EdgeRef, GraphArg, GraphNode, Hash32, InstanceMeta,
     ManifestGraph, Records, ResolveError, TestHasher, Value, collection_id, fresh_id, per_shard,
@@ -42,7 +43,7 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
     let chain = world();
     let usdc = RES_X;
     let graph = ManifestGraph {
-        nodes: vec![
+        nodes: Capped::new(vec![
             GraphNode {
                 target: ALICE.into(),
                 method: "withdraw".into(),
@@ -50,15 +51,16 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
                     GraphArg::Literal(Value::Address(usdc.address())),
                     GraphArg::Literal(Value::U128(100)),
                 ],
-                evidence: [ClaimRef::Account(ALICE)].into(),
+                evidence: Capped::from_members([ClaimRef::Account(ALICE)]),
             },
             GraphNode {
                 target: BOB.into(),
                 method: "deposit".into(),
                 args: vec![edge(0, 0)],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
-        ],
+        ])
+        .unwrap(),
     };
     let admitted = admit_leaf(&graph, ALICE, &chain, &TestHasher).expect("admits");
     let routing = per_shard(&admitted, &resolver());
@@ -103,7 +105,7 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
 fn swap_writes_both_reserves_and_reads_the_config() {
     let chain = world();
     let graph = ManifestGraph {
-        nodes: vec![
+        nodes: Capped::new(vec![
             GraphNode {
                 target: ALICE.into(),
                 method: "withdraw".into(),
@@ -111,21 +113,22 @@ fn swap_writes_both_reserves_and_reads_the_config() {
                     GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(500)),
                 ],
-                evidence: [ClaimRef::Account(ALICE)].into(),
+                evidence: Capped::from_members([ClaimRef::Account(ALICE)]),
             },
             GraphNode {
                 target: pool().into(),
                 method: "swap".into(),
                 args: vec![edge(0, 0), GraphArg::Literal(Value::U128(50))],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
             GraphNode {
                 target: ALICE.into(),
                 method: "deposit".into(),
                 args: vec![edge(1, 0)],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
-        ],
+        ])
+        .unwrap(),
     };
     let admitted = admit_leaf(&graph, ALICE, &chain, &TestHasher).expect("admits");
     let routing = per_shard(&admitted, &resolver());
@@ -182,7 +185,7 @@ fn swap_writes_both_reserves_and_reads_the_config() {
 fn order_book_place_inserts_at_a_computed_entry() {
     let chain = world();
     let graph = ManifestGraph {
-        nodes: vec![
+        nodes: Capped::new(vec![
             GraphNode {
                 target: ALICE.into(),
                 method: "withdraw".into(),
@@ -190,15 +193,16 @@ fn order_book_place_inserts_at_a_computed_entry() {
                     GraphArg::Literal(Value::Address(BASE.address())),
                     GraphArg::Literal(Value::U128(10)),
                 ],
-                evidence: [ClaimRef::Account(ALICE)].into(),
+                evidence: Capped::from_members([ClaimRef::Account(ALICE)]),
             },
             GraphNode {
                 target: book().into(),
                 method: "place-ask".into(),
                 args: vec![GraphArg::Literal(Value::U64(105)), edge(0, 0)],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
-        ],
+        ])
+        .unwrap(),
     };
     let admitted = admit_leaf(&graph, ALICE, &chain, &TestHasher).expect("admits");
     let routing = per_shard(&admitted, &resolver());
@@ -246,7 +250,7 @@ fn order_book_place_inserts_at_a_computed_entry() {
 fn order_book_fill_declares_a_capped_price_interval() {
     let chain = world();
     let graph = ManifestGraph {
-        nodes: vec![
+        nodes: Capped::new(vec![
             GraphNode {
                 target: BOB.into(),
                 method: "withdraw".into(),
@@ -254,7 +258,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
                     GraphArg::Literal(Value::Address(QUOTE.address())),
                     GraphArg::Literal(Value::U128(1000)),
                 ],
-                evidence: [ClaimRef::Account(BOB)].into(),
+                evidence: Capped::from_members([ClaimRef::Account(BOB)]),
             },
             GraphNode {
                 target: book().into(),
@@ -264,7 +268,7 @@ fn order_book_fill_declares_a_capped_price_interval() {
                     GraphArg::Literal(Value::U64(110)),
                     edge(0, 0),
                 ],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
             // The fill returns what it bought and what it did not spend;
             // both edges have to land somewhere.
@@ -272,15 +276,16 @@ fn order_book_fill_declares_a_capped_price_interval() {
                 target: BOB.into(),
                 method: "deposit".into(),
                 args: vec![edge(1, 0)],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
             GraphNode {
                 target: BOB.into(),
                 method: "deposit".into(),
                 args: vec![edge(1, 1)],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
-        ],
+        ])
+        .unwrap(),
     };
     let admitted = admit_leaf(&graph, BOB, &chain, &TestHasher).expect("admits");
     let routing = per_shard(&admitted, &resolver());
@@ -367,12 +372,12 @@ fn a_declared_superset_evaluates_without_error() {
         &TestHasher,
         InstanceMeta {
             package: pkg("wide"),
-            config: vec![],
+            config: Capped::empty(),
             salt: Hash32([1; 32]),
         },
     );
     let graph = ManifestGraph {
-        nodes: vec![
+        nodes: Capped::new(vec![
             GraphNode {
                 target: alice.into(),
                 method: "withdraw_wide".into(),
@@ -380,15 +385,16 @@ fn a_declared_superset_evaluates_without_error() {
                     GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(1)),
                 ],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
             GraphNode {
                 target: alice.into(),
                 method: "deposit".into(),
                 args: vec![edge(0, 0)],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
-        ],
+        ])
+        .unwrap(),
     };
     let admitted = admit_leaf(&graph, ALICE, &chain, &TestHasher).expect("admits");
     let routing = per_shard(&admitted, &resolver());
@@ -415,7 +421,7 @@ fn a_presented_record_is_the_whole_of_instantiation() {
     let bare = common::bare_world();
 
     let graph = ManifestGraph {
-        nodes: vec![
+        nodes: Capped::new(vec![
             GraphNode {
                 target: ALICE.into(),
                 method: "withdraw".into(),
@@ -423,21 +429,22 @@ fn a_presented_record_is_the_whole_of_instantiation() {
                     GraphArg::Literal(Value::Address(RES_X.address())),
                     GraphArg::Literal(Value::U128(500)),
                 ],
-                evidence: [ClaimRef::Account(ALICE)].into(),
+                evidence: Capped::from_members([ClaimRef::Account(ALICE)]),
             },
             GraphNode {
                 target: pool().into(),
                 method: "swap".into(),
                 args: vec![edge(0, 0), GraphArg::Literal(Value::U128(50))],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
             GraphNode {
                 target: ALICE.into(),
                 method: "deposit".into(),
                 args: vec![edge(1, 0)],
-                evidence: BTreeSet::new(),
+                evidence: Capped::default(),
             },
-        ],
+        ])
+        .unwrap(),
     };
 
     // Unregistered and uncertified: the target is unresolvable.

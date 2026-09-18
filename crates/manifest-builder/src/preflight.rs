@@ -698,7 +698,7 @@ pub fn preflight_tree(
     let attesting = tree
         .intents()
         .iter()
-        .map(|intent| intent.attested_by.clone())
+        .map(|intent| intent.attested_by.to_vec())
         .collect();
     report(admitted, attesting, chain, network)
 }

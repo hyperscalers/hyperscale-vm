@@ -6,6 +6,8 @@ license.workspace = true
 description = "The package author's test harness: a chain a contract runs on"
 
 [dependencies]
+# The capped lists a fixture's records and configuration are.
+hyperscale-hbor.workspace = true
 hyperscale-vm-effects = { workspace = true, features = ["testing"] }
 hyperscale-vm-types.workspace = true
 hyperscale-vm-kernel.workspace = true

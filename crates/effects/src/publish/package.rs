@@ -569,7 +569,7 @@ fn check_types(resolved: &mut Resolution<'_>) -> Result<(), MetadataError> {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_hbor::{ShapeFault, ShapeField, ShapeTable, TypeShape};
+    use hyperscale_hbor::{Capped, ShapeFault, ShapeField, ShapeTable, TypeShape};
     use hyperscale_vm_types::Moves;
 
     use super::super::fixtures::{a_resource, one_clause, own_interval, own_point};
@@ -604,7 +604,7 @@ mod tests {
         std::iter::once((
             "moves".to_owned(),
             MethodSignature {
-                emits: vec![0],
+                emits: Capped::new(vec![0]).unwrap(),
                 event_bytes: bytes,
                 ..MethodSignature::default()
             },

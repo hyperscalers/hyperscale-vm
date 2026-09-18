@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     Authority, Claim, Condition, Declaration, Hash32, Hasher, JudgedLeaf, MAX_RULE_BRANCHES,
     MAX_RULE_DEPTH, NodeCall, PackageHash, Rule, RuleBytes, SlotId, StoredRule, TestHasher,
@@ -369,10 +370,10 @@ fn a_rule_mixes_claim_and_stored_leaves() {
     let key = cell_of(target);
     let requires = vec![Rule::CountOf {
         count: 1,
-        rules: vec![
+        rules: Capped::from_array([
             Rule::Require(JudgedLeaf::Claim(identity(9))),
             Rule::Require(JudgedLeaf::Stored { cell: key }),
-        ],
+        ]),
     }];
     let judged = |evidence: Vec<Claim>| {
         let mut entry = BatchTx::new(tx(6), declaring(key, Vec::new()), env());
@@ -460,7 +461,7 @@ fn a_rule_naming_one_cell_at_every_leaf_reads_it_once() {
     let leaf = Rule::Require(JudgedLeaf::Stored { cell: key });
     let widest = (1..MAX_RULE_DEPTH).fold(leaf, |inner: Rule<JudgedLeaf>, _| Rule::CountOf {
         count: u8::try_from(MAX_RULE_BRANCHES).unwrap(),
-        rules: vec![inner; MAX_RULE_BRANCHES],
+        rules: Capped::new(vec![inner; MAX_RULE_BRANCHES]).unwrap(),
     });
     assert_eq!(
         widest.leaves().count(),

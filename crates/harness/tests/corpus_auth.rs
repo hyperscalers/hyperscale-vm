@@ -2,6 +2,7 @@
 //! chained rules, minted proofs, recovery proposals, and the custody
 //! gates badges open.
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     Authority, Claim, ClaimRef, GraphArg, GraphNode, Hash32, InstanceMeta, IntentTree,
     ManifestGraph, Marked, Marker, PrincipalRule, Records, RuleBytes, StoredRule, TestHasher,
@@ -131,7 +132,7 @@ fn one_refusing_rule_refuses_the_whole_intent() {
     // admits hers. Only Alice attests.
     store.write(auth(BOB), governing(BOB));
     let mut tree = acting_as(&[ALICE, BOB], swap_across_own_accounts());
-    tree.root.attested_by = vec![ALICE];
+    tree.root.attested_by = Capped::new(vec![ALICE]).unwrap();
     let (outcome, end, admitted) =
         run_both_tree_admitted(&world, &store, &tree).expect("admissible");
     let tx = TxHash(tree.hash(&TestHasher).0);
@@ -168,10 +169,11 @@ fn a_threshold_rule_is_judged_over_the_intents_attesting_set() {
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
     let two_of_two = StoredRule::CountOf {
         count: 2,
-        rules: vec![
+        rules: Capped::new(vec![
             StoredRule::claim(Claim::of_subject(BOB)),
             StoredRule::claim(Claim::of_subject(MAKER)),
-        ],
+        ])
+        .unwrap(),
     };
     store.write(
         auth(ALICE),
@@ -183,7 +185,7 @@ fn a_threshold_rule_is_judged_over_the_intents_attesting_set() {
     let tx = |tree: &IntentTree| TxHash(tree.hash(&TestHasher).0);
 
     let mut both = acting_as(&[ALICE], transfer_graph());
-    both.root.attested_by = vec![BOB, MAKER];
+    both.root.attested_by = Capped::new(vec![BOB, MAKER]).unwrap();
     let (outcome, end) = run_both_tree(&world, &store, &both).expect("admissible");
     assert!(
         matches!(
@@ -196,7 +198,7 @@ fn a_threshold_rule_is_judged_over_the_intents_attesting_set() {
     assert_eq!(amount_of(&end, vault(BOB, RES_X)), 100);
 
     let mut one = acting_as(&[ALICE], transfer_graph());
-    one.root.attested_by = vec![BOB];
+    one.root.attested_by = Capped::new(vec![BOB]).unwrap();
     let (outcome, end) = run_both_tree(&world, &store, &one).expect("admissible");
     assert_eq!(
         outcome.receipts[&tx(&one)].outcome,
@@ -229,7 +231,7 @@ fn a_second_factor_is_required_beside_the_primary() {
     let tx = |tree: &IntentTree| TxHash(tree.hash(&TestHasher).0);
 
     let mut both = acting_as(&[ALICE], transfer_graph());
-    both.root.attested_by = vec![BOB, MAKER];
+    both.root.attested_by = Capped::new(vec![BOB, MAKER]).unwrap();
     let (outcome, end) = run_both_tree(&world, &store, &both).expect("admissible");
     assert!(
         matches!(
@@ -242,7 +244,7 @@ fn a_second_factor_is_required_beside_the_primary() {
     assert_eq!(amount_of(&end, vault(BOB, RES_X)), 100);
 
     let mut phone = acting_as(&[ALICE], transfer_graph());
-    phone.root.attested_by = vec![BOB];
+    phone.root.attested_by = Capped::new(vec![BOB]).unwrap();
     let (outcome, end) = run_both_tree(&world, &store, &phone).expect("admissible");
     assert_eq!(
         outcome.receipts[&tx(&phone)].outcome,
@@ -291,14 +293,14 @@ fn a_card_is_required_from_securify_on_and_takes_both_to_rotate() {
     assert!(matches!(&results[0], TxResult::Completed(_)));
 
     let mut phone = acting_as(&[ALICE], transfer_graph());
-    phone.root.attested_by = vec![ALICE];
+    phone.root.attested_by = Capped::new(vec![ALICE]).unwrap();
     let (outcome, _) = run_both_tree(&world, &store, &phone).expect("admissible");
     assert!(
         signed_in(&outcome.receipts[&tx(&phone)].outcome),
         "the phone alone is not the account"
     );
     let mut both = acting_as(&[ALICE], transfer_graph());
-    both.root.attested_by = vec![ALICE, MAKER];
+    both.root.attested_by = Capped::new(vec![ALICE, MAKER]).unwrap();
     let (outcome, end) = run_both_tree(&world, &store, &both).expect("admissible");
     assert!(matches!(
         outcome.receipts[&tx(&both)].outcome,
@@ -310,14 +312,14 @@ fn a_card_is_required_from_securify_on_and_takes_both_to_rotate() {
     // the sign-in, and both together rewrite the record at once.
     let rotate = graph(|b| account::rotate(b, ALICE, governing_rule(ALICE), no_factor()));
     let mut alone = acting_as(&[ALICE], rotate.clone());
-    alone.root.attested_by = vec![ALICE];
+    alone.root.attested_by = Capped::new(vec![ALICE]).unwrap();
     let (outcome, _) = run_both_tree(&world, &store, &alone).expect("admissible");
     assert!(
         signed_in(&outcome.receipts[&tx(&alone)].outcome),
         "rotating a factor takes every factor"
     );
     let mut together = acting_as(&[ALICE], rotate);
-    together.root.attested_by = vec![ALICE, MAKER];
+    together.root.attested_by = Capped::new(vec![ALICE, MAKER]).unwrap();
     let (outcome, store) = run_both_tree(&world, &store, &together).expect("admissible");
     assert!(matches!(
         outcome.receipts[&tx(&together)].outcome,
@@ -367,7 +369,7 @@ fn a_recovery_that_keeps_the_card_leaves_the_card_in_the_way() {
     // Bob is the primary now, and Bob alone is still not the account.
     assert_acts(&world, &store, BOB, at, false, 0xF4);
     let mut both = acting_as(&[ALICE], transfer_graph());
-    both.root.attested_by = vec![BOB, MAKER];
+    both.root.attested_by = Capped::new(vec![BOB, MAKER]).unwrap();
     let (outcome, end) = run_both_tree(&world, &store, &both).expect("admissible");
     assert!(
         matches!(
@@ -1023,15 +1025,15 @@ fn a_signature_opens_only_the_account_its_intent_acts_as() {
     store.write(vault(BOB, RES_X), encode_amount(150).to_vec());
 
     let theft = ManifestGraph {
-        nodes: vec![GraphNode {
+        nodes: Capped::from_array([GraphNode {
             target: BOB.into(),
             method: "withdraw".into(),
             args: vec![
                 GraphArg::Literal(Value::Address(RES_X.address())),
                 GraphArg::Literal(Value::U128(100)),
             ],
-            evidence: [ClaimRef::Account(ALICE)].into(),
-        }],
+            evidence: Capped::from_members([ClaimRef::Account(ALICE)]),
+        }]),
     };
     let (results, _) = run_both_signed(
         &world,
@@ -1119,7 +1121,7 @@ fn assert_acts_together(
     admits: bool,
 ) {
     let mut tree = acting_as(&[ALICE], transfer_graph());
-    tree.root.attested_by = keys.to_vec();
+    tree.root.attested_by = Capped::new(keys.to_vec()).unwrap();
     let (outcome, _) = run_both_tree(world, store, &tree).expect("admissible");
     let tx = TxHash(tree.hash(&TestHasher).0);
     let got = &outcome.receipts[&tx].outcome;
@@ -2230,15 +2232,15 @@ fn custody_opens_for_the_holder_and_only_the_holder() {
     // compose at all: a custody gate names the holder, and Bob's intent
     // speaks for Bob. Written by hand, because the builder refuses it.
     let presented_by_bob = ManifestGraph {
-        nodes: vec![GraphNode {
+        nodes: Capped::from_array([GraphNode {
             target: ALICE.into(),
             method: "present-instance".into(),
             args: vec![
                 GraphArg::Literal(Value::Address(badge.address())),
                 GraphArg::Literal(Value::U64(id)),
             ],
-            evidence: [ClaimRef::Account(BOB)].into(),
-        }],
+            evidence: Capped::from_members([ClaimRef::Account(BOB)]),
+        }]),
     };
     let (results, store) = run_both_signed(
         &world,
@@ -2325,7 +2327,7 @@ fn distinct_instances_of_one_badge_are_distinct_authorities() {
     // package; what differs is the configuration each names.
     let by_instance = InstanceMeta {
         package: pkg("nf"),
-        config: vec![Value::Address(badge.address()), Value::U64(alices)],
+        config: Capped::new(vec![Value::Address(badge.address()), Value::U64(alices)]).unwrap(),
         salt: Hash32([12; 32]),
     };
     let by_instance_addr = by_instance.address(&TestHasher);
@@ -2443,12 +2445,13 @@ fn a_declared_threshold_admits_exactly_its_quorum() {
     // The consumer names the three and asks for two.
     let quorum = InstanceMeta {
         package: pkg("nf"),
-        config: vec![
+        config: Capped::new(vec![
             Value::Address(badge.address()),
             Value::U64(admins[0]),
             Value::U64(admins[1]),
             Value::U64(admins[2]),
-        ],
+        ])
+        .unwrap(),
         salt: Hash32([13; 32]),
     };
     let quorum_addr = quorum.address(&TestHasher);

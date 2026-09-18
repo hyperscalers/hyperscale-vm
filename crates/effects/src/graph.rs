@@ -13,7 +13,7 @@
 
 use std::collections::BTreeSet;
 
-use hyperscale_hbor::{Hbor, to_vec};
+use hyperscale_hbor::{Capped, Hbor, to_vec};
 use hyperscale_vm_types::{CallTarget, MAX_MANIFEST_NODES, PrincipalAddr, ResourceAddr};
 
 use crate::hash::Hasher;
@@ -218,8 +218,7 @@ pub struct GraphNode {
     /// present, so presenting one twice says nothing a decoder should have
     /// two ways to write. Empty for a method that requires no authority,
     /// and admission refuses either mismatch.
-    #[hbor(max = MAX_EVIDENCE_PER_NODE)]
-    pub evidence: BTreeSet<ClaimRef>,
+    pub evidence: Capped<BTreeSet<ClaimRef>, MAX_EVIDENCE_PER_NODE>,
 }
 
 impl GraphNode {
@@ -270,7 +269,7 @@ impl GraphNode {
             target: target.into(),
             method: method.into(),
             args,
-            evidence: BTreeSet::new(),
+            evidence: Capped::default(),
         }
     }
 
@@ -284,7 +283,7 @@ impl GraphNode {
         args: Vec<GraphArg>,
     ) -> Self {
         Self {
-            evidence: BTreeSet::from([ClaimRef::Account(account)]),
+            evidence: Capped::from_members([ClaimRef::Account(account)]),
             ..Self::new(target, method, args)
         }
     }
@@ -299,7 +298,7 @@ impl GraphNode {
         producer: u32,
     ) -> Self {
         Self {
-            evidence: BTreeSet::from([ClaimRef::Node(producer)]),
+            evidence: Capped::from_members([ClaimRef::Node(producer)]),
             ..Self::new(target, method, args)
         }
     }
@@ -310,8 +309,7 @@ impl GraphNode {
 pub struct ManifestGraph {
     /// Invocation nodes; every edge's producer index is smaller than its
     /// consumer's.
-    #[hbor(max = MAX_MANIFEST_NODES)]
-    pub nodes: Vec<GraphNode>,
+    pub nodes: Capped<Vec<GraphNode>, MAX_MANIFEST_NODES>,
 }
 
 const DOMAIN_GRAPH_NODE: &[u8] = b"hyperscale-vm/graph-node";
@@ -355,6 +353,7 @@ impl ManifestGraph {
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_hbor::Capped;
     use hyperscale_vm_types::ComponentAddr;
 
     use super::{Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph};
@@ -364,7 +363,7 @@ mod tests {
     #[test]
     fn the_graph_hash_covers_edges_and_constraints() {
         let base = ManifestGraph {
-            nodes: vec![
+            nodes: Capped::new(vec![
                 GraphNode::new(
                     ComponentAddr::new([1; 31]),
                     "withdraw",
@@ -381,7 +380,8 @@ mod tests {
                         vec![Constraint::MinAmount(1)],
                     )],
                 ),
-            ],
+            ])
+            .unwrap(),
         };
         let mut reconstrained = base.clone();
         reconstrained.nodes[1].args[0] = GraphArg::edge(

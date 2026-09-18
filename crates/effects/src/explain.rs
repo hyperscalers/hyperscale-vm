@@ -2083,7 +2083,7 @@ fn hex(raw: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_hbor::TypeShape;
+    use hyperscale_hbor::{Capped, TypeShape};
     use hyperscale_vm_types::{Address, AddressClass, Moves, Presence};
 
     use super::{SlotRef, explain, explain_method, joined};
@@ -2514,13 +2514,14 @@ mod tests {
                 guard: None,
                 rule: Rule::CountOf {
                     count: 2,
-                    rules: vec![
+                    rules: Capped::new(vec![
                         Rule::Require(RuleLeaf::Claim(Expr::Config(0))),
                         Rule::Require(RuleLeaf::Claim(Expr::Arg(0))),
                         Rule::Require(RuleLeaf::Stored {
                             cell: Expr::SelfAddr,
                         }),
-                    ],
+                    ])
+                    .unwrap(),
                 },
             }]),
         );

@@ -26,11 +26,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::vocabulary::{PRESENT_BADGE_METHOD, PRESENT_INSTANCE_METHOD};
 use hyperscale_vm_effects::{
     ChainRecords, Claim, ClaimRef, EdgeRef, EvalBudget, GraphArg, Hasher, InstanceMeta,
-    MAX_PROVEN_PER_SIGNATURE, ManifestGraph, MethodSignature, PackageHash, PackageMetadata, Value,
-    claim_text,
+    MAX_EVIDENCE_PER_NODE, MAX_PROVEN_PER_SIGNATURE, ManifestGraph, MethodSignature, PackageHash,
+    PackageMetadata, Value, claim_text,
 };
 use hyperscale_vm_types::{Address, AddressClass, CallTarget, PrincipalAddr};
 
@@ -52,6 +53,9 @@ pub enum TypedError {
     /// and no sign-in.
     #[error("an intent acts as at least one account")]
     NoAccount,
+    /// A node presents more evidence than admission reads off one.
+    #[error("a node presents more than {MAX_EVIDENCE_PER_NODE} pieces of evidence")]
+    TooMuchEvidence,
     /// A call target no record resolves.
     #[error("no instance at {0:?}")]
     UnknownInstance(Address),
@@ -1162,6 +1166,7 @@ impl<'a> TypedBuilder<'a> {
             .into_iter()
             .chain(scoped.iter().map(|proof| proof.reference()))
             .collect();
+        let evidence = Capped::new(evidence).map_err(|_| TypedError::TooMuchEvidence)?;
         let proves = self.filed_claims(signature, target, meta, &values, &known);
         let outputs = resources.len();
         let producer = self

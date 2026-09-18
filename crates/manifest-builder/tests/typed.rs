@@ -4,7 +4,10 @@
 
 mod common;
 
+use std::collections::BTreeSet;
+
 use common::admit_leaf;
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     ClaimRef, Constraint, EdgeRef, GraphArg, Hash32, Hasher, InstanceMeta, ManifestGraph,
     PackageHash, Records, TestHasher, Value, ValueRef,
@@ -28,12 +31,13 @@ fn pkg(name: &str) -> PackageHash {
 fn splitter_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("payouts"),
-        config: vec![
+        config: Capped::new(vec![
             Value::Address(RES.address()),
             Value::U128(QUARTER),
             Value::U128(QUARTER),
             Value::U128(2 * QUARTER),
-        ],
+        ])
+        .unwrap(),
         salt: Hash32([2; 32]),
     }
 }
@@ -41,10 +45,11 @@ fn splitter_meta() -> InstanceMeta {
 fn pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("staking"),
-        config: vec![
+        config: Capped::new(vec![
             Value::Address(RES.address()),
             Value::Address(OPERATOR.address()),
-        ],
+        ])
+        .unwrap(),
         salt: Hash32([3; 32]),
     }
 }
@@ -458,7 +463,10 @@ fn explicit_evidence_stands_in_for_the_scope() {
     let gated = graph.nodes.last().expect("the gated call is a node");
     assert_eq!(
         gated.evidence,
-        std::iter::once(ClaimRef::Node(1)).collect(),
+        std::iter::once(ClaimRef::Node(1))
+            .collect::<BTreeSet<_>>()
+            .try_into()
+            .unwrap(),
         "the per-call spelling is the whole of the evidence"
     );
 }

@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     Condition, Declaration, Hash32, Hasher, JudgedLeaf, Rule, SlotId, TestHasher, child_key,
 };
@@ -334,7 +335,7 @@ fn a_condition_straddling_the_scope_refuses() {
     store.write(cell(HERE), vec![1]);
     let either = || Rule::CountOf {
         count: 1,
-        rules: vec![present(HERE), present(THERE)],
+        rules: Capped::from_array([present(HERE), present(THERE)]),
     };
     let entry = || {
         BatchTx::new(

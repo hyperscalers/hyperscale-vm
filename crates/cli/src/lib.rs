@@ -520,7 +520,10 @@ pub fn explain_issued(
         let record = ResourceMeta {
             namespace: issuer,
             kind: issuance.kind,
-            material: vec![Value::Bytes(issuance.mark.clone()).canonical_bytes()],
+            material: Capped::from_array([Bytes::new(
+                Value::Bytes(issuance.mark.clone()).canonical_bytes(),
+            )
+            .map_err(|overflow| BuildError::new(format!("the mark's material is {overflow}")))?]),
             rules,
         };
         out.push_str(&explain_resource(&record, &ProtocolHasher));

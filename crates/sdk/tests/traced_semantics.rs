@@ -6,6 +6,7 @@
 //! Those are exactly the parts of the design carrying risk, so they are
 //! checked here against the real evaluator rather than against a fixture.
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::vocabulary::{CONFIG, VAULT};
 use hyperscale_vm_effects::{
     Clause, Declaration, EvalBudget, EvalInputs, Hash32, InstanceMeta, MAX_FOREACH_ELEMENTS,
@@ -40,7 +41,7 @@ fn vault(owner: Address, resource: Address) -> SubstateKey {
 fn record_of(config: &[Value]) -> InstanceMeta {
     InstanceMeta {
         package: PackageHash(Hash32([1; 32])),
-        config: config.to_vec(),
+        config: Capped::new(config.to_vec()).unwrap(),
         salt: Hash32([2; 32]),
     }
 }

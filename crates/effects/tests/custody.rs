@@ -19,6 +19,7 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::{ALICE, BOB, meta_granting, pkg, world};
+use hyperscale_hbor::{Bytes, Capped};
 use hyperscale_vm_effects::vocabulary::{HALT, VAULT};
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, Claim, ClaimRef, EdgeRef, GrantedBehaviour, GraphArg, GraphNode,
@@ -87,7 +88,7 @@ fn freezable_meta() -> ResourceMeta {
     ResourceMeta {
         namespace: ISSUER,
         kind: ResourceKind::Fungible,
-        material: vec![b"freezable".to_vec()],
+        material: Capped::new(vec![Bytes::new(b"freezable".to_vec()).unwrap()]).unwrap(),
         rules,
     }
 }
@@ -110,11 +111,12 @@ fn custody_world_over(asset: ResourceAddr) -> (Records, ComponentAddr) {
         .publish_unchecked(pkg("custodian"), custodian::metadata());
     let meta = InstanceMeta {
         package: pkg("custodian"),
-        config: vec![
+        config: Capped::new(vec![
             Value::Address(asset.address()),
             Value::Address(asset.address()),
             Value::Address(asset.address()),
-        ],
+        ])
+        .unwrap(),
         salt: Hash32([0x5C; 32]),
     };
     let custodian = meta.address(&TestHasher);
@@ -140,12 +142,12 @@ fn paid_out(custodian: ComponentAddr, holder: PrincipalAddr) -> IntentTree {
             TEST_HEADER,
             ALICE,
             ManifestGraph {
-                nodes: vec![
+                nodes: Capped::new(vec![
                     GraphNode {
                         target: custodian.into(),
                         method: "withdraw".into(),
                         args: vec![GraphArg::Literal(Value::U128(40))],
-                        evidence: BTreeSet::default(),
+                        evidence: Capped::new(BTreeSet::default()).unwrap(),
                     },
                     GraphNode {
                         target: holder.into(),
@@ -157,13 +159,14 @@ fn paid_out(custodian: ComponentAddr, holder: PrincipalAddr) -> IntentTree {
                             },
                             Vec::new(),
                         )],
-                        evidence: BTreeSet::default(),
+                        evidence: Capped::new(BTreeSet::default()).unwrap(),
                     },
-                ],
+                ])
+                .unwrap(),
             },
         ),
-        instances: Vec::new(),
-        resources: Vec::new(),
+        instances: Capped::empty(),
+        resources: Capped::empty(),
     }
 }
 
@@ -179,12 +182,12 @@ fn round_trip(custodian: ComponentAddr) -> IntentTree {
             TEST_HEADER,
             ALICE,
             ManifestGraph {
-                nodes: vec![
+                nodes: Capped::new(vec![
                     GraphNode {
                         target: custodian.into(),
                         method: "withdraw".into(),
                         args: vec![GraphArg::Literal(Value::U128(40))],
-                        evidence: BTreeSet::default(),
+                        evidence: Capped::new(BTreeSet::default()).unwrap(),
                     },
                     GraphNode {
                         target: custodian.into(),
@@ -196,13 +199,14 @@ fn round_trip(custodian: ComponentAddr) -> IntentTree {
                             },
                             Vec::new(),
                         )],
-                        evidence: BTreeSet::default(),
+                        evidence: Capped::new(BTreeSet::default()).unwrap(),
                     },
-                ],
+                ])
+                .unwrap(),
             },
         ),
-        instances: Vec::new(),
-        resources: vec![governed_meta()],
+        instances: Capped::empty(),
+        resources: Capped::new(vec![governed_meta()]).unwrap(),
     }
 }
 
@@ -272,7 +276,7 @@ fn a_halt_binds_the_component_holding_the_value() {
     let (chain, custodian) = custody_world_over(freezable());
     let env = round_trip(custodian);
     let mut env = env;
-    env.resources = vec![freezable_meta()];
+    env.resources = Capped::new(vec![freezable_meta()]).unwrap();
     let admitted = admit_env(&env, &chain).expect("the custodian's own withdrawal admits");
 
     let halted = EffectTarget::Point(child_key(
@@ -310,7 +314,7 @@ fn a_halt_binds_the_component_holding_the_value() {
 fn a_halt_covers_every_slot_the_holder_keeps_the_resource_in() {
     let (chain, custodian) = custody_world_over(freezable());
     let mut env = paid_out(custodian, ALICE);
-    env.resources = vec![freezable_meta()];
+    env.resources = Capped::new(vec![freezable_meta()]).unwrap();
     let admitted = admit_env(&env, &chain).expect("the payout admits");
     let declaration = admitted.declaration();
 
@@ -433,7 +437,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
             .publish_unchecked(pkg(name), receiving(meta.address(&TestHasher), mode));
         let instance = InstanceMeta {
             package: pkg(name),
-            config: Vec::new(),
+            config: Capped::empty(),
             salt: Hash32([0x5D; 32]),
         };
         let target = instance.address(&TestHasher);
@@ -443,16 +447,17 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
                 TEST_HEADER,
                 ALICE,
                 ManifestGraph {
-                    nodes: vec![GraphNode {
+                    nodes: Capped::new(vec![GraphNode {
                         target: target.into(),
                         method: "receive".into(),
                         args: Vec::new(),
-                        evidence: BTreeSet::default(),
-                    }],
+                        evidence: Capped::new(BTreeSet::default()).unwrap(),
+                    }])
+                    .unwrap(),
                 },
             ),
-            instances: Vec::new(),
-            resources: vec![meta],
+            instances: Capped::empty(),
+            resources: Capped::new(vec![meta]).unwrap(),
         };
         let admitted = admit_env(&env, &chain).expect("the receiving method admits");
         let asked = admitted.declaration().required().cloned();
@@ -517,7 +522,7 @@ fn transferred(from: PrincipalAddr, to: PrincipalAddr, resource: ResourceAddr) -
             TEST_HEADER,
             ALICE,
             ManifestGraph {
-                nodes: vec![
+                nodes: Capped::new(vec![
                     GraphNode {
                         target: from.into(),
                         method: "withdraw".into(),
@@ -525,7 +530,7 @@ fn transferred(from: PrincipalAddr, to: PrincipalAddr, resource: ResourceAddr) -
                             GraphArg::Literal(Value::Address(resource.address())),
                             GraphArg::Literal(Value::U128(40)),
                         ],
-                        evidence: [ClaimRef::Account(from)].into(),
+                        evidence: Capped::from_members([ClaimRef::Account(from)]),
                     },
                     GraphNode {
                         target: to.into(),
@@ -537,13 +542,14 @@ fn transferred(from: PrincipalAddr, to: PrincipalAddr, resource: ResourceAddr) -
                             },
                             Vec::new(),
                         )],
-                        evidence: BTreeSet::default(),
+                        evidence: Capped::new(BTreeSet::default()).unwrap(),
                     },
-                ],
+                ])
+                .unwrap(),
             },
         ),
-        instances: Vec::new(),
-        resources: Vec::new(),
+        instances: Capped::empty(),
+        resources: Capped::empty(),
     }
 }
 
@@ -565,7 +571,7 @@ fn a_total_frame_carries_no_entry_its_own_leg_would_answer() {
     let entry = |rule: StoredRule| ResourceMeta {
         namespace: ISSUER,
         kind: ResourceKind::Fungible,
-        material: vec![b"approved".to_vec()],
+        material: Capped::new(vec![Bytes::new(b"approved".to_vec()).unwrap()]).unwrap(),
         rules: {
             let mut rules = ResourceGrants::new();
             rules.set(GrantedBehaviour::Deposit, sealed(&rule));
@@ -577,14 +583,14 @@ fn a_total_frame_carries_no_entry_its_own_leg_would_answer() {
     let claims = StoredRule::claim(approver);
     let mixed = StoredRule::CountOf {
         count: 2,
-        rules: vec![claims.clone(), holds.clone()],
+        rules: Capped::new(vec![claims.clone(), holds.clone()]).unwrap(),
     };
 
     let admitting = |rule: StoredRule| {
         let record = entry(rule);
         let chain = world();
         let mut env = transferred(ALICE, BOB, record.address(&TestHasher));
-        env.resources = vec![record];
+        env.resources = Capped::new(vec![record]).unwrap();
         admit_env(&env, &chain)
     };
 
@@ -629,19 +635,23 @@ fn one_flag_is_read_once_however_many_directions_the_access_moves_in() {
     env.root.graph.nodes[1]
         .args
         .push(GraphArg::Literal(Value::U128(15)));
-    env.root.graph.nodes.push(GraphNode {
-        target: custodian.into(),
-        method: "deposit".into(),
-        args: vec![GraphArg::edge(
-            EdgeRef {
-                producer: 1,
-                output: 0,
-            },
-            Vec::new(),
-        )],
-        evidence: BTreeSet::default(),
-    });
-    env.resources = vec![freezable_meta()];
+    env.root
+        .graph
+        .nodes
+        .push(GraphNode {
+            target: custodian.into(),
+            method: "deposit".into(),
+            args: vec![GraphArg::edge(
+                EdgeRef {
+                    producer: 1,
+                    output: 0,
+                },
+                Vec::new(),
+            )],
+            evidence: Capped::new(BTreeSet::default()).unwrap(),
+        })
+        .unwrap();
+    env.resources = Capped::new(vec![freezable_meta()]).unwrap();
     let admitted =
         admit_env(&env, &chain).expect("the custodian moves its own value on the resource's terms");
     let ordered = &admitted.frames()[1].ordered;

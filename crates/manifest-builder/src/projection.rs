@@ -12,6 +12,7 @@
 
 use std::collections::BTreeMap;
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     ChainRecords, Claim, Clause, Constraint, EdgeContent, EvalBudget, EvalInputs, Expr,
     GrantedBehaviour, GraphArg, Hash32, Hasher, InstanceMeta, MAX_EXPR_DEPTH, ManifestGraph,
@@ -101,7 +102,9 @@ fn type_args(
                     // callee declared, and that is what admission judges
                     // the routed edge against.
                     content: if *param == ParamType::NfBucket {
-                        EdgeContent::NonFungible { ids: Vec::new() }
+                        EdgeContent::NonFungible {
+                            ids: Capped::empty(),
+                        }
                     } else {
                         EdgeContent::Fungible
                     },

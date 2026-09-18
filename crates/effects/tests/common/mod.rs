@@ -4,6 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use hyperscale_hbor::{Bytes, Capped};
 pub use hyperscale_vm_effects::vocabulary::{AUTH, CONFIG, VAULT};
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, ChainRecords, Clause, Expr, GrantedBehaviour, Hash32, Hasher,
@@ -57,7 +58,7 @@ pub fn meta_granting(
     ResourceMeta {
         namespace,
         kind: ResourceKind::Fungible,
-        material: vec![mark.to_vec()],
+        material: Capped::new(vec![Bytes::new(mark.to_vec()).unwrap()]).unwrap(),
         rules,
     }
 }
@@ -110,11 +111,12 @@ pub fn pool_meta() -> InstanceMeta {
         package: pkg("amm"),
         // The pair, then the fee in basis points: a swap's guest reads
         // the fee as an evaluated slot, so it is configuration.
-        config: vec![
+        config: Capped::new(vec![
             Value::Address(RES_X.address()),
             Value::Address(RES_Y.address()),
             Value::U128(30 * (1_000_000_000_000_000_000 / 10_000)),
-        ],
+        ])
+        .unwrap(),
         salt: Hash32([2; 32]),
     }
 }
@@ -143,11 +145,12 @@ pub const ONE_PER_TICK: u128 = 1_000_000_000_000_000_000_000_000_000_000_000_000
 pub fn book_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("book"),
-        config: vec![
+        config: Capped::new(vec![
             Value::Address(BASE.address()),
             Value::Address(QUOTE.address()),
             scaled_rate(ONE_PER_TICK),
-        ],
+        ])
+        .unwrap(),
         salt: Hash32([3; 32]),
     }
 }
@@ -304,11 +307,11 @@ pub fn leaf_tree(
 ) -> IntentTree {
     IntentTree {
         root: Intent {
-            attested_by: attested_by.to_vec(),
+            attested_by: Capped::new(attested_by.to_vec()).unwrap(),
             ..Intent::leaf(HEADER, account, graph.clone())
         },
-        instances: Vec::new(),
-        resources: records.to_vec(),
+        instances: Capped::empty(),
+        resources: Capped::new(records.to_vec()).unwrap(),
     }
 }
 

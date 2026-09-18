@@ -16,6 +16,7 @@ use std::collections::BTreeSet;
 mod common;
 
 use common::world::admit_here;
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     Claim, ClaimRef, Hash32, Hasher, InstanceMeta, ManifestGraph, PackageHash, PackageMetadata,
     PrincipalRule, Records, ResourceKind, RuleBytes, StoredRule, TestHasher, Value, always,
@@ -41,7 +42,7 @@ fn pkg(name: &str) -> PackageHash {
 fn instance(package: &str, config: Vec<Value>) -> InstanceMeta {
     InstanceMeta {
         package: pkg(package),
-        config,
+        config: Capped::new(config).unwrap(),
         salt: Hash32([7; 32]),
     }
 }
@@ -173,7 +174,7 @@ fn a_degenerate_rule_is_refused_where_it_is_written() {
     let mut b = TypedBuilder::new(&chain, &TestHasher, ALICE);
     let degenerate = StoredRule::CountOf {
         count: 2,
-        rules: vec![StoredRule::claim(Claim::of_subject(ALICE))],
+        rules: Capped::new(vec![StoredRule::claim(Claim::of_subject(ALICE))]).unwrap(),
     };
     // The governing cell's own kind, which `securify` takes first.
     assert!(matches!(
@@ -300,7 +301,7 @@ fn a_guarded_call_without_a_proof_presents_the_intents_signature() {
     assert_eq!(graph.nodes.len(), 2, "the withdrawal and the deposit");
     assert_eq!(
         graph.nodes[0].evidence,
-        BTreeSet::from([ClaimRef::Account(ALICE)])
+        Capped::new(BTreeSet::from([ClaimRef::Account(ALICE)])).unwrap()
     );
 }
 
@@ -319,7 +320,10 @@ fn a_badge_gate_without_a_proof_is_answered_from_the_signers_account() {
         b.call(gated, "operate", ())?.none()?;
         Ok(())
     });
-    assert_eq!(graph.nodes[1].evidence, BTreeSet::from([ClaimRef::Node(0)]));
+    assert_eq!(
+        graph.nodes[1].evidence,
+        Capped::new(BTreeSet::from([ClaimRef::Node(0)])).unwrap()
+    );
 }
 
 /// Misplaced evidence refuses at the call site, mirroring admission: a

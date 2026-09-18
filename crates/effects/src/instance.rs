@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 use std::sync::Arc;
 
-use hyperscale_hbor::{EncodeError, Hbor, to_vec};
+use hyperscale_hbor::{Capped, EncodeError, Hbor, to_vec};
 use hyperscale_vm_types::{Address, CallTarget, ComponentAddr};
 use thiserror::Error;
 
@@ -54,8 +54,7 @@ pub struct InstanceMeta {
     /// The package the instance runs.
     pub package: PackageHash,
     /// The instance's creation-fixed configuration fields.
-    #[hbor(max = MAX_CONFIG_FIELDS)]
-    pub config: Vec<Value>,
+    pub config: Capped<Vec<Value>, MAX_CONFIG_FIELDS>,
     /// The creating transaction's fresh id, which separates two
     /// instances made from one package under one configuration.
     pub salt: Hash32,
@@ -188,7 +187,7 @@ impl InstanceRegistry {
     pub fn serve_principals(&mut self, package: PackageHash) {
         self.principal = Some(Arc::new(InstanceMeta {
             package,
-            config: Vec::new(),
+            config: Capped::empty(),
             salt: Hash32([0; 32]),
         }));
     }
@@ -286,7 +285,7 @@ mod tests {
     fn a_record_is_admitted_only_at_the_address_it_derives() {
         let meta = InstanceMeta {
             package: PackageHash(Hash32([1; 32])),
-            config: vec![Value::U64(7)],
+            config: Capped::new(vec![Value::U64(7)]).unwrap(),
             salt: Hash32([2; 32]),
         };
         let address = meta.address(&TestHasher);
@@ -309,7 +308,7 @@ mod tests {
     fn a_false_package_claim_is_refused_by_verification() {
         let honest = InstanceMeta {
             package: PackageHash(Hash32([1; 32])),
-            config: vec![],
+            config: Capped::empty(),
             salt: Hash32([2; 32]),
         };
         let address = honest.address(&TestHasher);
@@ -329,7 +328,7 @@ mod tests {
 
         // And the configuration is committed on the same terms.
         let reconfigured = InstanceMeta {
-            config: vec![Value::U64(1)],
+            config: Capped::new(vec![Value::U64(1)]).unwrap(),
             ..honest
         };
         assert!(!reconfigured.derives(&TestHasher, address));
@@ -359,7 +358,7 @@ mod tests {
     fn the_leaf_stores_the_record_the_address_commits() {
         let meta = InstanceMeta {
             package: PackageHash(Hash32([1; 32])),
-            config: vec![Value::U64(7), Value::U128(9)],
+            config: Capped::new(vec![Value::U64(7), Value::U128(9)]).unwrap(),
             salt: Hash32([2; 32]),
         };
         // The address commits the configuration's own encoding.

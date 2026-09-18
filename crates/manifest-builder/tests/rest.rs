@@ -8,6 +8,7 @@
 mod common;
 
 use common::admit_leaf;
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     Constraint, GraphArg, Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, Value,
     ValueRef,
@@ -30,12 +31,13 @@ fn pkg(name: &str) -> PackageHash {
 fn splitter_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("payouts"),
-        config: vec![
+        config: Capped::new(vec![
             Value::Address(RES.address()),
             Value::U128(QUARTER),
             Value::U128(QUARTER),
             Value::U128(2 * QUARTER),
-        ],
+        ])
+        .unwrap(),
         salt: Hash32([2; 32]),
     }
 }

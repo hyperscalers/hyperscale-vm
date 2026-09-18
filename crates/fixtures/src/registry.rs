@@ -5,7 +5,7 @@
 //! wrappers a client calls it through. A signature and the wrapper
 //! mirroring it drift the moment they live apart.
 
-use hyperscale_hbor::TypeShape;
+use hyperscale_hbor::{Capped, TypeShape};
 use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::{
     AbiParam, Expr, LeafForm, MethodSignature, PackageMetadata, ParamType, SlotId, SlotKind,
@@ -61,7 +61,7 @@ pub fn metadata() -> PackageMetadata {
         "bind".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            issues: Vec::new(),
+            issues: Capped::empty(),
             params: vec![ParamType::U64, ParamType::U128],
             abi: vec![
                 AbiParam::Handle { clause: 0, site: 0 },
@@ -83,7 +83,7 @@ pub fn metadata() -> PackageMetadata {
         "check".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            issues: Vec::new(),
+            issues: Capped::empty(),
             params: vec![ParamType::U64, ParamType::U128],
             abi: vec![
                 AbiParam::Handle { clause: 0, site: 0 },
@@ -103,7 +103,7 @@ pub fn metadata() -> PackageMetadata {
         "drain".into(),
         MethodSignature {
             totality: Totality::Infallible,
-            issues: Vec::new(),
+            issues: Capped::empty(),
             params: vec![ParamType::U128],
             abi: vec![AbiParam::Handle { clause: 0, site: 0 }],
             effects: vec![Clause::Effect {

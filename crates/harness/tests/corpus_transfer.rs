@@ -4,6 +4,7 @@
 
 use std::collections::BTreeMap;
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
     AbiParam, Clause, Constraint, Expr, Hash32, InstanceMeta, ManifestGraph, MethodSignature,
@@ -29,7 +30,7 @@ use common::world::*;
 fn mirror_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("mirror"),
-        config: vec![],
+        config: Capped::empty(),
         salt: Hash32([4; 32]),
     }
 }

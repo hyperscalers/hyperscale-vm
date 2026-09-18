@@ -773,6 +773,7 @@ impl Placed<'_> {
 mod tests {
     use std::collections::BTreeSet;
 
+    use hyperscale_hbor::Capped;
     use hyperscale_vm_types::{
         AddressClass, CallTarget, IntentHash, MAX_CROSSINGS_PER_TX, Moves, PrincipalAddr,
         ResourceAddr, ValueEdge,
@@ -1285,18 +1286,19 @@ mod tests {
             MethodSignature {
                 outputs: vec![output(), output()],
                 effects: vec![self_point(SlotId(1), ModeExpr::Reserve(Expr::Arg(0)))],
-                issues: vec![Issuance {
+                issues: Capped::new(vec![Issuance {
                     mark: vec![],
                     kind: ResourceKind::Fungible,
                     direction: Issued::Minted,
                     grants: GrantsExpr::new(),
-                }],
+                }])
+                .unwrap(),
                 ..MethodSignature::default()
             },
             MethodSignature {
                 outputs: vec![output()],
                 effects: vec![self_point(SlotId(1), ModeExpr::Reserve(Expr::Arg(0)))],
-                destroys: vec![0],
+                destroys: Capped::new(vec![0]).unwrap(),
                 ..MethodSignature::default()
             },
         ] {
@@ -2068,7 +2070,9 @@ mod tests {
             source: 0,
             output: 0,
             resource: issued_by("vault"),
-            content: EdgeContent::NonFungible { ids: vec![7] },
+            content: EdgeContent::NonFungible {
+                ids: Capped::new(vec![7]).unwrap(),
+            },
             bounds: Bounds::default(),
         }];
         assert!(!decomposes(&named, &chain));

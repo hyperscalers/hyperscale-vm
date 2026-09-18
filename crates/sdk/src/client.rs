@@ -11,6 +11,7 @@
 //! the wrappers are gated out of it, which is what makes emitting them
 //! move no package hash and no blob.
 
+use hyperscale_hbor::Capped;
 pub use hyperscale_vm_effects::{
     GrantsExpr, Hash32, Hasher, InstanceMeta, PackageMetadata, SlotId, StoredRule,
     Value as ManifestValue, declaration_hash,
@@ -53,7 +54,8 @@ pub fn instance_meta<C: Component>(
 ) -> InstanceMeta {
     InstanceMeta {
         package: declaration_hash(hasher, &C::metadata()).expect("a traced declaration encodes"),
-        config: config.values(),
+        config: Capped::new(config.values())
+            .expect("a configuration struct is held to fewer fields than the record cap"),
         salt,
     }
 }

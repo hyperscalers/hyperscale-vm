@@ -16,6 +16,7 @@
 // the appearance is an artifact of a contract living inside a test binary.
 #![allow(dead_code)]
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     Clause, GrantRuleExpr, GrantSubject, GrantedBehaviour, GrantsExpr, ModeExpr, ResourceKind,
     RuleExpr, RuleLeaf, SlotRef,
@@ -848,7 +849,7 @@ fn a_declared_gate_carries_the_whole_threshold_algebra() {
         requires("set-fee"),
         RuleExpr::CountOf {
             count: 1,
-            rules: vec![slot(0), slot(1)],
+            rules: Capped::new(vec![slot(0), slot(1)]).unwrap(),
         },
     );
     // `n_of` is the threshold no operator expresses.
@@ -856,7 +857,7 @@ fn a_declared_gate_carries_the_whole_threshold_algebra() {
         requires("reset"),
         RuleExpr::CountOf {
             count: 2,
-            rules: vec![slot(0), slot(1), slot(2)],
+            rules: Capped::new(vec![slot(0), slot(1), slot(2)]).unwrap(),
         },
     );
     // `&&` is a count of every branch, and a chain of one operator is
@@ -865,7 +866,7 @@ fn a_declared_gate_carries_the_whole_threshold_algebra() {
         requires("dissolve"),
         RuleExpr::CountOf {
             count: 3,
-            rules: vec![slot(0), slot(1), slot(2)],
+            rules: Capped::new(vec![slot(0), slot(1), slot(2)]).unwrap(),
         },
     );
 }
@@ -1054,7 +1055,7 @@ fn a_conditional_key_declares_one_cell_where_a_conditional_body_declares_both() 
     ];
     let record = InstanceMeta {
         package: PackageHash(Hash32([1; 32])),
-        config: config.to_vec(),
+        config: Capped::new(config.to_vec()).unwrap(),
         salt: Hash32([2; 32]),
     };
     for (paid, expected) in [(left, left), (right, right), (address(0x33), right)] {

@@ -37,10 +37,11 @@
 
 use std::ops::{Deref, DerefMut};
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     AdmissionError, Binding, ChainRecords, Claim, ClaimRef, Constraint, GiveRef, GraphArg, Hasher,
-    InstanceMeta, Intent, IntentHeader, IntentTree, Member, ResourceMeta, SignedIntent, Socket,
-    ValueRef, check_structure,
+    InstanceMeta, Intent, IntentHeader, IntentTree, MAX_ACCOUNTS, Member, ResourceMeta,
+    SignedIntent, Socket, ValueRef, check_structure,
 };
 use hyperscale_vm_types::{PrincipalAddr, ResourceAddr};
 
@@ -824,10 +825,11 @@ impl<'a> IntentBuilder<'a> {
         let chain = self.chain;
         let hasher = self.hasher;
         let root = self.finish()?;
+        let records = |_| IntentError::Structure(AdmissionError::TooManyNodes);
         let mut tree = IntentTree {
             root,
-            instances,
-            resources,
+            instances: instances.try_into().map_err(records)?,
+            resources: resources.try_into().map_err(records)?,
         };
         // The tree's own shape: its caps, its depth, and a root
         // declaring no interface. Graph literals met the value bound at
@@ -846,7 +848,7 @@ impl<'a> IntentBuilder<'a> {
             .collect();
         for record in found {
             if !tree.resources.contains(&record) {
-                tree.resources.push(record);
+                tree.resources.push(record).map_err(records)?;
             }
         }
         Ok(tree)
@@ -856,7 +858,15 @@ impl<'a> IntentBuilder<'a> {
     /// handles cannot carry: every socket of this intent consumed
     /// exactly once, every give of every member taken.
     fn finish(self) -> Result<Intent, IntentError> {
-        let accounts = self.graph.accounts().to_vec();
+        // Each list holds its cap in its type; a builder that outgrew one
+        // is refused with the shape error admission would have raised.
+        let structure = IntentError::Structure;
+        let accounts: Capped<Vec<PrincipalAddr>, MAX_ACCOUNTS> = self
+            .graph
+            .accounts()
+            .to_vec()
+            .try_into()
+            .map_err(|_| structure(AdmissionError::TooManyAccounts { intent: 0 }))?;
         let graph = self.graph.build()?;
         let mut members = Vec::with_capacity(self.members.len());
         for (index, placed) in self.members.into_iter().enumerate() {
@@ -870,17 +880,33 @@ impl<'a> IntentBuilder<'a> {
             }
             members.push(Member {
                 signed: placed.signed,
-                wiring,
+                wiring: wiring
+                    .try_into()
+                    .map_err(|_| structure(AdmissionError::TooManySockets { intent }))?,
             });
         }
+        let attested_by = match self.attested_by {
+            Some(attesters) => attesters
+                .try_into()
+                .map_err(|_| structure(AdmissionError::TooManyAttesters { intent: 0 }))?,
+            None => accounts.clone(),
+        };
         let intent = Intent {
             header: self.header,
-            attested_by: self.attested_by.unwrap_or_else(|| accounts.clone()),
+            attested_by,
             accounts,
             graph,
-            sockets: self.sockets,
-            gives: self.gives,
-            members,
+            sockets: self
+                .sockets
+                .try_into()
+                .map_err(|_| structure(AdmissionError::TooManySockets { intent: 0 }))?,
+            gives: self
+                .gives
+                .try_into()
+                .map_err(|_| structure(AdmissionError::TooManyGives { intent: 0 }))?,
+            members: members
+                .try_into()
+                .map_err(|_| structure(AdmissionError::TooManyIntents))?,
         };
         check_structure(&intent, 0)?;
         Ok(intent)

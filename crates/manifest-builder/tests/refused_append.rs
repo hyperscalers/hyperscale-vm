@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
     ChainRecords, Claim, Clause, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta,
@@ -37,7 +38,7 @@ impl Principals {
         Self {
             principal: Arc::new(InstanceMeta {
                 package: account_hash,
-                config: Vec::new(),
+                config: Capped::empty(),
                 salt: Hash32([0; 32]),
             }),
             account_hash,
@@ -66,7 +67,7 @@ impl ChainRecords for Principals {
         (resource == BADGE).then_some(ResourceMeta {
             namespace: ALICE.address(),
             kind: ResourceKind::Fungible,
-            material: Vec::new(),
+            material: Capped::empty(),
             rules,
         })
     }

@@ -31,6 +31,7 @@
 
 use std::collections::BTreeMap;
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     AbiParam, Clause, Expr, GrantedBehaviour, GrantsExpr, Issuance, Issued, MAX_CLAUSE_DEPTH,
     MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, ParamType, ResourceKind,
@@ -751,13 +752,18 @@ impl Trace {
     /// than at publish where the shape is all that is left.
     #[must_use]
     pub fn n_of(&self, count: u8, branches: Vec<Requirement>) -> Requirement {
-        let rule = RuleExpr::CountOf {
-            count,
-            rules: branches.into_iter().map(|branch| branch.0).collect(),
-        };
         // The node's shape is judged by the vocabulary's own predicate —
         // the one the decode gate and the macro's lowering also apply —
-        // so what this refuses cannot fork from what they refuse.
+        // so what this refuses cannot fork from what they refuse. The
+        // branch count is the list's own cap.
+        let rules = Capped::new(
+            branches
+                .into_iter()
+                .map(|branch| branch.0)
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_else(|_| panic!("a threshold branches wider than the vocabulary admits"));
+        let rule = RuleExpr::CountOf { count, rules };
         if let Err(reason) = well_formed(&rule) {
             panic!("{reason}");
         }
@@ -1246,19 +1252,19 @@ impl Access<'_, Leaf> {
 fn governs(cell: Expr) -> RuleExpr {
     RuleExpr::CountOf {
         count: 1,
-        rules: vec![
+        rules: Capped::from_array([
             RuleExpr::Require(RuleLeaf::Stored { cell: cell.clone() }),
             RuleExpr::CountOf {
                 count: 2,
-                rules: vec![
+                rules: Capped::from_array([
                     RuleExpr::Require(RuleLeaf::Presence {
                         target: Box::new(TargetExpr::Point(cell)),
                         expect: Presence::Absent,
                     }),
                     RuleExpr::claim(Expr::SelfAddr),
-                ],
+                ]),
             },
-        ],
+        ]),
     }
 }
 

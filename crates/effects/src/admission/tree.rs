@@ -15,16 +15,14 @@
 
 use std::collections::BTreeSet;
 
-use hyperscale_vm_types::{
-    IntentHash, MAX_ATTESTATIONS, MAX_INTENTS, MAX_MANIFEST_NODES, ResourceAddr,
-};
+use hyperscale_vm_types::{IntentHash, MAX_INTENTS, MAX_MANIFEST_NODES, ResourceAddr};
 
+use super::AdmissionError;
 use super::fill::{Fill, Produced};
-use super::{AdmissionError, MAX_SOCKETS};
 use crate::claim::Claim;
 use crate::graph::{ClaimRef, GiveRef, GraphNode, ValueRef};
 use crate::hash::{Hash32, Hasher};
-use crate::intent::{Binding, Intent, MAX_ACCOUNTS, MAX_TREE_DEPTH, Socket};
+use crate::intent::{Binding, Intent, MAX_TREE_DEPTH, Socket};
 
 /// One intent's wiring resolved, as the flat checker consumes it: what
 /// fills each of its sockets, how often its own wiring passes each
@@ -188,11 +186,6 @@ pub fn flatten(root: &Intent) -> Result<Flattened<'_>, AdmissionError> {
                 intent: intent_index,
             });
         }
-        if intent.accounts.len() > MAX_ACCOUNTS {
-            return Err(AdmissionError::TooManyAccounts {
-                intent: intent_index,
-            });
-        }
         if intent.accounts.iter().collect::<BTreeSet<_>>().len() != intent.accounts.len() {
             return Err(AdmissionError::DuplicateAccount {
                 intent: intent_index,
@@ -200,11 +193,6 @@ pub fn flatten(root: &Intent) -> Result<Flattened<'_>, AdmissionError> {
         }
         if intent.attested_by.is_empty() {
             return Err(AdmissionError::NoAttester {
-                intent: intent_index,
-            });
-        }
-        if intent.attested_by.len() > MAX_ATTESTATIONS {
-            return Err(AdmissionError::TooManyAttesters {
                 intent: intent_index,
             });
         }
@@ -259,12 +247,6 @@ pub fn flatten(root: &Intent) -> Result<Flattened<'_>, AdmissionError> {
 ///
 /// Any [`AdmissionError`] the declaration earns.
 pub fn check_structure(intent: &Intent, at: u32) -> Result<(), AdmissionError> {
-    if intent.sockets.len() > MAX_SOCKETS {
-        return Err(AdmissionError::TooManySockets { intent: at });
-    }
-    if intent.gives.len() > MAX_SOCKETS {
-        return Err(AdmissionError::TooManyGives { intent: at });
-    }
     check_socket_uses(intent, at)?;
     check_gives_held(intent, at)?;
     check_member_gives_taken(intent, at)

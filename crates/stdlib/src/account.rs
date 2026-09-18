@@ -108,6 +108,7 @@ pub fn securify_uniform(
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_hbor::Capped;
     use hyperscale_vm_effects::{Claim, Records, StoredRule, TestHasher};
     use hyperscale_vm_manifest_builder::{BuildError, TypedBuilder, TypedError};
     use hyperscale_vm_types::PrincipalAddr;
@@ -127,7 +128,7 @@ mod tests {
         for _ in 0..32 {
             rule = StoredRule::CountOf {
                 count: 1,
-                rules: vec![rule],
+                rules: Capped::from_array([rule]),
             };
         }
         assert!(matches!(

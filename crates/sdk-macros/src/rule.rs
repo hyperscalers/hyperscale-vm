@@ -6,6 +6,7 @@
 //! of a rule, its thresholds and its branch caps are stated once and
 //! neither spelling can drift from the other.
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{MAX_RULE_DEPTH, Rule, well_formed};
 use proc_macro2::Span;
 use syn::spanned::Spanned as _;
@@ -121,10 +122,13 @@ pub fn parse_branches<L>(
 /// The span is the one thing this side adds: the line that wrote the
 /// gate, rather than the tracer's panic inside a generated `blueprint()`.
 pub fn check_threshold_node(span: Span, count: u8, width: usize) -> syn::Result<()> {
-    let node = Rule::CountOf {
-        count,
-        rules: vec![Rule::Require(()); width],
-    };
+    let rules = Capped::new(vec![Rule::Require(()); width]).map_err(|_| {
+        syn::Error::new(
+            span,
+            "a threshold branches wider than the vocabulary admits",
+        )
+    })?;
+    let node = Rule::CountOf { count, rules };
     well_formed(&node).map_err(|reason| syn::Error::new(span, reason))
 }
 

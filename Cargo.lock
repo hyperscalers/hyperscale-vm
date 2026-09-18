@@ -664,6 +664,7 @@ name = "hyperscale-vm-harness"
 version = "0.1.0"
 dependencies = [
  "arbitrary",
+ "hyperscale-hbor",
  "hyperscale-vm-cli",
  "hyperscale-vm-effects",
  "hyperscale-vm-embed",
@@ -775,6 +776,7 @@ dependencies = [
 name = "hyperscale-vm-sdk-macros"
 version = "0.1.0"
 dependencies = [
+ "hyperscale-hbor",
  "hyperscale-vm-effects",
  "proc-macro2",
  "quote",
@@ -797,6 +799,7 @@ dependencies = [
 name = "hyperscale-vm-testing"
 version = "0.1.0"
 dependencies = [
+ "hyperscale-hbor",
  "hyperscale-vm-cli",
  "hyperscale-vm-effects",
  "hyperscale-vm-fixtures",

@@ -7,7 +7,8 @@
 //! the record says what they issue, never how much of it exists.
 
 use hyperscale_hbor::{
-    DecodeError, EncodeError, Hbor, HborShape, from_slice_with_depth, to_vec, to_vec_with_depth,
+    Bytes, Capped, DecodeError, EncodeError, Hbor, HborShape, from_slice_with_depth, to_vec,
+    to_vec_with_depth, varint,
 };
 use hyperscale_vm_types::{Address, AddressClass, CollectionId, Moves, ResourceAddr, SubstateKey};
 
@@ -17,7 +18,8 @@ use crate::dsl::{Expr, SlotRef, TargetExpr};
 use crate::hash::{Hash32, Hasher};
 use crate::rule::{GrantRuleExpr, GrantSubject, Holding, SealedLeaf, StoredRule, always, never};
 use crate::types::{
-    Value, child_key, collection_id, genesis_publisher, granting_resource_address, resource_address,
+    MAX_VALUE_BYTES, Value, child_key, collection_id, genesis_publisher, granting_resource_address,
+    resource_address,
 };
 pub use crate::vocabulary::{INSTANCE, NF_VAULT, RESOURCE};
 
@@ -664,9 +666,7 @@ fn resolve_rule(
         GrantRuleExpr::CountOf { count, rules } => StoredRule::CountOf {
             count: *count,
             rules: rules
-                .iter()
-                .map(|rule| resolve_rule(hasher, instance, config, rule, behaviour, link))
-                .collect::<Result<_, _>>()?,
+                .try_map(|rule| resolve_rule(hasher, instance, config, rule, behaviour, link))?,
         },
     })
 }
@@ -770,10 +770,10 @@ fn resolve_holding(
                 // pays for not having said which.
                 return Ok(StoredRule::CountOf {
                     count: 1,
-                    rules: vec![
+                    rules: Capped::from_array([
                         StoredRule::held(badge, Holding::Balance),
                         StoredRule::held(badge, Holding::AnyInstance),
-                    ],
+                    ]),
                 });
             };
             (badge, Holding::Instance(id))
@@ -838,8 +838,7 @@ pub struct ResourceMeta {
     pub kind: ResourceKind,
     /// The material separating the namespace's resources, as the
     /// canonical byte parts the derivation hashes.
-    #[hbor(max = MAX_RESOURCE_MATERIAL_PARTS)]
-    pub material: Vec<Vec<u8>>,
+    pub material: Capped<Vec<Bytes<MAX_RESOURCE_MATERIAL_BYTES>>, MAX_RESOURCE_MATERIAL_PARTS>,
     /// The granted rules whose commitment the address folds.
     pub rules: ResourceGrants,
 }
@@ -848,6 +847,11 @@ pub struct ResourceMeta {
 /// on a presented record's list, matching the one part a mark occupies
 /// with room for compound material.
 pub const MAX_RESOURCE_MATERIAL_PARTS: usize = 4;
+
+/// The widest one material part may be: a byte value at the value cap,
+/// canonically encoded — its kind, its length, its bytes.
+pub const MAX_RESOURCE_MATERIAL_BYTES: usize =
+    1 + varint::encoded_len(MAX_VALUE_BYTES) + MAX_VALUE_BYTES;
 
 impl ResourceMeta {
     /// The address these four derive.
@@ -858,7 +862,11 @@ impl ResourceMeta {
             self.namespace,
             self.kind,
             &self.rules,
-            &self.material,
+            &self
+                .material
+                .iter()
+                .map(|part| part.to_vec())
+                .collect::<Vec<_>>(),
         )
     }
 }
@@ -1003,7 +1011,7 @@ pub fn instance_data_key(
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_hbor::assert_canonical;
+    use hyperscale_hbor::{Capped, assert_canonical};
     use hyperscale_vm_types::{Address, AddressClass, ResourceAddr};
 
     use super::{
@@ -1121,7 +1129,7 @@ mod tests {
         let holds = StoredRule::held(badge, Holding::Balance);
         let both = StoredRule::CountOf {
             count: 2,
-            rules: vec![claims.clone(), holds.clone()],
+            rules: Capped::new(vec![claims.clone(), holds.clone()]).unwrap(),
         };
 
         for behaviour in GrantedBehaviour::ALL {

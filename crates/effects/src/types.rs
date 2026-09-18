@@ -1,7 +1,7 @@
 //! Keys, values, modes, and effect targets — the vocabulary shared by the
 //! DSL evaluator, the router, and the kernel.
 
-use hyperscale_hbor::{Hbor, to_vec};
+use hyperscale_hbor::{Capped, Hbor, to_vec};
 use hyperscale_vm_types::{
     Address, CollectionId, ComponentAddr, LocalKey, NativeAddr, PackageAddr, PrincipalAddr,
     ResourceAddr, SWEEP_BUCKET_BYTES, SchemeId, SubstateKey, SweepBucket,
@@ -637,8 +637,7 @@ pub enum EdgeContent {
     /// which is what lets an effect signature declare per-id accesses.
     NonFungible {
         /// The instance ids, in the resource's id space.
-        #[hbor(max = MAX_IDS_PER_EDGE)]
-        ids: Vec<u64>,
+        ids: Capped<Vec<u64>, MAX_IDS_PER_EDGE>,
     },
 }
 
@@ -662,7 +661,9 @@ impl EdgeContent {
 mod tests {
     use std::collections::BTreeSet;
 
-    use hyperscale_hbor::{DecodeError, assert_canonical, from_slice, from_slice_with_depth};
+    use hyperscale_hbor::{
+        Capped, DecodeError, assert_canonical, from_slice, from_slice_with_depth,
+    };
     use hyperscale_vm_types::{AddressClass, ComponentAddr, ResourceAddr};
 
     use super::{
@@ -741,7 +742,9 @@ mod tests {
         });
         assert_canonical(&Value::Bucket {
             resource: ResourceAddr::new([7; 31]),
-            content: EdgeContent::NonFungible { ids: vec![3, 9] },
+            content: EdgeContent::NonFungible {
+                ids: Capped::new(vec![3, 9]).unwrap(),
+            },
         });
     }
 

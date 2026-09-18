@@ -12,7 +12,7 @@ use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::BTreeMap;
 
-use hyperscale_hbor::Hbor;
+use hyperscale_hbor::{Capped, Hbor};
 use hyperscale_vm_types::{
     Address, CollectionId, Effect, EffectConflict, EffectSet, EffectTarget, LocalKey,
     MAX_SLOT_WIDTH, Mode, Moves, ResourceAddr, SubstateKey, WrongClass,
@@ -2481,11 +2481,8 @@ fn reject_bucket(value: &Value) -> Result<(), EvalError> {
 /// A well-formed instance id set: every element a `u64`, at most
 /// [`MAX_IDS_PER_EDGE`] of them, each distinct — a duplicate would be
 /// one instance landing twice off a single edge.
-fn id_set(values: &[Value]) -> Result<Vec<u64>, EvalError> {
-    if values.len() > MAX_IDS_PER_EDGE {
-        return Err(EvalError::TooManyIds { len: values.len() });
-    }
-    let mut ids = Vec::with_capacity(values.len());
+fn id_set(values: &[Value]) -> Result<Capped<Vec<u64>, MAX_IDS_PER_EDGE>, EvalError> {
+    let mut ids = Vec::with_capacity(values.len().min(MAX_IDS_PER_EDGE));
     for value in values {
         let id = as_u64(value)?;
         if ids.contains(&id) {
@@ -2493,7 +2490,9 @@ fn id_set(values: &[Value]) -> Result<Vec<u64>, EvalError> {
         }
         ids.push(id);
     }
-    Ok(ids)
+    Capped::new(ids).map_err(|overflow| EvalError::TooManyIds {
+        len: overflow.actual,
+    })
 }
 
 fn indexed<T>(slice: &[T], index: u32) -> Option<&T> {
@@ -2599,6 +2598,7 @@ fn as_list(value: Value) -> Result<Vec<Value>, EvalError> {
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_hbor::Capped;
     use hyperscale_vm_types::{
         Address, AddressClass, Effect, EffectTarget, MAX_MANIFEST_NODES, Mode, Moves, Presence,
         ResourceAddr, WrongClass,
@@ -2740,7 +2740,7 @@ mod tests {
     fn inputs<'a>(args: &'a [Value], config: &'a [Value]) -> EvalInputs<'a> {
         let record: &'a InstanceMeta = Box::leak(Box::new(InstanceMeta {
             package: PackageHash(Hash32([1; 32])),
-            config: config.to_vec(),
+            config: Capped::new(config.to_vec()).unwrap(),
             salt: Hash32([2; 32]),
         }));
         EvalInputs {
@@ -2880,12 +2880,13 @@ mod tests {
                 guard: None,
                 rule: RuleExpr::CountOf {
                     count: 1,
-                    rules: vec![
+                    rules: Capped::new(vec![
                         RuleExpr::claim(Expr::SelfAddr),
                         RuleExpr::Require(RuleLeaf::Stored {
                             cell: Expr::Literal(Value::Key(key)),
                         }),
-                    ],
+                    ])
+                    .unwrap(),
                 },
             },
             // Guarded out: evaluated conditions carry only what fired.
@@ -2918,10 +2919,11 @@ mod tests {
                 }),
                 Rule::CountOf {
                     count: 1,
-                    rules: vec![
+                    rules: Capped::new(vec![
                         Rule::Require(JudgedLeaf::Claim(identity)),
                         Rule::Require(JudgedLeaf::Stored { cell: key }),
-                    ],
+                    ])
+                    .unwrap(),
                 },
             ]
         );
@@ -3493,7 +3495,7 @@ mod tests {
         // The same node again and again, on the meter a tree shares.
         let record = InstanceMeta {
             package: PackageHash(Hash32([1; 32])),
-            config: Vec::new(),
+            config: Capped::empty(),
             salt: Hash32([2; 32]),
         };
         let budget = EvalBudget::default();
@@ -3895,7 +3897,9 @@ mod tests {
     fn ids_of_projects_a_non_fungible_edge() {
         let bucket = Value::Bucket {
             resource: ResourceAddr::new([0xE1; 31]),
-            content: EdgeContent::NonFungible { ids: vec![7, 9] },
+            content: EdgeContent::NonFungible {
+                ids: Capped::new(vec![7, 9]).unwrap(),
+            },
         };
         let fungible = Value::Bucket {
             resource: ResourceAddr::new([0xE1; 31]),
@@ -3916,15 +3920,21 @@ mod tests {
     fn only_names_the_sole_element_of_a_list() {
         let one = Value::Bucket {
             resource: ResourceAddr::new([0xE1; 31]),
-            content: EdgeContent::NonFungible { ids: vec![7] },
+            content: EdgeContent::NonFungible {
+                ids: Capped::new(vec![7]).unwrap(),
+            },
         };
         let two = Value::Bucket {
             resource: ResourceAddr::new([0xE1; 31]),
-            content: EdgeContent::NonFungible { ids: vec![7, 9] },
+            content: EdgeContent::NonFungible {
+                ids: Capped::new(vec![7, 9]).unwrap(),
+            },
         };
         let empty = Value::Bucket {
             resource: ResourceAddr::new([0xE1; 31]),
-            content: EdgeContent::NonFungible { ids: vec![] },
+            content: EdgeContent::NonFungible {
+                ids: Capped::empty(),
+            },
         };
         let args = [one, two, empty];
         let ins = inputs(&args, &[]);
@@ -3950,7 +3960,9 @@ mod tests {
         let list = Value::List(vec![Value::U64(7), Value::U64(9), Value::U64(11)]);
         let bucket = Value::Bucket {
             resource: ResourceAddr::new([0xE1; 31]),
-            content: EdgeContent::NonFungible { ids: vec![7, 9] },
+            content: EdgeContent::NonFungible {
+                ids: Capped::new(vec![7, 9]).unwrap(),
+            },
         };
         let args = [list, bucket];
         let ins = inputs(&args, &[]);
@@ -4014,7 +4026,9 @@ mod tests {
             evaluate_expr(&minted, &ins, &TestHasher),
             Ok(Value::Bucket {
                 resource: ResourceAddr::try_from(resource).expect("resource class"),
-                content: EdgeContent::NonFungible { ids: expected },
+                content: EdgeContent::NonFungible {
+                    ids: Capped::new(expected).unwrap()
+                },
             }),
         );
 

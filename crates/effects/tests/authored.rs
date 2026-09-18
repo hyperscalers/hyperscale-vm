@@ -5,6 +5,7 @@
 //! has to stand where it can see them all — which is outside the crate
 //! defining the rules.
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     Clause, Expr, GrantsExpr, PACKAGE_SLOT_BASE, PackageMetadata, ResourceKind, RuleExpr, RuleLeaf,
     SlotId, SlotRef, TargetExpr, Value, check_abi, check_declarations,
@@ -70,19 +71,21 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
     let governs = |cell: Expr| {
         vec![RuleExpr::CountOf {
             count: 1,
-            rules: vec![
+            rules: Capped::new(vec![
                 RuleExpr::Require(RuleLeaf::Stored { cell: cell.clone() }),
                 RuleExpr::CountOf {
                     count: 2,
-                    rules: vec![
+                    rules: Capped::new(vec![
                         RuleExpr::Require(RuleLeaf::Presence {
                             target: Box::new(TargetExpr::Point(cell)),
                             expect: Presence::Absent,
                         }),
                         RuleExpr::claim(Expr::SelfAddr),
-                    ],
+                    ])
+                    .unwrap(),
                 },
-            ],
+            ])
+            .unwrap(),
         }]
     };
     let own_cell = |offset: u16| Expr::ChildKey {
@@ -238,7 +241,9 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
                     .map(|slot| {
                         RuleExpr::claim(Expr::Tuple(vec![Expr::Config(0), Expr::Config(slot)]))
                     })
-                    .collect(),
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap(),
             }],
             vec![],
         ),
@@ -355,7 +360,7 @@ fn every_authored_method_declares_who_may_call_it() {
                 (*package, name.as_str(), requires, mints)
             })
         })
-        .collect();
+        .collect::<Vec<_>>();
     // The table is written alphabetically, so the corpus reading is too:
     // which crate a package lives in is not a fact the table records.
     declared.sort_by(|left, right| (left.0, left.1).cmp(&(right.0, right.1)));

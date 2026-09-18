@@ -9,10 +9,11 @@
 use std::collections::BTreeMap;
 
 use hyperscale_hbor::shape::Resolution;
-use hyperscale_hbor::{HborShape, ShapeRegistry, TypeShape};
+use hyperscale_hbor::{Capped, HborShape, ShapeRegistry, TypeShape};
 use hyperscale_vm_effects::{
-    Expr, LeafForm, MAX_EFFECTS_PER_SIGNATURE, MAX_SHAPE_DEPTH, MethodSignature, PackageMetadata,
-    ParamType, SlotId, SlotKind, SlotShape,
+    Expr, LeafForm, MAX_EFFECTS_PER_SIGNATURE, MAX_EVENT_TYPES_PER_METHOD,
+    MAX_ISSUANCES_PER_SIGNATURE, MAX_SHAPE_DEPTH, MethodSignature, PackageMetadata, ParamType,
+    SlotId, SlotKind, SlotShape,
 };
 use hyperscale_vm_types::EVENT_FRAME_BYTES;
 
@@ -100,7 +101,11 @@ impl Blueprint {
     /// An event encodes infallibly, so every event shape is closed and
     /// the figure always exists. The publish gate derives it again and
     /// refuses a package whose two answers differ.
-    fn emitted(&self, method: &str, named: &[String]) -> (Vec<u32>, u32) {
+    fn emitted(
+        &self,
+        method: &str,
+        named: &[String],
+    ) -> (Capped<Vec<u32>, MAX_EVENT_TYPES_PER_METHOD>, u32) {
         let mut resolution = Resolution::of(self.types.types());
         let mut indices = Vec::with_capacity(named.len());
         let mut bytes = 0usize;
@@ -129,6 +134,9 @@ impl Blueprint {
             bytes = bytes.saturating_add(EVENT_FRAME_BYTES).saturating_add(most);
         }
         indices.sort_unstable();
+        let indices = Capped::new(indices).unwrap_or_else(|_| {
+            panic!("`{method}` emits more than {MAX_EVENT_TYPES_PER_METHOD} event types")
+        });
         (
             indices,
             u32::try_from(bytes).expect("an event bound under the transaction cap"),
@@ -202,8 +210,12 @@ impl Builder {
         let method = Method {
             signature: MethodSignature {
                 totality: recorded.totality,
-                issues: recorded.issues,
-                destroys: recorded.destroys,
+                issues: recorded.issues.try_into().unwrap_or_else(|_| {
+                    panic!("`{name}` issues more than {MAX_ISSUANCES_PER_SIGNATURE} resources")
+                }),
+                destroys: recorded.destroys.try_into().unwrap_or_else(|_| {
+                    panic!("`{name}` destroys more than {MAX_ISSUANCES_PER_SIGNATURE} buckets")
+                }),
                 params: params.to_vec(),
                 abi: recorded.abi,
                 outputs: recorded.outputs,
@@ -213,7 +225,7 @@ impl Builder {
                 // Resolved against the event table at `metadata`, since
                 // a method may trace before the events it names are
                 // registered.
-                emits: Vec::new(),
+                emits: Capped::empty(),
                 event_bytes: 0,
             },
             emits: recorded.emits,

@@ -187,6 +187,7 @@ pub struct ManifestHash(pub Hash32);
 
 #[cfg(test)]
 mod tests {
+    use hyperscale_hbor::Capped;
     use hyperscale_vm_types::{
         Address, AddressClass, EffectTarget, LocalKey, Presence, SubstateKey,
     };
@@ -233,7 +234,7 @@ mod tests {
     fn a_rule_is_judged_at_the_earliest_stage_that_can_answer_it() {
         let two = |left: Rule<JudgedLeaf>, right| Rule::CountOf {
             count: 1,
-            rules: vec![left, right],
+            rules: Capped::new(vec![left, right]).unwrap(),
         };
 
         assert_eq!(claim().judged(), Judged::AtAdmission);
@@ -258,7 +259,7 @@ mod tests {
         for count in [0, 1] {
             let constant: Rule<JudgedLeaf> = Rule::CountOf {
                 count,
-                rules: Vec::new(),
+                rules: Capped::empty(),
             };
             assert_eq!(constant.judged(), Judged::AtAdmission);
         }

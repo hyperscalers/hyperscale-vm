@@ -380,6 +380,7 @@ fn check_grant_leaf(claim: &GrantSubject) -> Result<(), SignatureBoundsError> {
 mod tests {
     use std::collections::BTreeMap;
 
+    use hyperscale_hbor::Capped;
     use hyperscale_vm_types::Moves;
 
     use super::*;
@@ -730,7 +731,7 @@ mod tests {
             for _ in 0..levels {
                 rule = RuleExpr::CountOf {
                     count: 1,
-                    rules: vec![rule],
+                    rules: Capped::new(vec![rule]).unwrap(),
                 };
             }
             rule
@@ -741,16 +742,15 @@ mod tests {
         assert!(
             check_metadata(&guarded(RuleExpr::CountOf {
                 count: 1,
-                rules: vec![leaf(); MAX_RULE_BRANCHES],
+                rules: Capped::new(vec![leaf(); MAX_RULE_BRANCHES]).unwrap(),
             }))
             .is_ok()
         );
+        // One branch past the cap is not a rule the type can hold, so the
+        // gate never sees one.
         assert!(
-            check_metadata(&guarded(RuleExpr::CountOf {
-                count: 1,
-                rules: vec![leaf(); MAX_RULE_BRANCHES + 1],
-            }))
-            .is_err()
+            Capped::<Vec<RuleExpr>, MAX_RULE_BRANCHES>::new(vec![leaf(); MAX_RULE_BRANCHES + 1])
+                .is_err()
         );
 
         // The degenerate thresholds a stored rule is refused for: one
@@ -759,7 +759,7 @@ mod tests {
             assert!(
                 check_metadata(&guarded(RuleExpr::CountOf {
                     count,
-                    rules: vec![leaf(), leaf()],
+                    rules: Capped::new(vec![leaf(), leaf()]).unwrap(),
                 }))
                 .is_err()
             );
@@ -791,13 +791,17 @@ mod tests {
                 let group = left.min(MAX_RULE_BRANCHES);
                 branches.push(GrantRuleExpr::CountOf {
                     count: 1,
-                    rules: (0..group).map(|_| leaf()).collect(),
+                    rules: (0..group)
+                        .map(|_| leaf())
+                        .collect::<Vec<_>>()
+                        .try_into()
+                        .unwrap(),
                 });
                 left -= group;
             }
             GrantRuleExpr::CountOf {
                 count: 1,
-                rules: branches,
+                rules: Capped::new(branches).unwrap(),
             }
         };
         let granting = |behaviour, count: usize| {

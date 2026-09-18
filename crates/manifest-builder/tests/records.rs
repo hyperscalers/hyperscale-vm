@@ -17,6 +17,7 @@
 mod common;
 
 use common::admit_leaf_presenting;
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
     Hash32, Hasher, InstanceMeta, PackageHash, Records, TestHasher, Value,
 };
@@ -55,7 +56,7 @@ fn world() -> (Records, ResourceAddr) {
     chain.instances.serve_principals(pkg("account"));
     let meta = InstanceMeta {
         package: pkg("security"),
-        config: vec![Value::Address(REGISTRAR.address())],
+        config: Capped::new(vec![Value::Address(REGISTRAR.address())]).unwrap(),
         salt: Hash32([0x5E; 32]),
     };
     let issuer = security::Security::at(meta.address(&TestHasher));

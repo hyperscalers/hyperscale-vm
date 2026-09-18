@@ -12,6 +12,7 @@
 //! which stage answers it follows from the leaves without anything
 //! declaring a stage.
 
+use hyperscale_hbor::{Bytes, Capped};
 use hyperscale_vm_effects::{
     ResourceMeta, TestHasher, Value, explain_resource, granting_issued_resource,
 };
@@ -57,7 +58,10 @@ fn rendered() -> Vec<(ResourceAddr, String)> {
             let record = ResourceMeta {
                 namespace: instance,
                 kind: issuance.kind,
-                material: vec![Value::Bytes(issuance.mark.clone()).canonical_bytes()],
+                material: Capped::new(vec![
+                    Bytes::new(Value::Bytes(issuance.mark.clone()).canonical_bytes()).unwrap(),
+                ])
+                .unwrap(),
                 rules,
             };
             (address, explain_resource(&record, &TestHasher))

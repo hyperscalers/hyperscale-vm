@@ -25,6 +25,7 @@ use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use hyperscale_hbor::{Bytes, Capped};
 use hyperscale_vm_types::{Address, CallTarget, ResourceAddr};
 
 use crate::hash::Hasher;
@@ -208,7 +209,10 @@ pub fn issued_record(
     Some(ResourceMeta {
         namespace: issuer,
         kind: issuance.kind,
-        material: vec![Value::Bytes(issuance.mark.clone()).canonical_bytes()],
+        material: Capped::from_array([Bytes::new(
+            Value::Bytes(issuance.mark.clone()).canonical_bytes(),
+        )
+        .ok()?]),
         rules: issuance.grants.resolve(hasher, issuer, &meta.config).ok()?,
     })
 }

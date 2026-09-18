@@ -12,9 +12,11 @@
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::vocabulary::DEPOSIT_METHOD;
 use hyperscale_vm_effects::{
-    ClaimRef, Constraint, EdgeRef, GraphArg, GraphNode, MAX_MANIFEST_NODES, ManifestGraph, ValueRef,
+    ClaimRef, Constraint, EdgeRef, GraphArg, GraphNode, MAX_EVIDENCE_PER_NODE, ManifestGraph,
+    ValueRef,
 };
 use hyperscale_vm_types::{CallTarget, PrincipalAddr, ResourceAddr};
 
@@ -294,7 +296,7 @@ impl GraphBuilder {
     /// A [`Bucket`] argument made by a different builder, or a rule nested
     /// past its wire depth, does not panic: the refusal is recorded and
     /// handed back at [`build`](Self::build), the way every compose mistake
-    /// is. So is exceeding [`MAX_MANIFEST_NODES`].
+    /// is. So is exceeding [`MAX_MANIFEST_NODES`](hyperscale_vm_effects::MAX_MANIFEST_NODES).
     #[must_use = "every output edge must be consumed for the graph to build"]
     pub fn call<const N: usize>(
         &mut self,
@@ -302,7 +304,7 @@ impl GraphBuilder {
         method: impl Into<String>,
         args: impl Args,
     ) -> [Bucket; N] {
-        self.call_presenting(target, method, args, BTreeSet::new())
+        self.call_presenting(target, method, args, Capped::default())
     }
 
     /// The same call, presenting `account` — one the enclosing intent
@@ -326,7 +328,7 @@ impl GraphBuilder {
             target,
             method,
             args,
-            BTreeSet::from([ClaimRef::Account(account)]),
+            Capped::from_members([ClaimRef::Account(account)]),
         )
     }
 
@@ -351,7 +353,7 @@ impl GraphBuilder {
             target,
             method,
             args,
-            BTreeSet::from([ClaimRef::Node(producer)]),
+            Capped::from_members([ClaimRef::Node(producer)]),
         )
     }
 
@@ -361,7 +363,7 @@ impl GraphBuilder {
         target: impl Into<CallTarget>,
         method: impl Into<String>,
         args: impl Args,
-        evidence: BTreeSet<ClaimRef>,
+        evidence: Capped<BTreeSet<ClaimRef>, MAX_EVIDENCE_PER_NODE>,
     ) -> [Bucket; N] {
         let args = args.bind_all(self);
         let producer = self.push(target.into(), method.into(), args, vec![None; N], evidence);
@@ -387,7 +389,7 @@ impl GraphBuilder {
         method: String,
         args: Vec<GraphArg>,
         outputs: Vec<Option<ResourceAddr>>,
-        evidence: BTreeSet<ClaimRef>,
+        evidence: Capped<BTreeSet<ClaimRef>, MAX_EVIDENCE_PER_NODE>,
     ) -> u32 {
         let producer = u32::try_from(self.nodes.len()).expect("more nodes than an edge can name");
         for arg in &args {
@@ -520,7 +522,7 @@ impl GraphBuilder {
     ///
     /// [`BuildError::DanglingOutput`] for the first unconsumed output in
     /// node order; [`BuildError::TooManyNodes`] past
-    /// [`MAX_MANIFEST_NODES`], counted after any rest edges are routed.
+    /// [`MAX_MANIFEST_NODES`](hyperscale_vm_effects::MAX_MANIFEST_NODES), counted after any rest edges are routed.
     pub fn build(mut self) -> Result<ManifestGraph, BuildError> {
         if let Some(error) = self.refused.take() {
             return Err(error);
@@ -536,12 +538,9 @@ impl GraphBuilder {
                     DEPOSIT_METHOD.into(),
                     vec![arg],
                     Vec::new(),
-                    BTreeSet::new(),
+                    Capped::default(),
                 );
             }
-        }
-        if self.nodes.len() > MAX_MANIFEST_NODES {
-            return Err(BuildError::TooManyNodes);
         }
         if let Some(edge) = self.dangling().next() {
             return Err(BuildError::DanglingOutput {
@@ -549,7 +548,11 @@ impl GraphBuilder {
                 output: edge.output,
             });
         }
-        Ok(ManifestGraph { nodes: self.nodes })
+        let nodes = self
+            .nodes
+            .try_into()
+            .map_err(|_| BuildError::TooManyNodes)?;
+        Ok(ManifestGraph { nodes })
     }
 
     /// Every output edge nothing has taken, in node order.
@@ -578,8 +581,8 @@ impl Default for GraphBuilder {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
 
+    use hyperscale_hbor::Capped;
     use hyperscale_vm_effects::{
         Claim, ClaimRef, Constraint, EdgeRef, GraphArg, GraphNode, ManifestGraph, StoredRule, Value,
     };
@@ -600,7 +603,7 @@ mod tests {
         assert_eq!(
             b.build(),
             Ok(ManifestGraph {
-                nodes: vec![
+                nodes: Capped::new(vec![
                     GraphNode {
                         target: ALICE.into(),
                         method: "withdraw".into(),
@@ -608,7 +611,7 @@ mod tests {
                             GraphArg::Literal(Value::Address(RES.address())),
                             GraphArg::Literal(Value::U128(100)),
                         ],
-                        evidence: [ClaimRef::Account(ALICE)].into(),
+                        evidence: Capped::from_members([ClaimRef::Account(ALICE)]),
                     },
                     GraphNode {
                         target: BOB.into(),
@@ -620,9 +623,10 @@ mod tests {
                             },
                             vec![Constraint::ResourceIs(RES), Constraint::MinAmount(1)]
                         )],
-                        evidence: BTreeSet::new(),
+                        evidence: Capped::default(),
                     },
-                ],
+                ])
+                .unwrap(),
             })
         );
     }
@@ -709,7 +713,7 @@ mod tests {
         for _ in 0..32 {
             rule = StoredRule::CountOf {
                 count: 1,
-                rules: vec![rule],
+                rules: Capped::new(vec![rule]).unwrap(),
             };
         }
         let mut b = GraphBuilder::new();

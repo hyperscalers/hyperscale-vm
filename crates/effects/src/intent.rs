@@ -36,7 +36,9 @@
 
 use std::collections::BTreeSet;
 
-use hyperscale_hbor::{DecodeError, Hbor, from_slice_with_depth, to_vec, to_vec_with_depth};
+use hyperscale_hbor::{
+    Capped, DecodeError, Hbor, Overflow, from_slice_with_depth, to_vec, to_vec_with_depth,
+};
 use hyperscale_vm_types::{
     AccountSigner, Address, Attestation, Effect, EffectTarget, IntentHash, MAX_ATTESTATIONS,
     MAX_MANIFEST_NODES, Mode, Moves, NetworkId, PrincipalAddr, ResourceAddr, SubstateKey,
@@ -191,15 +193,13 @@ pub struct Intent {
     /// the intent's own nodes present and its wiring may grant. Never
     /// empty. Inside the signed declaration, so the intent's own signer
     /// consents to which accounts it acts as.
-    #[hbor(max = MAX_ACCOUNTS)]
-    pub accounts: Vec<PrincipalAddr>,
+    pub accounts: Capped<Vec<PrincipalAddr>, MAX_ACCOUNTS>,
     /// The principals whose keys attest this intent, in the order their
     /// attestations stand beside it. Never empty, never repeating.
     /// Inside the signed declaration, so one intent hash admits exactly
     /// one attesting set, and every account's shard judges its own rule
     /// against that set.
-    #[hbor(max = MAX_ATTESTATIONS)]
-    pub attested_by: Vec<PrincipalAddr>,
+    pub attested_by: Capped<Vec<PrincipalAddr>, MAX_ATTESTATIONS>,
     /// The intent's invocation graph; its arguments may consume the
     /// sockets and the members' gives as [`ValueRef`]s beside its own
     /// edges.
@@ -208,8 +208,7 @@ pub struct Intent {
     /// exactly one node argument or wired on to exactly one member's
     /// socket; an authority socket is presented by as many nodes, and
     /// granted on to as many members, as ask for it.
-    #[hbor(max = MAX_SOCKETS)]
-    pub sockets: Vec<Socket>,
+    pub sockets: Capped<Vec<Socket>, MAX_SOCKETS>,
     /// The value this intent offers its composer: an output of its own
     /// graph that no node of it consumes, or a give of one of its
     /// members offered on — how a sealed group exposes a product
@@ -218,14 +217,12 @@ pub struct Intent {
     /// once above: by an argument of the composer's own graph, by the
     /// composer's wiring into a sibling's socket, or by the composer's
     /// own gives. Empty on the root, which has nobody to give to.
-    #[hbor(max = MAX_SOCKETS)]
-    pub gives: Vec<ValueRef>,
+    pub gives: Capped<Vec<ValueRef>, MAX_SOCKETS>,
     /// The intents this one composes, each with the wiring that fills
     /// its sockets. Nested rather than named: a composer contains its
     /// members, so which intent composes which is the shape of the
     /// value and not a relation admission has to recover.
-    #[hbor(max = MAX_INTENTS)]
-    pub members: Vec<Member>,
+    pub members: Capped<Vec<Member>, MAX_INTENTS>,
 }
 
 /// An intent and the attestations over it: what a counterparty hands
@@ -243,8 +240,7 @@ pub struct SignedIntent {
     pub intent: Intent,
     /// One attestation per principal in the intent's `attested_by`, in
     /// that order, each over the intent's hash.
-    #[hbor(max = MAX_ATTESTATIONS)]
-    pub signatures: Vec<Attestation>,
+    pub signatures: Capped<Vec<Attestation>, MAX_ATTESTATIONS>,
 }
 
 impl From<Intent> for SignedIntent {
@@ -260,16 +256,25 @@ impl SignedIntent {
     pub const fn unsigned(intent: Intent) -> Self {
         Self {
             intent,
-            signatures: Vec::new(),
+            signatures: Capped::empty(),
         }
     }
 
     /// Attest the intent with `key`, standing the attestation beside
     /// those already given. The caller signs in the order the intent
     /// declares its attesting principals.
-    pub fn attest<S: AccountSigner + ?Sized>(&mut self, key: &S, hasher: &dyn Hasher) {
+    ///
+    /// # Errors
+    ///
+    /// [`Overflow`] where the intent already carries every attestation
+    /// it may.
+    pub fn attest<S: AccountSigner + ?Sized>(
+        &mut self,
+        key: &S,
+        hasher: &dyn Hasher,
+    ) -> Result<(), Overflow> {
         let hash = self.intent.hash(hasher);
-        self.signatures.push(attest(key, &hash.0.0));
+        self.signatures.push(attest(key, &hash.0.0))
     }
 }
 
@@ -285,8 +290,7 @@ pub struct Member {
     /// The composed intent with its attestations, whole.
     pub signed: SignedIntent,
     /// One binding per socket the intent declares, in declaration order.
-    #[hbor(max = MAX_SOCKETS)]
-    pub wiring: Vec<Binding>,
+    pub wiring: Capped<Vec<Binding>, MAX_SOCKETS>,
 }
 
 const DOMAIN_INTENT: &[u8] = b"hyperscale-vm/intent";
@@ -422,12 +426,12 @@ impl Intent {
     pub fn leaf(header: IntentHeader, account: PrincipalAddr, graph: ManifestGraph) -> Self {
         Self {
             header,
-            accounts: vec![account],
-            attested_by: vec![account],
+            accounts: Capped::from_array([account]),
+            attested_by: Capped::from_array([account]),
             graph,
-            sockets: Vec::new(),
-            gives: Vec::new(),
-            members: Vec::new(),
+            sockets: Capped::empty(),
+            gives: Capped::empty(),
+            members: Capped::empty(),
         }
     }
 }
@@ -474,8 +478,7 @@ pub struct IntentTree {
     /// Inside the signed tree, so what an envelope's calls resolve
     /// against is covered by its identity. A record no target names is
     /// dead weight its composer paid to carry, not a refusal.
-    #[hbor(max = MAX_MANIFEST_NODES)]
-    pub instances: Vec<InstanceMeta>,
+    pub instances: Capped<Vec<InstanceMeta>, MAX_MANIFEST_NODES>,
     /// The granted-rule records of the resources the tree's gates name —
     /// each registered, at derivation, at exactly the address it
     /// derives, on the terms `instances` states.
@@ -483,8 +486,7 @@ pub struct IntentTree {
     /// Inside the signed tree for the same reason: what a grant leaf
     /// resolves against is covered by the envelope's identity, and the
     /// composer pays the record's bytes.
-    #[hbor(max = MAX_MANIFEST_NODES)]
-    pub resources: Vec<ResourceMeta>,
+    pub resources: Capped<Vec<ResourceMeta>, MAX_MANIFEST_NODES>,
 }
 
 impl IntentTree {
@@ -515,8 +517,8 @@ impl IntentTree {
     pub const fn of_one(root: Intent) -> Self {
         Self {
             root,
-            instances: Vec::new(),
-            resources: Vec::new(),
+            instances: Capped::empty(),
+            resources: Capped::empty(),
         }
     }
 

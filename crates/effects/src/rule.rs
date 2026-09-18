@@ -24,7 +24,9 @@
 //! reason a degenerate count would be — everyone-may beside anything is
 //! everyone-may, and no-one-may beside it is the rest of the threshold.
 
-use hyperscale_hbor::{DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth};
+use hyperscale_hbor::{
+    Capped, DecodeError, EncodeError, Hbor, from_slice_with_depth, to_vec_with_depth,
+};
 use hyperscale_vm_types::{Presence, ResourceAddr};
 
 use crate::claim::Claim;
@@ -110,8 +112,7 @@ pub enum Rule<L> {
         count: u8,
         /// The branches, each judged independently over the same
         /// presented set.
-        #[hbor(max = MAX_RULE_BRANCHES)]
-        rules: Vec<Self>,
+        rules: Capped<Vec<Self>, MAX_RULE_BRANCHES>,
     },
 }
 
@@ -534,8 +535,6 @@ pub fn well_formed<L>(rule: &Rule<L>) -> Result<(), &'static str> {
                 Err("a threshold over branches requiring none of them is the empty threshold")
             } else if usize::from(*count) > rules.len() {
                 Err("a threshold requiring more branches than it has would admit no one")
-            } else if rules.len() > MAX_RULE_BRANCHES {
-                Err("a threshold branches wider than the vocabulary admits")
             } else if leaves(rule) > MAX_RULE_LEAVES {
                 Err("a rule holds more leaves than the vocabulary admits")
             } else {
@@ -550,7 +549,7 @@ pub fn well_formed<L>(rule: &Rule<L>) -> Result<(), &'static str> {
 pub const fn always<L>() -> Rule<L> {
     Rule::CountOf {
         count: 0,
-        rules: Vec::new(),
+        rules: Capped::empty(),
     }
 }
 
@@ -559,7 +558,7 @@ pub const fn always<L>() -> Rule<L> {
 pub const fn never<L>() -> Rule<L> {
     Rule::CountOf {
         count: 1,
-        rules: Vec::new(),
+        rules: Capped::empty(),
     }
 }
 
@@ -622,10 +621,7 @@ impl<L> Rule<L> {
             Self::Require(leaf) => Rule::Require(map(leaf)?),
             Self::CountOf { count, rules } => Rule::CountOf {
                 count: *count,
-                rules: rules
-                    .iter()
-                    .map(|rule| rule.map_leaves(map))
-                    .collect::<Result<_, _>>()?,
+                rules: rules.try_map(|rule| rule.map_leaves(map))?,
             },
         })
     }
@@ -739,7 +735,7 @@ impl RuleExpr {
 /// builders that walk the depth caps.
 #[cfg(test)]
 pub(crate) mod testing {
-    use hyperscale_hbor::Hbor;
+    use hyperscale_hbor::{Capped, Hbor};
     use hyperscale_vm_types::{Address, AddressClass, CallTarget};
 
     use super::{SealedLeaf, StoredRule};
@@ -778,7 +774,7 @@ pub(crate) mod testing {
         for _ in 0..levels {
             rule = StoredRule::CountOf {
                 count: 1,
-                rules: vec![rule],
+                rules: Capped::new(vec![rule]).unwrap(),
             };
         }
         rule
@@ -799,7 +795,7 @@ pub(crate) mod testing {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_hbor::{DecodeError, assert_canonical, to_vec};
+    use hyperscale_hbor::{Capped, DecodeError, assert_canonical, to_vec};
     use hyperscale_vm_types::ResourceAddr;
 
     use super::testing::{WideRule, chain, identity, wide_chain};
@@ -832,7 +828,10 @@ mod tests {
                 rules.push(build(take, depth - 1));
                 left -= take;
             }
-            Rule::CountOf { count: 1, rules }
+            Rule::CountOf {
+                count: 1,
+                rules: Capped::new(rules).unwrap(),
+            }
         }
         build(leaves, MAX_RULE_DEPTH)
     }
@@ -886,14 +885,14 @@ mod tests {
         // answerable.
         let mixed = StoredRule::CountOf {
             count: 1,
-            rules: vec![StoredRule::claim(identity(1)), holding],
+            rules: Capped::new(vec![StoredRule::claim(identity(1)), holding]).unwrap(),
         };
         assert_eq!(mixed.claims_only(), None);
 
         // What does reach it carries over leaf for leaf.
         let claims = StoredRule::CountOf {
             count: 1,
-            rules: vec![StoredRule::claim(identity(1))],
+            rules: Capped::new(vec![StoredRule::claim(identity(1))]).unwrap(),
         };
         assert!(
             claims
@@ -907,11 +906,12 @@ mod tests {
     fn a_threshold_is_satisfied_at_its_count_and_not_below() {
         let two_of_three = Rule::CountOf {
             count: 2,
-            rules: vec![
+            rules: Capped::new(vec![
                 Rule::Require(identity(1)),
                 Rule::Require(identity(2)),
                 Rule::Require(identity(3)),
-            ],
+            ])
+            .unwrap(),
         };
         assert!(two_of_three.satisfied_by(&[identity(1), identity(3)]));
         assert!(two_of_three.satisfied_by(&[identity(1), identity(2), identity(3)]));
@@ -923,13 +923,18 @@ mod tests {
         // satisfy its inside.
         let key_or_guardians = Rule::CountOf {
             count: 1,
-            rules: vec![
+            rules: Capped::new(vec![
                 Rule::Require(identity(1)),
                 Rule::CountOf {
                     count: 2,
-                    rules: vec![Rule::Require(identity(2)), Rule::Require(identity(3))],
+                    rules: Capped::new(vec![
+                        Rule::Require(identity(2)),
+                        Rule::Require(identity(3)),
+                    ])
+                    .unwrap(),
                 },
-            ],
+            ])
+            .unwrap(),
         };
         assert!(key_or_guardians.satisfied_by(&[identity(1)]));
         assert!(key_or_guardians.satisfied_by(&[identity(2), identity(3)]));
@@ -941,21 +946,22 @@ mod tests {
         // Requiring nothing is satisfied by anyone, including no one.
         let vacuous = Rule::CountOf {
             count: 0,
-            rules: Vec::new(),
+            rules: Capped::empty(),
         };
         assert!(vacuous.satisfied_by(&[]));
 
         // Requiring more than the branches offer is satisfied by no one.
         let unsatisfiable = Rule::CountOf {
             count: 2,
-            rules: vec![Rule::Require(identity(1))],
+            rules: Capped::new(vec![Rule::Require(identity(1))]).unwrap(),
         };
         assert!(!unsatisfiable.satisfied_by(&[identity(1), identity(2)]));
 
         // A repeated branch counts once per appearance.
         let doubled = Rule::CountOf {
             count: 2,
-            rules: vec![Rule::Require(identity(1)), Rule::Require(identity(1))],
+            rules: Capped::new(vec![Rule::Require(identity(1)), Rule::Require(identity(1))])
+                .unwrap(),
         };
         assert!(doubled.satisfied_by(&[identity(1)]));
     }
@@ -976,14 +982,14 @@ mod tests {
         refused(
             StoredRule::CountOf {
                 count: 0,
-                rules: vec![StoredRule::claim(identity(1))],
+                rules: Capped::new(vec![StoredRule::claim(identity(1))]).unwrap(),
             },
             "a threshold over branches requiring none of them is the empty threshold",
         );
         refused(
             StoredRule::CountOf {
                 count: 2,
-                rules: vec![StoredRule::claim(identity(1))],
+                rules: Capped::new(vec![StoredRule::claim(identity(1))]).unwrap(),
             },
             "a threshold requiring more branches than it has would admit no one",
         );
@@ -993,7 +999,7 @@ mod tests {
         refused(
             StoredRule::CountOf {
                 count: 2,
-                rules: vec![],
+                rules: Capped::empty(),
             },
             "everyone is a count of zero over no branches and no one is a count of one",
         );
@@ -1003,7 +1009,7 @@ mod tests {
         refused(
             StoredRule::CountOf {
                 count: 1,
-                rules: vec![StoredRule::claim(identity(1)), always()],
+                rules: Capped::new(vec![StoredRule::claim(identity(1)), always()]).unwrap(),
             },
             "a threshold branching on everyone or on no one can be written shorter",
         );
@@ -1013,10 +1019,11 @@ mod tests {
         for count in [1, 2] {
             let rule = StoredRule::CountOf {
                 count,
-                rules: vec![
+                rules: Capped::new(vec![
                     StoredRule::claim(identity(1)),
                     StoredRule::claim(identity(2)),
-                ],
+                ])
+                .unwrap(),
             };
             let bytes = rule.to_bytes().unwrap();
             assert_eq!(StoredRule::from_slice(&bytes).unwrap(), rule);
@@ -1069,17 +1076,19 @@ mod tests {
     fn the_wire_form_is_canonical_and_round_trips() {
         let rule = StoredRule::CountOf {
             count: 2,
-            rules: vec![
+            rules: Capped::new(vec![
                 StoredRule::claim(identity(1)),
                 StoredRule::CountOf {
                     count: 1,
-                    rules: vec![
+                    rules: Capped::new(vec![
                         StoredRule::claim(identity(2)),
                         StoredRule::claim(identity(3)),
-                    ],
+                    ])
+                    .unwrap(),
                 },
                 StoredRule::claim(identity(4)),
-            ],
+            ])
+            .unwrap(),
         };
         assert_canonical(&rule);
         let bytes = rule.to_bytes().unwrap();

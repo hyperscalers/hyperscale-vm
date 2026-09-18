@@ -1041,6 +1041,7 @@ pub(super) fn capability_for(
 mod tests {
     use std::sync::Arc;
 
+    use hyperscale_hbor::Capped;
     use hyperscale_vm_effects::{
         Claim, Condition, Declaration, DeclaredAccess, JudgedLeaf, Rule, SlotRef, rule,
     };
@@ -1148,13 +1149,13 @@ mod tests {
             // Met on its presence branch alone, and still refused.
             Rule::CountOf {
                 count: 1,
-                rules: vec![
+                rules: Capped::from_array([
                     Rule::Require(JudgedLeaf::Presence {
                         target,
                         expect: Presence::Absent,
                     }),
                     Rule::Require(claim),
-                ],
+                ]),
             },
         ];
         for rule in unaskable {

@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
     ChainRecords, Claim, ClaimRef, Clause, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta,
@@ -36,7 +37,7 @@ impl Principals {
         Self {
             principal: Arc::new(InstanceMeta {
                 package: account_hash,
-                config: Vec::new(),
+                config: Capped::empty(),
                 salt: Hash32([0; 32]),
             }),
             account_hash,
@@ -65,7 +66,7 @@ impl ChainRecords for Principals {
         (resource == BADGE).then_some(ResourceMeta {
             namespace: ALICE.address(),
             kind: ResourceKind::Fungible,
-            material: Vec::new(),
+            material: Capped::empty(),
             rules,
         })
     }
@@ -152,7 +153,7 @@ fn a_rule_reading_call_answers_both_gates_with_one_signature() {
     assert_eq!(graph.nodes.len(), 1, "the call alone");
     assert_eq!(
         graph.nodes[0].evidence,
-        [ClaimRef::Account(ALICE)].into(),
+        Capped::from_members([ClaimRef::Account(ALICE)]),
         "one signature answers the stored rule and the badge alike"
     );
 }

@@ -10,6 +10,7 @@ use std::collections::BTreeSet;
 mod common;
 
 use common::admit_leaf;
+use hyperscale_hbor::{Bytes, Capped};
 use hyperscale_vm_effects::{
     Claim, Clause, Constraint, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta, Intent,
     IntentHeader, IntentTree, ManifestGraph, MethodSignature, PackageHash, PackageMetadata,
@@ -50,10 +51,11 @@ fn pkg(name: &str) -> PackageHash {
 fn pool_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("staking"),
-        config: vec![
+        config: Capped::new(vec![
             Value::Address(RES_X.address()),
             Value::Address(OPERATOR.address()),
-        ],
+        ])
+        .unwrap(),
         salt: Hash32([2; 32]),
     }
 }
@@ -564,7 +566,7 @@ fn note_meta() -> ResourceMeta {
     ResourceMeta {
         namespace: MINTER,
         kind: ResourceKind::Fungible,
-        material: vec![b"note".to_vec()],
+        material: Capped::new(vec![Bytes::new(b"note".to_vec()).unwrap()]).unwrap(),
         rules,
     }
 }
@@ -576,17 +578,18 @@ fn either_note_meta() -> ResourceMeta {
         GrantedBehaviour::Withdraw,
         RuleBytes::try_from(&StoredRule::CountOf {
             count: 1,
-            rules: vec![
+            rules: Capped::new(vec![
                 StoredRule::claim(Claim::of_subject(DESK)),
                 StoredRule::claim(Claim::of_subject(BOB)),
-            ],
+            ])
+            .unwrap(),
         })
         .expect("a rule within the caps encodes"),
     );
     ResourceMeta {
         namespace: MINTER,
         kind: ResourceKind::Fungible,
-        material: vec![b"either".to_vec()],
+        material: Capped::new(vec![Bytes::new(b"either".to_vec()).unwrap()]).unwrap(),
         rules,
     }
 }
@@ -716,7 +719,7 @@ fn venue_metadata() -> PackageMetadata {
 fn venue_meta() -> InstanceMeta {
     InstanceMeta {
         package: pkg("venue"),
-        config: Vec::new(),
+        config: Capped::empty(),
         salt: Hash32([7; 32]),
     }
 }
@@ -733,7 +736,7 @@ fn ticket_meta() -> ResourceMeta {
     ResourceMeta {
         namespace: MINTER,
         kind: ResourceKind::Fungible,
-        material: vec![b"ticket".to_vec()],
+        material: Capped::new(vec![Bytes::new(b"ticket".to_vec()).unwrap()]).unwrap(),
         rules,
     }
 }

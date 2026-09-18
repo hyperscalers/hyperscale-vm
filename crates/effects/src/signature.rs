@@ -1,7 +1,7 @@
 //! The effect-signature vocabulary: what a published method declares
 //! about its parameters and its ABI binding.
 
-use hyperscale_hbor::Hbor;
+use hyperscale_hbor::{Capped, Hbor};
 use hyperscale_vm_types::{
     CallTarget, ComponentAddr, MAX_EVENT_TYPES_PER_METHOD, PackageAddr, PrincipalAddr, ResourceAddr,
 };
@@ -412,8 +412,7 @@ pub struct MethodSignature {
     /// each against the target, and the position here is the index the
     /// export passes — so a component founding three resources says
     /// which of them each call means.
-    #[hbor(max = MAX_ISSUANCES_PER_SIGNATURE)]
-    pub issues: Vec<Issuance>,
+    pub issues: Capped<Vec<Issuance>, MAX_ISSUANCES_PER_SIGNATURE>,
     /// The value edges this method destroys, by parameter position.
     ///
     /// The other way supply leaves existence, and the one an issuer does
@@ -424,8 +423,7 @@ pub struct MethodSignature {
     /// either withholds the capability, which is what makes "anyone may
     /// destroy what they hold" a rule the issuer writes rather than a
     /// power the kernel hands out.
-    #[hbor(max = MAX_ISSUANCES_PER_SIGNATURE)]
-    pub destroys: Vec<u32>,
+    pub destroys: Capped<Vec<u32>, MAX_ISSUANCES_PER_SIGNATURE>,
     /// The method's parameter kinds, in order; admission types every node
     /// against them.
     pub params: Vec<ParamType>,
@@ -477,8 +475,7 @@ pub struct MethodSignature {
     /// so its shape is closed and its widest encoding is a figure the
     /// table already knows. The author says which events, never how many
     /// bytes.
-    #[hbor(max = MAX_EVENT_TYPES_PER_METHOD)]
-    pub emits: Vec<u32>,
+    pub emits: Capped<Vec<u32>, MAX_EVENT_TYPES_PER_METHOD>,
     /// The most bytes one call into this method may emit between those
     /// events: what a declaration prices the call's events at, and what
     /// the kernel meters the node against.

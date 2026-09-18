@@ -258,7 +258,7 @@ fn read_uleb128(bytes: &[u8], pos: &mut usize) -> Result<usize, ArtifactError> {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_hbor::{ShapeField, TypeShape, to_vec_with_depth};
+    use hyperscale_hbor::{Capped, ShapeField, TypeShape, to_vec_with_depth};
     use hyperscale_vm_types::{EVENT_FRAME_BYTES, Moves};
 
     /// The framing one event costs, in the units a signature states it
@@ -360,7 +360,7 @@ mod tests {
         metadata.methods.insert(
             "transfer".to_owned(),
             MethodSignature {
-                emits: vec![0],
+                emits: Capped::new(vec![0]).unwrap(),
                 // What the shape below encodes to and the framing kept
                 // around it, which the door derives again on the way
                 // back out.

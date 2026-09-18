@@ -60,7 +60,7 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use hyperscale_hbor::{ShapeTable, TypeShape, to_vec_with_depth};
+    use hyperscale_hbor::{Capped, ShapeTable, TypeShape, to_vec_with_depth};
     use hyperscale_vm_effects::{
         AbiParam, Clause, EdgeContent, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,
         MAX_EXPR_DEPTH, MAX_VALUE_DEPTH, METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType,
@@ -182,10 +182,10 @@ mod tests {
     fn every_authored_shape() -> MethodSignature {
         MethodSignature {
             totality: Totality::Fallible,
-            issues: Vec::new(),
-            destroys: Vec::new(),
+            issues: Capped::empty(),
+            destroys: Capped::empty(),
             abi: vec![AbiParam::Guard(0)],
-            emits: Vec::new(),
+            emits: Capped::empty(),
             event_bytes: 0,
             params: vec![
                 ParamType::U64,
@@ -306,7 +306,7 @@ mod tests {
             .methods
             .get_mut("m")
             .expect("the method under test");
-        method.emits = vec![0, 1];
+        method.emits = Capped::new(vec![0, 1]).unwrap();
         method.event_bytes = 2 * frame_bytes();
 
         let bytes = encode_metadata(&metadata).expect("encodes");
@@ -523,7 +523,7 @@ mod tests {
                 methods: std::iter::once((
                     "moves".to_owned(),
                     MethodSignature {
-                        emits: vec![0],
+                        emits: Capped::new(vec![0]).unwrap(),
                         event_bytes: frame_bytes(),
                         ..MethodSignature::default()
                     },
