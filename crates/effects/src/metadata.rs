@@ -188,9 +188,11 @@ impl SlotWidths {
 /// kind and its display digits; a stored rule is an argument's width. A
 /// nullifier, a committed cell and a claim are markers, and an escrow
 /// record is a crossing cell, each at the width its encoding pins. The
-/// configuration leaf and an instance's data are records whose shapes
-/// belong to the package that wrote them, so they are bounded at the cap
-/// here, as is every slot outside the band.
+/// configuration leaf is the whole instance record, whose configuration
+/// [`MAX_CONFIG_BYTES`] bounds where a creator chooses it, so the leaf
+/// occupies the slot. An instance's data is a record whose shape belongs
+/// to the package that wrote it, and is bounded at the cap here as is
+/// every slot outside the band.
 fn protocol_width(slot: SlotId) -> u32 {
     use crate::cells::{
         COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, ESCROW_CLAIM_SLOT, ESCROW_RECORD_SLOT,

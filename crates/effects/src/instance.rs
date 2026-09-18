@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 use std::sync::Arc;
 
-use hyperscale_hbor::{Capped, EncodeError, Hbor, to_vec};
-use hyperscale_vm_types::{Address, CallTarget, ComponentAddr};
+use hyperscale_hbor::{Capped, EncodeError, Hbor, HborBound, to_vec};
+use hyperscale_vm_types::{Address, CallTarget, ComponentAddr, MAX_SLOT_WIDTH};
 use thiserror::Error;
 
 use crate::hash::{Hash32, Hasher};
@@ -67,6 +67,18 @@ pub struct InstanceMeta {
 /// presented record's decode bounded by its own declaration.
 pub const MAX_CONFIG_FIELDS: usize = 64;
 
+/// The most bytes an instance's configuration may encode to.
+///
+/// The leaf holds the whole record, and the kernel traps a write past
+/// the slot's width — so what the configuration may occupy is the leaf
+/// less the two hashes the record carries beside it, read off their own
+/// type rather than written down. A configuration past this is one whose
+/// component could be addressed and never sealed, which is why the cap
+/// sits at creation: the width is the creator's choice and nothing the
+/// package declares bounds it.
+pub const MAX_CONFIG_BYTES: usize =
+    MAX_SLOT_WIDTH as usize - 2 * <Hash32 as HborBound>::MAX_ENCODED_LEN;
+
 impl InstanceMeta {
     /// The configuration's canonical encoding — the preimage the
     /// address derivation hashes.
@@ -74,9 +86,18 @@ impl InstanceMeta {
     /// # Errors
     ///
     /// [`EncodeError`] if the configuration is past the vocabulary's own
-    /// caps, which no admitted creation can have produced.
+    /// caps or past [`MAX_CONFIG_BYTES`], which no admitted creation can
+    /// have produced.
     pub fn config_bytes(&self) -> Result<Vec<u8>, EncodeError> {
-        to_vec(&self.config)
+        let bytes = to_vec(&self.config)?;
+        if bytes.len() > MAX_CONFIG_BYTES {
+            return Err(EncodeError::BoundExceeded {
+                field: "config",
+                actual: bytes.len(),
+                max: MAX_CONFIG_BYTES,
+            });
+        }
+        Ok(bytes)
     }
 
     /// The configuration leaf's stored bytes — the canonical encoding of
@@ -93,8 +114,10 @@ impl InstanceMeta {
     /// # Errors
     ///
     /// [`EncodeError`] if the configuration is past the vocabulary's own
-    /// caps, which no admitted creation can have produced.
+    /// caps or past [`MAX_CONFIG_BYTES`], which no admitted creation can
+    /// have produced.
     pub fn leaf_bytes(&self) -> Result<Vec<u8>, EncodeError> {
+        self.config_bytes()?;
         to_vec(self)
     }
 
@@ -280,6 +303,42 @@ mod tests {
 
     use super::*;
     use crate::hash::TestHasher;
+
+    /// A record at the configuration cap is one the leaf holds, and one
+    /// past it is a component that could be addressed and never sealed.
+    ///
+    /// The cap is the leaf less the record's own framing, and this is
+    /// what holds that arithmetic to the encoding rather than to a
+    /// reading of it: the widest configuration the cap admits still
+    /// leaves the whole record inside the width the kernel traps on.
+    #[test]
+    fn the_widest_configuration_a_record_carries_still_fits_its_leaf() {
+        let filling = |bytes: usize| InstanceMeta {
+            package: PackageHash(Hash32([1; 32])),
+            // One byte string, so the configuration's encoding is its
+            // own length beside the list's and nothing else.
+            config: Capped::new(vec![Value::Bytes(vec![0; bytes])]).expect("one field"),
+            salt: Hash32([2; 32]),
+        };
+        // The widest field that still encodes inside the cap, found by
+        // walking down from it rather than by restating the framing.
+        let widest = (0..=MAX_CONFIG_BYTES)
+            .rev()
+            .find(|bytes| filling(*bytes).config_bytes().is_ok())
+            .expect("a configuration the cap admits");
+        let leaf = filling(widest).leaf_bytes().expect("the record encodes");
+        assert_eq!(leaf.len(), MAX_SLOT_WIDTH as usize);
+
+        let over = filling(widest + 1);
+        assert!(matches!(
+            over.config_bytes(),
+            Err(EncodeError::BoundExceeded { max, .. }) if max == MAX_CONFIG_BYTES
+        ));
+        assert!(over.leaf_bytes().is_err());
+        // A record the cap refuses derives no address, so it is a record
+        // nothing can present, create against, or resolve through.
+        assert!(!over.derives(&TestHasher, PrincipalAddr::new([0; 31])));
+    }
 
     #[test]
     fn a_record_is_admitted_only_at_the_address_it_derives() {

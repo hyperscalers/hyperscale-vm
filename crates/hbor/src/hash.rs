@@ -13,6 +13,8 @@ use core::fmt;
 use crate::decode::Decoder;
 use crate::encode::{Encoder, Sink};
 use crate::error::{DecodeError, EncodeError};
+use crate::node::ShapeNode;
+use crate::shape::HborShape;
 use crate::{HborDecode, HborEncode, HborWidth};
 
 /// A 32-byte hash value.
@@ -34,6 +36,12 @@ impl HborDecode for Hash32 {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self, DecodeError> {
         Ok(Self(decoder.read_array()?))
     }
+}
+
+/// The bytes it is, with no length of its own: a hash is one width and
+/// carries nothing that says so.
+impl HborShape for Hash32 {
+    const NODE: &'static ShapeNode = &ShapeNode::ByteArray(32);
 }
 
 impl fmt::Debug for Hash32 {
