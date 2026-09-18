@@ -1229,7 +1229,6 @@ mod noted {
 
     impl Noted {
         /// Bank the edge and say what it carried.
-        #[emits(Moved)]
         pub fn note(&mut self, funds: Bucket, resource: ResourceAddr) {
             let amount = funds.quantity();
             self.vaults.at(resource).put(funds);

@@ -538,7 +538,7 @@ fn method_name(method: &syn::ImplItemFn) -> String {
 /// emits is ordinary Rust.
 const OWN: &[&str] = &[
     "slot", "holds", "width", "state", "config", "event", "error", "record", "resource",
-    "requires", "proves", "total", "emits",
+    "requires", "proves", "total",
 ];
 
 /// The attributes that name a gate, whose method may have no body of
@@ -824,7 +824,7 @@ fn check_reserved_locals(items: &[syn::Item], state_name: &syn::Ident) -> syn::R
 /// shapes is still one codec, and the other markers read fields a struct
 /// has.
 const ON_A_STRUCT: &[&str] = &["state", "config", "event", "resource"];
-const ON_A_METHOD: &[&str] = &["proves", "total", "emits"];
+const ON_A_METHOD: &[&str] = &["proves", "total"];
 const ON_A_STATE_FIELD: &[&str] = &["slot", "holds", "width"];
 
 fn marker_kinds_on_struct(
@@ -1114,52 +1114,6 @@ fn total_attr(method: &syn::ImplItemFn) -> Option<&syn::Attribute> {
         .find(|attr| attr.path().is_ident("total"))
 }
 
-/// The events `#[emits(A, B)]` says one call into this method may emit,
-/// as the package spells them.
-///
-/// Per method, because that is where the emission is written: a package
-/// declaring events has methods that emit and methods that do not, and a
-/// caller pays for the one it calls. Names rather than a byte figure —
-/// an event encodes infallibly, so what one costs is something the shape
-/// table already knows and nobody should be retyping.
-fn emits_attr(method: &syn::ImplItemFn) -> syn::Result<Vec<String>> {
-    let Some(attr) = method
-        .attrs
-        .iter()
-        .find(|attr| attr.path().is_ident("emits"))
-    else {
-        return Ok(Vec::new());
-    };
-    let named = attr
-        .parse_args_with(
-            syn::punctuated::Punctuated::<syn::Ident, syn::Token![,]>::parse_terminated,
-        )
-        .map_err(|_| {
-            syn::Error::new_spanned(
-                attr,
-                "`#[emits(A, B)]` names the events one call into this method may emit",
-            )
-        })?;
-    if named.is_empty() {
-        return Err(syn::Error::new_spanned(
-            attr,
-            "a method emitting nothing carries no `#[emits]` — drop the attribute instead",
-        ));
-    }
-    let mut published = Vec::with_capacity(named.len());
-    for event in named {
-        let name = kebab(&event.to_string());
-        if published.contains(&name) {
-            return Err(syn::Error::new_spanned(
-                event,
-                "an event named twice would price its bytes twice",
-            ));
-        }
-        published.push(name);
-    }
-    Ok(published)
-}
-
 /// The type a method answers with, at the tail position the lowering
 /// took it from.
 ///
@@ -1386,7 +1340,9 @@ fn lower_method(
         }
     }
     let total = claim.is_some();
-    let emits = emits_attr(method)?;
+    // What the body emits is what a call into the method may carry, and
+    // the walk read every `.emit()` off the body — helpers spliced in.
+    let emits: Vec<String> = lowered.emits.iter().cloned().collect();
     let closure = emit::declaration(
         &lowered,
         &gate_calls(&gate, &lowered),
@@ -1465,6 +1421,49 @@ fn refuse_unpublished_marks<'a>(
         }
     }
     Ok(())
+}
+
+/// Refuse a `.emit()` in a body the lowering never walks.
+///
+/// What a method emits is read off its body, helpers spliced in, and
+/// priced into its declaration. A free `fn`, another type's method or a
+/// trait method is not spliced, so an emit there would run under a
+/// declaration that never paid for it — and the kernel refuses the
+/// payload at the call, which is a method that traps on every call.
+fn refuse_unpriced_emits(items: &[syn::Item], state_name: &syn::Ident) -> syn::Result<()> {
+    struct Emits(Vec<syn::Error>);
+    impl<'ast> syn::visit::Visit<'ast> for Emits {
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            if call.method == "emit" && call.args.is_empty() {
+                self.0.push(syn::Error::new(
+                    call.span(),
+                    "an event is emitted from a method of the state struct, or a private \
+                     method it inlines, where the declaration prices it — nothing prices \
+                     an emit here",
+                ));
+            }
+            syn::visit::visit_expr_method_call(self, call);
+        }
+    }
+    let mut found = Emits(Vec::new());
+    for item in items {
+        match item {
+            syn::Item::Impl(block)
+                if block.trait_.is_none()
+                    && matches!(&*block.self_ty, syn::Type::Path(p) if p.path.is_ident(state_name)) =>
+                {}
+            syn::Item::Struct(_) | syn::Item::Enum(_) | syn::Item::Use(_) => {}
+            other => syn::visit::Visit::visit_item(&mut found, other),
+        }
+    }
+    let mut errors = found.0.into_iter();
+    let Some(mut first) = errors.next() else {
+        return Ok(());
+    };
+    for error in errors {
+        first.combine(error);
+    }
+    Err(first)
 }
 
 /// Every public method of the state struct's inherent impls, lowered.
@@ -2083,6 +2082,9 @@ struct Declared<'a> {
     resources: &'a [Resource],
     /// The `#[error]` enums' names: what a decline arm may name.
     declines: &'a BTreeSet<String>,
+    /// The `#[event]` structs: each identifier and the name it publishes
+    /// under, which is what a `.emit()` in a body is attributed to.
+    events: &'a [(syn::Ident, String)],
 }
 
 /// The lints that describe the off-host stubs rather than the contract.
@@ -2337,29 +2339,20 @@ fn expand(
         config_fields: &config_fields,
         resources: &declared_resources,
         declines: &declines,
+        events: &events,
     };
+    refuse_unpriced_emits(items, &state_name)?;
     let methods = lower_methods(items, &state_name, &declared, serves)?;
-    // The two tables read together: an event nothing may emit is a name
-    // that means nothing, and a method bounded to emit in a package that
-    // declares no event has nothing to emit. The publish gate says the
-    // same of the metadata; saying it here puts the error on the line
-    // rather than on a package.
-    match (events.is_empty(), methods.iter().any(|m| m.emits)) {
-        (false, false) => {
-            return Err(syn::Error::new(
-                span,
-                "a blueprint that declares events has a method that may emit one: mark it \
-                 `#[emits(Event)]` with the events one call into it may emit",
-            ));
-        }
-        (true, true) => {
-            return Err(syn::Error::new(
-                span,
-                "nothing here is an event — `#[emits]` names the events a blueprint \
-                 declares",
-            ));
-        }
-        _ => {}
+    // The two tables read together: an event nothing emits is a name
+    // that means nothing. The publish gate says the same of the
+    // metadata; saying it here puts the error on the module rather than
+    // on a package.
+    if !events.is_empty() && !methods.iter().any(|m| m.emits) {
+        return Err(syn::Error::new(
+            span,
+            "a blueprint that declares events has a method that emits one — an event \
+             nothing emits is a name that means nothing",
+        ));
     }
     let calls: Vec<_> = methods.iter().map(|m| &m.client).collect();
     let slots: BTreeMap<String, u16> = fields

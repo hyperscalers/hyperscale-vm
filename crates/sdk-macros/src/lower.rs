@@ -373,6 +373,9 @@ pub struct Lowered {
     /// The branches whose verdict the export takes, in the order they
     /// were declared, each saying which arm's clause its flag names.
     pub(crate) flags: Vec<Polarity>,
+    /// The events the body emits, by published name: what one call into
+    /// the method may carry, and so what the declaration prices.
+    pub(crate) emits: BTreeSet<String>,
     /// The bucket parameters the body destroys, in the order it reaches
     /// them.
     ///
@@ -862,6 +865,41 @@ impl<'a> Lowerer<'a> {
             self.total,
             self.seal.clone(),
         )
+    }
+
+    /// Record the event a `.emit()` names, which the declaration prices:
+    /// one call into the method may carry that event's widest encoding.
+    ///
+    /// The receiver has to be the event written out — a struct literal,
+    /// a tuple constructor, or the bare name of a unit event — because
+    /// that is the one form whose type the walk can read. A value bound
+    /// elsewhere is an emit the declaration cannot attribute, and an
+    /// unattributed emit is a payload no caller paid for.
+    fn emitted(&mut self, call: &syn::ExprMethodCall) {
+        let head = match &*call.receiver {
+            syn::Expr::Struct(strct) => strct.path.segments.last().map(|s| s.ident.to_string()),
+            syn::Expr::Call(inner) => free_call_name(inner),
+            syn::Expr::Path(path) => path.path.segments.last().map(|s| s.ident.to_string()),
+            _ => None,
+        };
+        let published = head.and_then(|head| {
+            self.declared
+                .events
+                .iter()
+                .find(|(ident, _)| *ident == head)
+                .map(|(_, name)| name.clone())
+        });
+        let Some(published) = published else {
+            self.error(
+                call.receiver.span(),
+                "an event is emitted as the literal it is — `Entered { .. }.emit()`, \
+                 `Settled(..).emit()`, `Closed.emit()` — so the declaration can price it; \
+                 a value bound elsewhere cannot be attributed to an event the package \
+                 declares",
+            );
+            return;
+        };
+        self.out.emits.insert(published);
     }
 
     /// The declaration an issuance is called on, kind and all.
@@ -3621,6 +3659,9 @@ impl<'a> Lowerer<'a> {
                 );
             }
         }
+        if call.method == "emit" && call.args.is_empty() {
+            self.emitted(call);
+        }
         let receiver = self.expr(&call.receiver);
         let method = call.method.to_string();
         let evals: Vec<Eval> = call.args.iter().map(|a| self.expr(a)).collect();
@@ -4511,6 +4552,7 @@ mod tests {
             config_fields: &config_fields,
             resources: &[],
             declines: &BTreeSet::new(),
+            events: &[],
         };
         Lowerer::new(&declared, &[], Yields::Nothing, false, None)
             .run(&block)
@@ -4530,6 +4572,7 @@ mod tests {
             config_fields: &[],
             resources: &[],
             declines: &BTreeSet::new(),
+            events: &[],
         };
         Lowerer::new(&declared, &[], yields, false, None)
             .run(&block)

@@ -301,6 +301,18 @@ fn the_lowering_refuses_a_gate_outside_the_state_impl() {
     refuse.compile_fail("tests/refusals/foreign_gated.rs");
 }
 
+/// What a method emits is read off its body and priced into its
+/// declaration, so every `.emit()` has to be one the walk can attribute
+/// to a declared event: the event written out as a literal, in a body
+/// the lowering walks. A value bound elsewhere, or an emit in a free
+/// function nothing splices, would be a payload no caller paid for.
+#[test]
+fn the_lowering_prices_only_an_emit_it_can_attribute() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/emit_of_a_bound_event.rs");
+    refuse.compile_fail("tests/refusals/emit_outside_a_method.rs");
+}
+
 /// A published name names one export. Two identifiers can spell one
 /// published name — the kebab form erases case — and the collision
 /// refuses at the line that wrote it rather than panicking inside the

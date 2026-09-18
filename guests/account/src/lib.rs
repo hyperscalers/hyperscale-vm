@@ -212,7 +212,6 @@ pub mod account {
         /// body ran, so there is no requested amount left to check it
         /// against and no way for the two to differ.
         #[requires(self)]
-        #[emits(Withdrawn)]
         pub fn withdraw(&mut self, resource: ResourceAddr, amount: Quantity) -> Bucket {
             let funds = self.vault(resource).reserve(amount);
             Withdrawn {
@@ -238,7 +237,6 @@ pub mod account {
         /// entry that declines aborts the transfer at admission, before
         /// anything lands here to be swept, so the two never meet.
         #[total]
-        #[emits(Deposited)]
         pub fn deposit(&mut self, funds: Bucket) {
             // The credits come last because one of them consumes the
             // edge: value is linear, so every read of what crossed — the
@@ -399,7 +397,6 @@ pub mod account {
         /// primary can never stall the guardians. Withdrawing one is
         /// amending to the current values.
         #[requires(self)]
-        #[emits(Proposed)]
         pub fn amend(
             &mut self,
             recovery: RuleBytes,
@@ -426,7 +423,6 @@ pub mod account {
         /// shorten its own takeover, because the delay is not a
         /// proposal's to name.
         #[requires(governs(recovery))]
-        #[emits(Proposed)]
         pub fn propose(&mut self, primary: PrincipalRule, confirmation: PrincipalRule) {
             let frozen = self.displaced();
             self.file(Replacement::Factors {
@@ -453,7 +449,6 @@ pub mod account {
         /// is what the address's own key still governs, so removing the
         /// rule would hand the account back to the key being frozen out.
         #[requires(governs(recovery))]
-        #[emits(Proposed)]
         pub fn freeze(&mut self, primary: PrincipalRule, confirmation: PrincipalRule) {
             let mut authority = self.auth().existing();
             let displaced = self
@@ -515,7 +510,6 @@ pub mod account {
         /// Enacting the factors ends any freeze with them, the displaced
         /// primary having just been replaced; enacting the roles touches
         /// no factor.
-        #[emits(Enacted)]
         pub fn promote(&mut self, serial: u64) -> Result<(), Error> {
             let proposal = self.named(serial)?;
             if clock_ms() < proposal.effective_at_ms {
@@ -555,7 +549,6 @@ pub mod account {
         /// different — whoever wanted it enacted could have enacted it,
         /// in the same transaction they proposed it or any since.
         #[requires(governs(recovery))]
-        #[emits(Cancelled)]
         pub fn cancel(&mut self, serial: u64) -> Result<(), Error> {
             self.retract(serial)
         }
@@ -569,7 +562,6 @@ pub mod account {
         /// role in the wrong hands — the freeze it lands is undone by
         /// this, and the account is where it was.
         #[requires(governs(veto))]
-        #[emits(Cancelled)]
         pub fn veto(&mut self, serial: u64) -> Result<(), Error> {
             self.retract(serial)
         }

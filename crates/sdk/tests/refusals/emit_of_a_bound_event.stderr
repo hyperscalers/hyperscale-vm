@@ -1,0 +1,5 @@
+error: an event is emitted as the literal it is — `Entered { .. }.emit()`, `Settled(..).emit()`, `Closed.emit()` — so the declaration can price it; a value bound elsewhere cannot be attributed to an event the package declares
+  --> tests/refusals/emit_of_a_bound_event.rs:24:13
+   |
+24 |             event.emit();
+   |             ^^^^^

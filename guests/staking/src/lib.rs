@@ -170,7 +170,6 @@ pub mod staking {
 
     impl Staking {
         /// Delegate `funds`, taking stake units at par.
-        #[emits(Staked)]
         pub fn stake(&mut self, funds: Bucket) -> Bucket {
             // The amount is the kernel's own cell width, which is what
             // the handle carries, so neither end reformats a number it
@@ -189,7 +188,6 @@ pub mod staking {
         /// event — the same answer this pool gives to every aggregate,
         /// and the one that keeps two delegators leaving at once from
         /// contending on a total neither of them reads.
-        #[emits(Unstaked)]
         pub fn unstake(&mut self, units: Bucket) {
             let returned = units.quantity();
             StakeUnit::burn(units);
@@ -198,7 +196,6 @@ pub mod staking {
 
         /// Take on a validator, recording the key the pool registered.
         #[requires(issued(OwnerBadge))]
-        #[emits(ValidatorRegistered)]
         pub fn register_validator(
             &mut self,
             validator_id: u64,
@@ -220,7 +217,6 @@ pub mod staking {
 
         /// Stand a validator down.
         #[requires(issued(OwnerBadge))]
-        #[emits(ValidatorDeactivated)]
         pub fn deactivate_validator(&mut self, validator_id: u64) {
             // Holding the leaf is the whole of the access: the
             // declaration says the pool operates this validator, and the
@@ -231,7 +227,6 @@ pub mod staking {
 
         /// Ask for a validator to be unjailed.
         #[requires(issued(OwnerBadge))]
-        #[emits(ValidatorUnjailed)]
         pub fn unjail(&mut self, validator_id: u64) {
             self.validators.at(validator_id).exclusive();
             ValidatorUnjailed { validator_id }.emit();
@@ -239,7 +234,6 @@ pub mod staking {
 
         /// Cast the pool's governance vote, replacing any it held.
         #[requires(issued(OwnerBadge))]
-        #[emits(ParamVoteCast)]
         pub fn cast_param_vote(
             &mut self,
             split_bytes: u64,
@@ -266,7 +260,6 @@ pub mod staking {
 
         /// Withdraw the pool's governance vote.
         #[requires(issued(OwnerBadge))]
-        #[emits(ParamVoteCleared)]
         pub fn clear_param_vote(&mut self) {
             self.vote.set(None);
             ParamVoteCleared.emit();

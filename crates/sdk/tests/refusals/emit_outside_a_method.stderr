@@ -1,0 +1,5 @@
+error: an event is emitted from a method of the state struct, or a private method it inlines, where the declaration prices it — nothing prices an emit here
+  --> tests/refusals/emit_outside_a_method.rs:20:9
+   |
+20 |         Counted { total }.emit();
+   |         ^^^^^^^
