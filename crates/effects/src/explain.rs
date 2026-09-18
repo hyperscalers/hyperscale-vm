@@ -2015,7 +2015,7 @@ fn shape_of(types: &ShapeTable, id: NodeId) -> String {
                 .collect();
             format!("< {} >", rendered.join(" | "))
         }
-        TypeShape::Named { name, .. } => name.clone(),
+        TypeShape::Named { name, .. } => name.to_string(),
     }
 }
 

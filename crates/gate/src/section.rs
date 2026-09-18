@@ -60,7 +60,7 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use hyperscale_hbor::{Capped, ShapeTable, TypeShape, to_vec_with_depth};
+    use hyperscale_hbor::{Capped, Name, ShapeTable, TypeShape, to_vec_with_depth};
 
     /// A table naming the empty shape under each of `names`.
     fn units(names: &[String]) -> ShapeTable {
@@ -71,7 +71,7 @@ mod tests {
         for name in names {
             types
                 .push(TypeShape::Named {
-                    name: name.clone(),
+                    name: Name::try_from(name.as_str()).expect("a name"),
                     shape: unit,
                 })
                 .expect("one name over the empty shape");
@@ -559,15 +559,14 @@ mod tests {
 
     #[test]
     fn an_oversized_section_is_refused_before_it_is_parsed() {
-        // Well formed but past the cap: an event table spending more
+        // Well formed but past the cap: a method table spending more
         // than the section budget, refused on length before the decoder
-        // reads a byte of it.
-        let named: Vec<String> = (0..MAX_EVENT_TYPES)
-            .map(|index| format!("{index}{}", "e".repeat(1024)))
-            .collect();
+        // reads a byte of it. A name is bounded, so the table is long
+        // rather than any one entry being wide.
         let over = PackageMetadata {
-            types: units(&named),
-            events: named,
+            methods: (0..20_000)
+                .map(|index| (format!("m{index:059}"), MethodSignature::default()))
+                .collect(),
             ..PackageMetadata::default()
         };
         let bytes = encode_unchecked(&over);

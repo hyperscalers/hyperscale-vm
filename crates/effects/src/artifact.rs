@@ -263,7 +263,7 @@ fn read_uleb128(bytes: &[u8], pos: &mut usize) -> Result<usize, ArtifactError> {
 #[cfg(test)]
 mod tests {
     use hyperscale_hbor::{
-        Capped, DEFAULT_MAX_DEPTH, ShapeField, ShapeTable, ShapeVariant, TypeShape,
+        Capped, DEFAULT_MAX_DEPTH, Name, ShapeField, ShapeTable, ShapeVariant, TypeShape,
         to_vec_with_depth,
     };
     use hyperscale_vm_types::{EVENT_FRAME_BYTES, Moves};
@@ -284,6 +284,11 @@ mod tests {
     use crate::metadata::{PackageMetadata, package_hash};
     use crate::signature::{MethodSignature, Totality};
 
+    /// A name written out in a test, held to being one where it is written.
+    fn spelled(text: &str) -> Name {
+        Name::try_from(text).expect("a name the protocol spells")
+    }
+
     /// The wire depth admits every shape the door admits, so a package
     /// cannot pass the checks and then fail to be written down.
     ///
@@ -302,20 +307,20 @@ mod tests {
         }
         let field = types
             .push(TypeShape::Struct(vec![ShapeField {
-                name: "field".to_owned(),
+                name: spelled("field"),
                 shape: held,
             }]))
             .unwrap();
         let variant = types
             .push(TypeShape::Enum(vec![ShapeVariant {
-                name: "variant".to_owned(),
+                name: spelled("variant"),
                 discriminant: 0,
                 content: field,
             }]))
             .unwrap();
         types
             .push(TypeShape::Named {
-                name: "deepest".to_owned(),
+                name: spelled("deepest"),
                 shape: variant,
             })
             .unwrap();
@@ -392,14 +397,14 @@ mod tests {
         let transferred = metadata
             .types
             .push(TypeShape::Struct(vec![ShapeField {
-                name: "amount".to_owned(),
+                name: spelled("amount"),
                 shape: amount,
             }]))
             .unwrap();
         metadata
             .types
             .push(TypeShape::Named {
-                name: "transferred".to_owned(),
+                name: spelled("transferred"),
                 shape: transferred,
             })
             .unwrap();

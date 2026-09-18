@@ -30,7 +30,7 @@ use hyperscale_vm_harness::driver::{
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore, Substates};
 use hyperscale_vm_manifest_builder::{Names, TypedBuilder, TypedError, render};
 use hyperscale_vm_sdk::client::VaultField;
-use hyperscale_vm_sdk::hbor::{ShapeValue, from_slice, to_vec};
+use hyperscale_vm_sdk::hbor::{Name, ShapeValue, from_slice, to_vec};
 use hyperscale_vm_sdk::{SlotId, SlotKind};
 use hyperscale_vm_stdlib::{ACCOUNT_MODULE, STAKING_MODULE, account, instantiate, staking};
 use hyperscale_vm_types::{
@@ -39,6 +39,12 @@ use hyperscale_vm_types::{
 };
 use wasmtime::Result;
 use wasmtime::error::{Context, ensure};
+
+/// A field name written out in a test, held to being one where it is
+/// written.
+fn spelled(text: &str) -> Name {
+    Name::try_from(text).expect("a name the protocol spells")
+}
 
 /// Any network; these tests only need every intent to name the same one.
 const TEST_NETWORK: NetworkId = NetworkId(242);
@@ -498,10 +504,10 @@ fn an_event_decodes_from_metadata_alone() -> Result<()> {
     assert_eq!(
         read,
         ShapeValue::Struct(vec![
-            ("validator_id".to_owned(), ShapeValue::U64(VALIDATOR)),
-            ("pubkey".to_owned(), ShapeValue::ByteArray(PUBKEY.to_vec())),
+            (spelled("validator_id"), ShapeValue::U64(VALIDATOR)),
+            (spelled("pubkey"), ShapeValue::ByteArray(PUBKEY.to_vec())),
             (
-                "possession_proof".to_owned(),
+                spelled("possession_proof"),
                 ShapeValue::ByteArray(POSSESSION_PROOF.to_vec())
             ),
         ])
@@ -539,7 +545,7 @@ fn a_state_cell_decodes_from_its_slot_alone() -> Result<()> {
     assert_eq!(
         read,
         Some(ShapeValue::Struct(vec![(
-            "pubkey".to_owned(),
+            spelled("pubkey"),
             ShapeValue::ByteArray(PUBKEY.to_vec())
         )]))
     );

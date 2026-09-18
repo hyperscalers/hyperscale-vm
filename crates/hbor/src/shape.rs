@@ -34,6 +34,7 @@ use std::fmt;
 use crate::decode::Decoder;
 use crate::encode::{Encoder, Sink};
 use crate::error::{DecodeError, EncodeError};
+use crate::name::{MalformedName, Name};
 use crate::node::{ShapeNode, max_depth, max_encoded_len};
 use crate::{
     DEFAULT_MAX_DEPTH, Hbor, HborBound, HborDecode, HborEncode, HborWidth, bounded, varint,
@@ -165,7 +166,7 @@ pub enum TypeShape {
     #[hbor(discriminant = 20)]
     Named {
         /// The name the type publishes under.
-        name: String,
+        name: Name,
         /// What the name stands for.
         shape: NodeId,
     },
@@ -176,7 +177,7 @@ pub enum TypeShape {
 #[hbor(crate = crate)]
 pub struct ShapeField {
     /// The field's name, as its author spelled it.
-    pub name: String,
+    pub name: Name,
     /// What the field holds.
     pub shape: NodeId,
 }
@@ -186,7 +187,7 @@ pub struct ShapeField {
 #[hbor(crate = crate)]
 pub struct ShapeVariant {
     /// The variant's name, as its author spelled it.
-    pub name: String,
+    pub name: Name,
     /// The byte the wire carries. Stated rather than positional, because
     /// a variant may pin its own and the position would then be a second
     /// answer.
@@ -250,9 +251,22 @@ pub enum ShapeFault {
     ///
     /// A consumer finds a type by its name, so a second definition under
     /// it would leave the lookup with two answers. Two of a package's own
-    /// types reach one name only when their identifiers do.
+    /// types cannot reach one name, because a name is the identifier that
+    /// declared it.
     #[error("{0:?} names two types, so finding one by it has two answers")]
     NameTaken(String),
+    /// A name no identifier could have spelled.
+    ///
+    /// A tree states its names as `&'static str`, so a hand-written impl
+    /// can write one the macro would have refused.
+    #[error("{name:?}: {source}")]
+    Malformed {
+        /// The string that is not a name.
+        name: String,
+        /// What is wrong with it.
+        #[source]
+        source: MalformedName,
+    },
 }
 
 impl ShapeFault {
@@ -266,6 +280,7 @@ impl ShapeFault {
             Self::AmbiguousName(_) => "shape names two members of one type alike",
             Self::AmbiguousDiscriminant(_) => "shape selects two variants by one discriminant",
             Self::NameTaken(_) => "shape table names two types alike",
+            Self::Malformed { .. } => "shape names a type as no identifier could",
         }
     }
 }
@@ -576,7 +591,7 @@ impl ShapeTable {
             }
             TypeShape::Named { name, shape } => {
                 if self.named(name).is_some() {
-                    return Err(ShapeFault::NameTaken(name.clone()));
+                    return Err(ShapeFault::NameTaken(name.to_string()));
                 }
                 self.held(*shape)?
             }
@@ -626,6 +641,12 @@ impl ShapeTable {
     /// the codec admits states.
     pub fn declare(&mut self, node: &ShapeNode) -> Result<NodeId, ShapeFault> {
         let wide = |width: usize| u32::try_from(width).expect("a width the wire carries");
+        let named = |text: &'static str| {
+            Name::new(text.to_owned()).map_err(|source| ShapeFault::Malformed {
+                name: text.to_owned(),
+                source,
+            })
+        };
         let lowered = match node {
             ShapeNode::Bool => TypeShape::Bool,
             ShapeNode::U8 => TypeShape::U8,
@@ -665,7 +686,7 @@ impl ShapeTable {
                 let mut declared = Vec::with_capacity(fields.len());
                 for (name, shape) in *fields {
                     declared.push(ShapeField {
-                        name: (*name).to_owned(),
+                        name: named(name)?,
                         shape: self.declare(shape)?,
                     });
                 }
@@ -675,7 +696,7 @@ impl ShapeTable {
                 let mut declared = Vec::with_capacity(variants.len());
                 for (name, discriminant, content) in *variants {
                     declared.push(ShapeVariant {
-                        name: (*name).to_owned(),
+                        name: named(name)?,
                         discriminant: *discriminant,
                         content: self.declare(content)?,
                     });
@@ -683,13 +704,14 @@ impl ShapeTable {
                 TypeShape::Enum(declared)
             }
             ShapeNode::Named { name, shape } => {
+                let declared = named(name)?;
                 let shape = self.declare(shape)?;
                 // The name reached a second time is the same type reached
                 // a second way, and the same node.
                 if let Some(id) = self.named(name) {
                     if self.node(id)
                         == &(TypeShape::Named {
-                            name: (*name).to_owned(),
+                            name: declared,
                             shape,
                         })
                     {
@@ -698,7 +720,7 @@ impl ShapeTable {
                     return Err(ShapeFault::NameTaken((*name).to_owned()));
                 }
                 TypeShape::Named {
-                    name: (*name).to_owned(),
+                    name: declared,
                     shape,
                 }
             }
@@ -1057,11 +1079,11 @@ pub enum ShapeValue {
     /// A tuple's elements. Also what a tuple struct and a unit read as.
     Tuple(Vec<Self>),
     /// A struct's fields, named and in declaration order.
-    Struct(Vec<(String, Self)>),
+    Struct(Vec<(Name, Self)>),
     /// The variant the discriminant selected, and what followed it.
     Variant {
         /// The variant's name.
-        name: String,
+        name: Name,
         /// The byte the wire carried.
         discriminant: u8,
         /// What followed it: a struct or a tuple.
@@ -1160,6 +1182,11 @@ mod tests {
     use crate::node::min_encoded_len;
     use crate::{assert_canonical_at_depth, from_slice_with_depth, to_vec, to_vec_with_depth};
 
+    /// A name written out in a test, held to being one where it is written.
+    fn named(text: &str) -> Name {
+        Name::try_from(text).expect("a name the protocol spells")
+    }
+
     /// Every form the vocabulary admits, in one table, so a round-trip
     /// covers the whole of it rather than the forms a real type reaches.
     fn every_form() -> (ShapeTable, NodeId, NodeId) {
@@ -1171,28 +1198,28 @@ mod tests {
         let pair = push(TypeShape::Tuple(vec![i8, boolean]));
         let text = push(TypeShape::Text { cap: 300 });
         let named_text = push(TypeShape::Struct(vec![ShapeField {
-            name: "text".into(),
+            name: named("text"),
             shape: text,
         }]));
         let leaf = push(TypeShape::Enum(vec![
             ShapeVariant {
-                name: "Nothing".into(),
+                name: named("Nothing"),
                 discriminant: 0,
                 content: unit,
             },
             ShapeVariant {
-                name: "Pair".into(),
+                name: named("Pair"),
                 discriminant: 7,
                 content: pair,
             },
             ShapeVariant {
-                name: "Named".into(),
+                name: named("Named"),
                 discriminant: 9,
                 content: named_text,
             },
         ]));
         let leaf = push(TypeShape::Named {
-            name: "leaf".into(),
+            name: named("leaf"),
             shape: leaf,
         });
         let widths = [
@@ -1229,32 +1256,32 @@ mod tests {
         });
         let whole = push(TypeShape::Struct(vec![
             ShapeField {
-                name: "widths".into(),
+                name: named("widths"),
                 shape: widths,
             },
             ShapeField {
-                name: "fixed".into(),
+                name: named("fixed"),
                 shape: fixed,
             },
             ShapeField {
-                name: "maybe".into(),
+                name: named("maybe"),
                 shape: maybe,
             },
             ShapeField {
-                name: "many".into(),
+                name: named("many"),
                 shape: many,
             },
             ShapeField {
-                name: "distinct".into(),
+                name: named("distinct"),
                 shape: distinct,
             },
             ShapeField {
-                name: "by_key".into(),
+                name: named("by_key"),
                 shape: by_key,
             },
         ]));
         let whole = push(TypeShape::Named {
-            name: "whole".into(),
+            name: named("whole"),
             shape: whole,
         });
         (table, leaf, whole)
@@ -1309,7 +1336,7 @@ mod tests {
             (
                 20,
                 TypeShape::Named {
-                    name: "leaf".into(),
+                    name: named("leaf"),
                     shape: leaf,
                 },
             ),
@@ -1434,23 +1461,23 @@ mod tests {
     fn one_name_over_two_members_is_a_fault() {
         let mut table = ShapeTable::new();
         let byte = table.push(TypeShape::U8).unwrap();
-        let named = |name: &str| ShapeField {
-            name: name.to_owned(),
+        let field = |name: &str| ShapeField {
+            name: named(name),
             shape: byte,
         };
         assert_eq!(
-            table.push(TypeShape::Struct(vec![named("amount"), named("amount")])),
+            table.push(TypeShape::Struct(vec![field("amount"), field("amount")])),
             Err(ShapeFault::AmbiguousName("amount".into()))
         );
         assert!(
             table
-                .push(TypeShape::Struct(vec![named("amount"), named("fee")]))
+                .push(TypeShape::Struct(vec![field("amount"), field("fee")]))
                 .is_ok()
         );
 
         let unit = table.push(TypeShape::Tuple(Vec::new())).unwrap();
         let variant = |name: &str, discriminant| ShapeVariant {
-            name: name.to_owned(),
+            name: named(name),
             discriminant,
             content: unit,
         };
@@ -1502,7 +1529,7 @@ mod tests {
         let byte = table.push(TypeShape::U8).unwrap();
         let word = table.push(TypeShape::U64).unwrap();
         let named = |shape| TypeShape::Named {
-            name: "thing".into(),
+            name: named("thing"),
             shape,
         };
         let first = table.push(named(byte)).unwrap();

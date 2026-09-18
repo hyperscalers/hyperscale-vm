@@ -9,9 +9,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_hbor::{
-    Capped, DecodeError, Hbor, HborBound, HborShape, LengthFree, ShapeField, ShapeTable,
+    Capped, DecodeError, Hbor, HborBound, HborShape, LengthFree, Name, ShapeField, ShapeTable,
     ShapeValue, ShapeVariant, Text, TypeShape, to_vec,
 };
+
+/// A name written out in a test, held to being one where it is written.
+fn spelled(text: &str) -> Name {
+    Name::try_from(text).expect("a name the protocol spells")
+}
 
 #[derive(Debug, PartialEq, Eq, Hbor, HborShape)]
 #[hbor(length_free)]
@@ -127,7 +132,7 @@ fn variants_carry_their_names_and_their_discriminants() {
     let maybe = table.push(TypeShape::Option(inner)).unwrap();
     let named = table
         .push(TypeShape::Struct(vec![ShapeField {
-            name: "held".into(),
+            name: spelled("held"),
             shape: maybe,
         }]))
         .unwrap();
@@ -135,17 +140,17 @@ fn variants_carry_their_names_and_their_discriminants() {
         table.get(shape),
         Some(&TypeShape::Enum(vec![
             ShapeVariant {
-                name: "Nothing".into(),
+                name: spelled("Nothing"),
                 discriminant: 0,
                 content: unit,
             },
             ShapeVariant {
-                name: "Pair".into(),
+                name: spelled("Pair"),
                 discriminant: 1,
                 content: pair,
             },
             ShapeVariant {
-                name: "Named".into(),
+                name: spelled("Named"),
                 discriminant: 9,
                 content: named,
             },
@@ -222,7 +227,7 @@ fn a_value_reads_back_against_its_own_shape() {
     assert_eq!(
         fields[4].1,
         ShapeValue::Variant {
-            name: "Pair".to_owned(),
+            name: spelled("Pair"),
             discriminant: 1,
             content: Box::new(ShapeValue::Tuple(vec![
                 ShapeValue::U32(11),

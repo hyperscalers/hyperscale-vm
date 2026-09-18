@@ -554,8 +554,13 @@ fn check_types(metadata: &PackageMetadata) -> Result<(), MetadataError> {
 #[cfg(test)]
 mod tests {
     use hyperscale_hbor::{
-        Capped, NodeId, ShapeFault, ShapeField, ShapeNode, ShapeTable, TypeShape,
+        Capped, Name, NodeId, ShapeFault, ShapeField, ShapeNode, ShapeTable, TypeShape,
     };
+
+    /// A name written out in a test, held to being one where it is written.
+    fn spelled(text: &str) -> Name {
+        Name::try_from(text).expect("a name the protocol spells")
+    }
     use hyperscale_vm_types::Moves;
 
     use super::super::fixtures::{a_resource, one_clause, own_interval, own_point};
@@ -602,7 +607,7 @@ mod tests {
         let shape = types.push(shape).expect("a form the table holds");
         types
             .push(TypeShape::Named {
-                name: name.to_owned(),
+                name: spelled(name),
                 shape,
             })
             .expect("one name over one shape");
@@ -876,13 +881,13 @@ mod tests {
             let (mut types, run) = run(cap);
             let shape = types
                 .push(TypeShape::Struct(vec![ShapeField {
-                    name: "note".into(),
+                    name: spelled("note"),
                     shape: run,
                 }]))
                 .unwrap();
             types
                 .push(TypeShape::Named {
-                    name: "noted".into(),
+                    name: spelled("noted"),
                     shape,
                 })
                 .unwrap();
@@ -909,7 +914,7 @@ mod tests {
             let (mut types, run) = run(cap);
             types
                 .push(TypeShape::Named {
-                    name: "entry".into(),
+                    name: spelled("entry"),
                     shape: run,
                 })
                 .unwrap();
