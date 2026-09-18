@@ -361,7 +361,10 @@ fn refused(mut module: syn::ItemMod, role: Role, error: &syn::Error) -> TokenStr
     if let Ok(events) = event_names(items) {
         extras.extend(event_emitters(&events, role));
     }
-    let (records, _) = encode_declared(items);
+    // A refused module publishes nothing, so nothing it declares is
+    // held to a mark: what its items are for here is the diagnostics
+    // rustc gives over them.
+    let (records, _) = encode_declared(items, &BTreeSet::new());
     module_allows(&mut module.attrs, role);
     strip_macro_attrs(items, &state_name, role);
     items.extend(records);
@@ -1219,9 +1222,12 @@ fn declined_with(method: &syn::ImplItemFn) -> Option<syn::Type> {
 /// One public method, lowered to its declaration and its two executing
 /// halves.
 struct Lowered {
-    /// Whether the method bounds what it may emit, which only a method
-    /// that emits does.
-    emits: bool,
+    /// The events the body emits, by the name the package publishes them
+    /// under, read off the body itself.
+    emits: BTreeSet<String>,
+    /// Whether the method carries the totality mark, which is what makes
+    /// the events it emits ones no length may reach.
+    total: bool,
     /// The `.method(…)` builder call.
     declaration: TokenStream2,
     /// The export and the `impl Guest` body behind it.
@@ -1389,7 +1395,8 @@ fn lower_method(
         params,
     };
     Ok(Lowered {
-        emits: !emits.is_empty(),
+        emits: lowered.emits,
+        total,
         declaration,
         guest,
         host,
@@ -2348,7 +2355,7 @@ fn expand(
     // that means nothing. The publish gate says the same of the
     // metadata; saying it here puts the error on the module rather than
     // on a package.
-    if !events.is_empty() && !methods.iter().any(|m| m.emits) {
+    if !events.is_empty() && !methods.iter().any(|m| !m.emits.is_empty()) {
         return Err(syn::Error::new(
             span,
             "a blueprint that declares events has a method that emits one — an event \
@@ -2381,9 +2388,23 @@ fn expand(
 
     let (exports, dispatch) = executing(&methods, role);
 
+    // The events a total method emits, by the type declaring each. A
+    // total body may not fault, so what it writes into a stack buffer
+    // carries no length — and the refusal for one that does belongs on
+    // the field rather than in a scan of the compiled body.
+    let under_a_mark: BTreeSet<&str> = methods
+        .iter()
+        .filter(|m| m.total)
+        .flat_map(|m| m.emits.iter().map(String::as_str))
+        .collect();
+    let length_free: BTreeSet<String> = events
+        .iter()
+        .filter(|(_, published)| under_a_mark.contains(published.as_str()))
+        .map(|(ident, _)| ident.to_string())
+        .collect();
     // Before the markers are stripped: `encode_declared` reads them, and
     // what it pushes has to survive the strip that follows.
-    let (records, stored_types) = encode_declared(items);
+    let (records, stored_types) = encode_declared(items, &length_free);
     let stored_table = stored_types
         .iter()
         .map(|ident| quote!(.declares::<#ident>()));

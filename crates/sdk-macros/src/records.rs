@@ -156,26 +156,22 @@ pub fn event_emitters(events: &[(syn::Ident, String)], role: Role) -> Vec<syn::I
         .collect()
 }
 
-/// The declared structs an emit encodes: the events, and everything
-/// they name in turn.
+/// Everything `seeds` reach: the declared structs named through their
+/// fields, and through those in turn.
 ///
-/// The bound follows the payload rather than the attribute that declared
-/// it. An event composed of a record is the ordinary shape — the event
-/// *is* the thing just stored — so a record one names is written into
-/// the same stack buffer and is held to the same widths. A record no
-/// event reaches is only ever a cell, and a cell's encode allocates.
-pub fn emit_closure(items: &[syn::Item]) -> BTreeSet<String> {
+/// The property follows the payload rather than the attribute that
+/// declared it. An event composed of a record is the ordinary shape —
+/// the event *is* the thing just stored — so a record one names is
+/// written into the same buffer and is held to the same terms.
+pub fn reached_by(items: &[syn::Item], seeds: &BTreeSet<String>) -> BTreeSet<String> {
     let mut named: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut frontier: Vec<String> = Vec::new();
+    let mut frontier: Vec<String> = seeds.iter().cloned().collect();
     for item in items {
         let Some(declared) = Declared::of(item) else {
             continue;
         };
         if !declared.marked("record") && !declared.marked("event") && !declared.marked("resource") {
             continue;
-        }
-        if declared.marked("event") {
-            frontier.push(declared.ident.to_string());
         }
         named.insert(
             declared.ident.to_string(),
@@ -282,8 +278,11 @@ impl<'a> Declared<'a> {
 /// terms as every other fact this macro derives: the encoding is the
 /// protocol's, so naming it is the protocol's job. The path routes
 /// through the SDK, which is the one crate a contract depends on.
-pub fn encode_declared(items: &mut [syn::Item]) -> (Vec<syn::Item>, Vec<syn::Ident>) {
-    let emitted = emit_closure(items);
+pub fn encode_declared(
+    items: &mut [syn::Item],
+    length_free: &BTreeSet<String>,
+) -> (Vec<syn::Item>, Vec<syn::Ident>) {
+    let length_free = reached_by(items, length_free);
     let mut records = Vec::new();
     let mut stored_types = Vec::new();
     for item in items {
@@ -316,16 +315,16 @@ pub fn encode_declared(items: &mut [syn::Item]) -> (Vec<syn::Item>, Vec<syn::Ide
         attrs.push(syn::parse_quote!(
             #[derive(::hyperscale_vm_sdk::hbor::Hbor, ::hyperscale_vm_sdk::hbor::HborShape)]
         ));
-        // Fixed width where an emit spends it. The payload goes into a
-        // buffer on the stack sized from this bound, because a method
-        // marked total may not allocate and a heap buffer that grows can
-        // fail — so nothing an event names may carry a length.
+        // A total body may not fault, so what a method under the mark
+        // emits carries no length anywhere: the claim is asked for here
+        // and checked field by field, which puts the refusal on the
+        // field that carries one.
         //
-        // A cell claims no such thing. Every one is written through an
-        // allocating encode whatever it holds, so a record no event
-        // reaches is held to what the encoding carries rather than to
-        // what a stack buffer could.
-        if emitted.contains(&ident.to_string()) {
+        // No other declaration claims it. Every event's payload is
+        // written into a stack buffer its own bound sizes, whatever it
+        // holds, and every cell through an allocating encode — so a
+        // length is a thing to refuse only where the mark is.
+        if length_free.contains(&ident.to_string()) {
             attrs.push(syn::parse_quote!(
                 #[hbor(crate = ::hyperscale_vm_sdk::hbor, length_free)]
             ));

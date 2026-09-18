@@ -1,7 +1,8 @@
-//! An event's payload encodes into a stack buffer, so every field is
-//! fixed-width. The refusal is the codec's own — a capped byte string
-//! still carries a length, and fails the length-free bound on the
-//! record's own line, before the macro has an opinion.
+//! A total body may not fault, so what a method under the mark emits
+//! carries no length anywhere — the event itself and every declaration
+//! it names. The refusal is the codec's own: a capped byte string still
+//! carries a length, and fails the length-free bound on the field that
+//! holds it, before the macro has an opinion.
 use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]
@@ -24,6 +25,7 @@ mod contract {
     }
 
     impl Contract {
+        #[total]
         pub fn count(&mut self, n: u64) {
             let tally = Tally {
                 count: n,

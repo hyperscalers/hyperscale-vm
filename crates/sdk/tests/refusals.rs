@@ -498,6 +498,10 @@ fn the_macro_refuses_a_collection_no_declaration_bounds() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/uncapped_collection_in_a_record.rs");
     refuse.compile_fail("tests/refusals/collection_in_a_cell.rs");
+    // An event an ordinary method emits carries whatever its bound
+    // admits: the payload is written into a buffer that bound sizes, so
+    // a length inside it costs the method nothing it claims.
+    refuse.pass("tests/refusals/ordinary_event_carries_a_length.rs");
 }
 
 #[test]
