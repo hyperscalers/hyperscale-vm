@@ -37,6 +37,11 @@ use crate::{is_named, pascal};
 /// arriving from the wire to the same characters; this is the tier that
 /// says which word to change, on the word itself.
 ///
+/// For the names that carry no shape — a method, a slot, a configuration
+/// field. A declared type and its members are held to the same rule by
+/// the shape derive they carry, on the same spans, so asking here as
+/// well would be one mistake reported twice.
+///
 /// # Errors
 ///
 /// [`syn::Error`] on the identifier's own span, naming what is wrong

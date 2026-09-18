@@ -2387,11 +2387,6 @@ fn expand(
     // Before the markers are stripped: `encode_declared` reads them, and
     // what it pushes has to survive the strip that follows.
     let (records, stored_types) = encode_declared(items, &length_free);
-    // A declared type publishes under its own identifier, which is what
-    // a consumer resolves its shape by.
-    for ident in &stored_types {
-        published(ident)?;
-    }
     let stored_table = stored_types
         .iter()
         .map(|ident| quote!(.declares::<#ident>()));

@@ -1,0 +1,17 @@
+error[E0080]: evaluation panicked: `a_field_whose_name_runs_past_the_sixty_four_bytes_a_published_name_may_occupy` is published as it is written, and the protocol spells a name as an ASCII identifier no longer than a name may be
+ --> tests/refusals/name_the_protocol_cannot_spell.rs:5:5
+  |
+5 |     a_field_whose_name_runs_past_the_sixty_four_bytes_a_published_name_may_occupy: u8,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `_::_` failed here
+
+error[E0080]: evaluation panicked: `café` is published as it is written, and the protocol spells a name as an ASCII identifier no longer than a name may be
+  --> tests/refusals/name_the_protocol_cannot_spell.rs:10:5
+   |
+10 |     café: u8,
+   |     ^^^^ evaluation of `_::_` failed here
+
+error[E0080]: evaluation panicked: `Ünmarked` is published as it is written, and the protocol spells a name as an ASCII identifier no longer than a name may be
+  --> tests/refusals/name_the_protocol_cannot_spell.rs:15:5
+   |
+15 |     Ünmarked(u8),
+   |     ^^^^^^^^ evaluation of `_::_` failed here

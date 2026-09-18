@@ -4,6 +4,12 @@ error: `Réglé` is published as it is written, and 'é' is not a character an i
 11 |     struct Réglé {
    |            ^^^^^
 
+error[E0080]: evaluation panicked: `Réglé` is published as it is written, and the protocol spells a name as an ASCII identifier no longer than a name may be
+  --> tests/refusals/unspellable_event.rs:11:12
+   |
+11 |     struct Réglé {
+   |            ^^^^^ evaluation of `contract::_::_` failed here
+
 error[E0599]: no method named `emit` found for struct `Réglé` in the current scope
   --> tests/refusals/unspellable_event.rs:23:35
    |

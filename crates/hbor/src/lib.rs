@@ -82,7 +82,7 @@ pub use error::{DecodeError, EncodeError};
 pub use hash::{Hash32, Hasher};
 pub use hyperscale_hbor_macros::{Hbor, HborMerkle, HborShape};
 pub use merkle::Chunked;
-pub use name::{MAX_NAME_BYTES, MalformedName, Name, admissible};
+pub use name::{MAX_NAME_BYTES, MalformedName, Name, admissible, is_name};
 pub use node::{HborBound, ShapeNode};
 pub use shape::{
     HborShape, NodeId, ShapeFault, ShapeField, ShapeTable, ShapeValue, ShapeVariant, TypeShape,

@@ -57,3 +57,13 @@ fn the_derive_refuses_a_tree_with_nothing_to_cover() {
     refuse.compile_fail("tests/refusals/merkle_without_domain.rs");
     refuse.compile_fail("tests/refusals/merkle_empty_domain.rs");
 }
+
+/// A member publishes under the identifier that declared it, and Rust
+/// admits identifiers the protocol does not spell. The refusal lands on
+/// the word an author has to change, rather than on the first table the
+/// type is built into.
+#[test]
+fn the_derive_refuses_a_name_the_protocol_cannot_spell() {
+    let refuse = TestCases::new();
+    refuse.compile_fail("tests/refusals/name_the_protocol_cannot_spell.rs");
+}

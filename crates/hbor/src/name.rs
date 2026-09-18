@@ -74,27 +74,52 @@ impl fmt::Display for Name {
     }
 }
 
-/// Whether `text` is an ASCII identifier, and what is wrong with it
-/// where it is not.
+/// Whether `text` is an ASCII identifier.
 ///
 /// The same characters Rust admits in an identifier, less the ones no
 /// ASCII keyboard has: a name is carried, rendered and compared by
 /// consumers that are not Rust, and none of them should have to
 /// normalize to do it.
 ///
+/// `const`, because a derive that publishes a member under the
+/// identifier that declared it asserts this where the member is written
+/// — so an identifier the protocol could not spell is a compile error on
+/// the word rather than a refusal the first table build reaches.
+#[must_use]
+pub const fn is_name(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    if bytes.is_empty() || bytes.len() > MAX_NAME_BYTES || bytes[0].is_ascii_digit() {
+        return false;
+    }
+    let mut at = 0;
+    while at < bytes.len() {
+        let byte = bytes[at];
+        if !byte.is_ascii_alphanumeric() && byte != b'_' {
+            return false;
+        }
+        at += 1;
+    }
+    true
+}
+
+/// Whether `text` is an ASCII identifier, and what is wrong with it
+/// where it is not.
+///
+/// [`is_name`] decides; this only says which of the four a name it
+/// refused is, so the two cannot disagree about the verdict.
+///
 /// # Errors
 ///
 /// [`MalformedName`], saying which of the four it is.
 pub fn admissible(text: &str) -> Result<(), MalformedName> {
-    let mut chars = text.chars();
-    let Some(first) = chars.next() else {
+    if is_name(text) {
+        return Ok(());
+    }
+    if text.is_empty() {
         return Err(MalformedName::Empty);
-    };
+    }
     if text.len() > MAX_NAME_BYTES {
         return Err(MalformedName::TooLong { actual: text.len() });
-    }
-    if first.is_ascii_digit() {
-        return Err(MalformedName::LeadingDigit);
     }
     // Reported as the character an author wrote rather than as the byte
     // it starts with: what they have to change is the character.
@@ -104,7 +129,9 @@ pub fn admissible(text: &str) -> Result<(), MalformedName> {
     {
         return Err(MalformedName::Outside(outside));
     }
-    Ok(())
+    // Not empty, inside the cap, every character one an identifier is
+    // made of: what is left is the digit it opens with.
+    Err(MalformedName::LeadingDigit)
 }
 
 impl Name {

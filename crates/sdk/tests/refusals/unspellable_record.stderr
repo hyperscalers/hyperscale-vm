@@ -1,8 +1,8 @@
-error: `Reçu` is published as it is written, and 'ç' is not a character an identifier is made of
+error[E0080]: evaluation panicked: `Reçu` is published as it is written, and the protocol spells a name as an ASCII identifier no longer than a name may be
   --> tests/refusals/unspellable_record.rs:10:12
    |
 10 |     struct Reçu {
-   |            ^^^^
+   |            ^^^^ evaluation of `contract::_::_` failed here
 
 error[E0599]: the method `set` exists for struct `hyperscale_vm_sdk::state::Cell<Reçu>`, but its trait bounds were not satisfied
   --> tests/refusals/unspellable_record.rs:21:23
@@ -12,6 +12,23 @@ error[E0599]: the method `set` exists for struct `hyperscale_vm_sdk::state::Cell
 ...
 21 |             self.last.set(Reçu { amount: fee });
    |                       ^^^ method cannot be called on `hyperscale_vm_sdk::state::Cell<Reçu>` due to unsatisfied trait bounds
+   |
+   = note: the following trait bounds were not satisfied:
+           `Reçu: Cellular`
+note: the trait `Cellular` must be implemented
+  --> src/state.rs
+   |
+   | pub trait Cellular: Sized {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0599]: the method `set` exists for struct `Slot<Reçu>`, but its trait bounds were not satisfied
+  --> tests/refusals/unspellable_record.rs:21:23
+   |
+ 5 | #[blueprint]
+   | ------------ doesn't satisfy `Reçu: Cellular`
+...
+21 |             self.last.set(Reçu { amount: fee });
+   |                       ^^^ method cannot be called on `Slot<Reçu>` due to unsatisfied trait bounds
    |
    = note: the following trait bounds were not satisfied:
            `Reçu: Cellular`

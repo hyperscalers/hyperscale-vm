@@ -12,12 +12,15 @@
 //! A declared name is the identifier that declared it. Rust names a
 //! type's members once each, so two of them cannot reach one name — where
 //! a rendering that folded case would let them, and would need a refusal
-//! to say so.
+//! to say so. Rust admits identifiers the protocol does not, though, so
+//! each one is held to what a name is made of beside the node it names,
+//! in a `const` on its own span: the rule is the decoder's own, asserted
+//! where the word is written rather than restated here.
 
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
-use syn::{Data, DeriveInput, Error, Fields, Result};
+use syn::{Data, DeriveInput, Error, Fields, Ident, Result};
 
 use crate::attrs::{FieldAttrs, TypeAttrs};
 use crate::codec::{bounds, variant_tags};
@@ -34,13 +37,15 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
     let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
     let shape_bounds = bounds(input, &quote!(__hbor::HborShape));
 
+    let mut spelled = Vec::new();
     let node = match &input.data {
         Data::Struct(data) => {
             if attrs.transparent {
                 transparent(&data.fields)?
             } else {
-                let content = fields(&data.fields)?;
+                let content = fields(&data.fields, &mut spelled)?;
                 let declared = name.to_string();
+                spelled.push(spellable(name));
                 quote! {
                     &__hbor::ShapeNode::Named {
                         name: #declared,
@@ -59,10 +64,12 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
             let mut variants = TokenStream::new();
             for (variant, tag) in data.variants.iter().zip(variant_tags(data)?) {
                 let variant_name = variant.ident.to_string();
-                let content = fields(&variant.fields)?;
+                let content = fields(&variant.fields, &mut spelled)?;
+                spelled.push(spellable(&variant.ident));
                 variants.extend(quote!((#variant_name, #tag, #content),));
             }
             let declared = name.to_string();
+            spelled.push(spellable(name));
             quote! {
                 &__hbor::ShapeNode::Named {
                     name: #declared,
@@ -82,6 +89,8 @@ pub fn derive(input: &DeriveInput) -> Result<TokenStream> {
     Ok(quote! {
         const _: () = {
         use #krate as __hbor;
+
+        #(#spelled)*
 
         #[automatically_derived]
         impl #impl_generics __hbor::HborShape for #name #type_generics
@@ -110,10 +119,13 @@ fn transparent(fields: &Fields) -> Result<TokenStream> {
 ///
 /// A skipped field is not on the wire, so it is not in the shape either —
 /// a consumer told about one would read a value the bytes do not hold.
-fn fields(fields: &Fields) -> Result<TokenStream> {
+fn fields(fields: &Fields, spelled: &mut Vec<TokenStream>) -> Result<TokenStream> {
     let mut on_the_wire = Vec::new();
     for field in fields {
         if !FieldAttrs::parse(&field.attrs)?.skip {
+            if let Some(ident) = &field.ident {
+                spelled.push(spellable(ident));
+            }
             on_the_wire.push(field);
         }
     }
@@ -139,4 +151,27 @@ fn fields(fields: &Fields) -> Result<TokenStream> {
             quote!(&__hbor::ShapeNode::Tuple(&[#(#nodes),*]))
         }
     })
+}
+
+/// Hold `ident` to what the protocol spells a name with, on its own span.
+///
+/// The published name is the identifier, so an identifier Rust admits and
+/// the protocol does not — a non-ASCII one, or one past the bytes a name
+/// may occupy — would travel to every consumer that renders it. The
+/// decoder holds an arriving name to the same rule; this is the tier that
+/// says which word to change, and it asks the decoder's own question
+/// rather than asking a second one that could answer differently.
+fn spellable(ident: &Ident) -> TokenStream {
+    let spelling = ident.to_string();
+    quote_spanned! { ident.span() =>
+        const _: () = assert!(
+            __hbor::is_name(#spelling),
+            concat!(
+                "`",
+                #spelling,
+                "` is published as it is written, and the protocol spells a name as an \
+                 ASCII identifier no longer than a name may be"
+            )
+        );
+    }
 }
