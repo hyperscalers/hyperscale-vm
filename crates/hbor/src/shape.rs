@@ -50,16 +50,21 @@ use crate::{
 /// times as tall, and one more for the name over its root.
 const MAX_SHAPE_HEIGHT: usize = 3 * DEFAULT_MAX_DEPTH + 1;
 
-/// The nodes a walk over one shape visits.
+/// The nodes a walk over a whole table visits.
 ///
 /// Sharing is how a table is written and not how it is read: a subtree
-/// two types name is stored once and walked once for each, so the nodes
-/// a table holds bound neither what rendering one costs nor what reading
+/// two nodes name is stored once and walked once for each, so the nodes
+/// a table holds bound neither what rendering it costs nor what reading
 /// a value against it allocates. Both are one visit per position, and
-/// this is what bounds them. Generous against what a declaration
-/// produces — the widest type in the protocol's own packages is under a
-/// hundredth of this — and finite against a table that names one subtree
-/// from every level of itself.
+/// this is what bounds them.
+///
+/// A budget over the table rather than a cap per node, because what a
+/// consumer pays is every type it is handed: rendering a package walks
+/// each published type in turn, so a table of many cheap types costs
+/// what a table of one expensive one does. Generous against what a
+/// declaration produces — every package in the protocol's own corpus
+/// spends under a hundredth of it — and finite against a table that
+/// names one subtree from every level of itself.
 const MAX_SHAPE_POSITIONS: usize = 65_536;
 
 /// A node's place in a [`ShapeTable`]: its index.
@@ -254,14 +259,15 @@ pub enum ShapeFault {
     /// holds is one a consumer can read.
     #[error("shape stands past the {MAX_SHAPE_HEIGHT} levels a reader of one walks")]
     TooTall,
-    /// A shape whose walk visits more nodes than a reader of one performs.
+    /// A table whose walk visits more nodes than a reader of one
+    /// performs.
     ///
-    /// A subtree two types share is written once and read once per node
+    /// A subtree two nodes share is written once and read once per node
     /// that names it, so a table far smaller than the walk it describes
-    /// is expressible: sixty-six nodes can name a shape whose walk visits
-    /// more positions than there are values to put in them. Refused so
-    /// what a consumer is handed costs what it looks like it costs.
-    #[error("shape walks {0} positions, past the {MAX_SHAPE_POSITIONS} a reader of one visits")]
+    /// is expressible: seventeen nodes can name a shape whose walk visits
+    /// sixty-five thousand positions. Refused so what a consumer is
+    /// handed costs what it looks like it costs.
+    #[error("table walks {0} positions, past the {MAX_SHAPE_POSITIONS} a reader of one visits")]
     TooBroad(usize),
     /// A sequence, set, or map over an element that occupies no bytes.
     ///
@@ -317,7 +323,7 @@ impl ShapeFault {
             Self::Duplicate(_) => "shape table repeats a node",
             Self::TooDeep => "shape nests past the levels a decoder follows",
             Self::TooTall => "shape stands past the levels a reader of one walks",
-            Self::TooBroad(_) => "shape walks more positions than a reader of one visits",
+            Self::TooBroad(_) => "table walks more positions than a reader of one visits",
             Self::ZeroWidth => "shape runs over an element that carries no bytes",
             Self::AmbiguousName(_) => "shape names two members of one type alike",
             Self::AmbiguousDiscriminant(_) => "shape selects two variants by one discriminant",
@@ -446,6 +452,8 @@ pub struct ShapeTable {
     by_node: BTreeMap<TypeShape, NodeId>,
     /// Where a published type sits, on the same terms.
     by_name: BTreeMap<Name, NodeId>,
+    /// What walking every node of the table costs, summed as each joins.
+    positions: usize,
 }
 
 impl ShapeTable {
@@ -457,6 +465,7 @@ impl ShapeTable {
             measures: Vec::new(),
             by_node: BTreeMap::new(),
             by_name: BTreeMap::new(),
+            positions: 0,
         }
     }
 
@@ -714,8 +723,9 @@ impl ShapeTable {
         if measure.height > MAX_SHAPE_HEIGHT {
             return Err(ShapeFault::TooTall);
         }
-        if measure.positions > MAX_SHAPE_POSITIONS {
-            return Err(ShapeFault::TooBroad(measure.positions));
+        let positions = self.positions.saturating_add(measure.positions);
+        if positions > MAX_SHAPE_POSITIONS {
+            return Err(ShapeFault::TooBroad(positions));
         }
         let id = NodeId::at(self.nodes.len());
         if let TypeShape::Named { name, .. } = &node {
@@ -724,6 +734,7 @@ impl ShapeTable {
         self.by_node.insert(node.clone(), id);
         self.nodes.push(node);
         self.measures.push(measure);
+        self.positions = positions;
         Ok(id)
     }
 
