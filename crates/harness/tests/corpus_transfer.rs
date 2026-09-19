@@ -39,17 +39,12 @@ fn mirror_meta() -> InstanceMeta {
 /// account code under its own content address, with metadata written
 /// here and published at runtime.
 ///
-/// `deposit` declares its two delta clauses in the opposite order to the
-/// stdlib account's and binds each export site to its clause by name.
-/// Nothing about the resulting call can come from a table of known
-/// method names, and nothing can come from a convention that a method's
-/// clauses bind its handles in order: if either were true the credit
-/// would land on the decoy cell instead of the vault.
-/// The flag the borrowed body reads before it picks a destination. Its
-/// contents do not matter here — an absent cell reads as "not refused",
-/// which is the path the case is about.
-const FLAG: SlotId = package_slot(0);
-
+/// `deposit` declares a decoy delta ahead of the vault's and binds the
+/// export's one site to the vault's clause by name. Nothing about the
+/// resulting call can come from a table of known method names, and
+/// nothing can come from a convention that a method's clauses bind its
+/// handles in order: if either were true the credit would land on the
+/// decoy cell instead of the vault.
 /// The mirror's own second slot, which is where the unbound clause lands.
 ///
 /// A package's own rather than the protocol's: what the case is about is
@@ -80,36 +75,23 @@ fn mirror_metadata() -> PackageMetadata {
         MethodSignature {
             totality: Totality::Fallible,
             params: vec![ParamType::Bucket],
-            // The bindings name clauses out of order on purpose: the
-            // export's third site is what the body credits on the
-            // not-refused path, and this says that site is clause 1. If
-            // a handle resolved by position the credit would land on
-            // the decoy instead.
-            abi: vec![
-                AbiParam::Handle { clause: 0, site: 0 },
-                AbiParam::Handle { clause: 2, site: 0 },
-                AbiParam::Handle { clause: 1, site: 0 },
-                AbiParam::Bucket(0),
-            ],
+            // The binding names its clause on purpose: the export's one
+            // site is what the body credits, and this says that site is
+            // clause 1. If a handle resolved by position the credit
+            // would land on the decoy instead.
+            abi: vec![AbiParam::Handle { clause: 1, site: 0 }, AbiParam::Bucket(0)],
             effects: vec![
                 Clause::Effect {
                     reach: None,
                     guard: None,
-                    target: TargetExpr::Point(self_child(FLAG, vec![resource_of_arg0()])),
-                    mode: ModeExpr::Read,
-                    denomination: None,
-                },
-                Clause::Effect {
-                    reach: None,
-                    guard: None,
-                    target: TargetExpr::Point(self_child(VAULT, vec![resource_of_arg0()])),
+                    target: TargetExpr::Point(self_child(DECOY, vec![resource_of_arg0()])),
                     mode: ModeExpr::Delta { moves: Moves::Both },
                     denomination: Some(Box::new(resource_of_arg0())),
                 },
                 Clause::Effect {
                     reach: None,
                     guard: None,
-                    target: TargetExpr::Point(self_child(DECOY, vec![resource_of_arg0()])),
+                    target: TargetExpr::Point(self_child(VAULT, vec![resource_of_arg0()])),
                     mode: ModeExpr::Delta { moves: Moves::Both },
                     denomination: Some(Box::new(resource_of_arg0())),
                 },
@@ -244,8 +226,6 @@ fn transfer_profile_and_provision_shape_are_exact() {
                 // deposit that answered for a debit would be asked for
                 // the sender's credential as well as its own.
                 point(vault(BOB, RES_X), Mode::Delta { moves: Moves::In }),
-                point(quarantine(BOB, RES_X), Mode::Delta { moves: Moves::In }),
-                point(refused(BOB, RES_X), Mode::Read),
             ]),
         ),
     ]);
@@ -256,9 +236,9 @@ fn transfer_profile_and_provision_shape_are_exact() {
     // no read of a balance anywhere. What provisions is never a balance:
     // the sender's rule cell, absent for a virtual account, where the
     // read is what carries that absence to the counterpart, beside the
-    // nullifier cell her intent spends; and the recipient's own flag,
-    // which is what lets a deposit pick a destination without ever
-    // refusing one.
+    // nullifier cell her intent spends. The recipient's side reads
+    // nothing at all: a credit has one destination and needs no leaf to
+    // pick it.
     assert_eq!(
         routing[&shard_of(ALICE)].provision_targets(),
         [
@@ -268,9 +248,9 @@ fn transfer_profile_and_provision_shape_are_exact() {
         .into_iter()
         .collect()
     );
-    assert_eq!(
-        routing[&shard_of(BOB)].provision_targets(),
-        std::iter::once(EffectTarget::Point(refused(BOB, RES_X))).collect()
+    assert!(
+        routing[&shard_of(BOB)].provision_targets().is_empty(),
+        "a credit reads nothing: the recipient's side provisions no cell",
     );
 }
 

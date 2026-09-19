@@ -9,8 +9,8 @@ use std::collections::BTreeMap;
 
 use common::{
     ALICE, ASKS, BASE, BOB, FILL_CAP, QUOTE, RES_X, RES_Y, admit_leaf, auth, book, config_leaf,
-    declared_vault, effect_set, nullifier_write, pkg, pool, quarantine, refused, resolver, shapes,
-    shard_of, vault, wide_account_metadata, world,
+    declared_vault, effect_set, nullifier_write, pkg, pool, resolver, shapes, shard_of, vault,
+    wide_account_metadata, world,
 };
 use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
@@ -82,20 +82,10 @@ fn transfer_reserves_at_the_sender_and_deltas_at_the_recipient() {
         ),
         (
             shard_of(BOB),
-            effect_set(&[
-                Effect {
-                    target: EffectTarget::Point(vault(BOB, usdc)),
-                    mode: Mode::Delta { moves: Moves::In },
-                },
-                Effect {
-                    target: EffectTarget::Point(quarantine(BOB, usdc)),
-                    mode: Mode::Delta { moves: Moves::In },
-                },
-                Effect {
-                    target: EffectTarget::Point(refused(BOB, usdc)),
-                    mode: Mode::Read,
-                },
-            ]),
+            effect_set(&[Effect {
+                target: EffectTarget::Point(vault(BOB, usdc)),
+                mode: Mode::Delta { moves: Moves::In },
+            }]),
         ),
     ]);
     assert_eq!(shapes(&routing), shapes(&expected));
@@ -149,14 +139,6 @@ fn swap_writes_both_reserves_and_reads_the_config() {
                 Effect {
                     target: EffectTarget::Point(vault(ALICE, RES_Y)),
                     mode: Mode::Delta { moves: Moves::In },
-                },
-                Effect {
-                    target: EffectTarget::Point(quarantine(ALICE, RES_Y)),
-                    mode: Mode::Delta { moves: Moves::In },
-                },
-                Effect {
-                    target: EffectTarget::Point(refused(ALICE, RES_Y)),
-                    mode: Mode::Read,
                 },
             ]),
         ),
@@ -307,27 +289,11 @@ fn order_book_fill_declares_a_capped_price_interval() {
                     target: EffectTarget::Point(vault(BOB, BASE)),
                     mode: Mode::Delta { moves: Moves::In },
                 },
-                Effect {
-                    target: EffectTarget::Point(quarantine(BOB, BASE)),
-                    mode: Mode::Delta { moves: Moves::In },
-                },
-                Effect {
-                    target: EffectTarget::Point(refused(BOB, BASE)),
-                    mode: Mode::Read,
-                },
                 // The unspent quote comes back to the same vault the
                 // reservation was taken from.
                 Effect {
                     target: EffectTarget::Point(vault(BOB, QUOTE)),
                     mode: Mode::Delta { moves: Moves::In },
-                },
-                Effect {
-                    target: EffectTarget::Point(quarantine(BOB, QUOTE)),
-                    mode: Mode::Delta { moves: Moves::In },
-                },
-                Effect {
-                    target: EffectTarget::Point(refused(BOB, QUOTE)),
-                    mode: Mode::Read,
                 },
             ]),
         ),
@@ -399,16 +365,16 @@ fn a_declared_superset_evaluates_without_error() {
     let admitted = admit_leaf(&graph, ALICE, &chain, &TestHasher).expect("admits");
     let routing = per_shard(&admitted, &resolver());
     let set = &routing[&shard_of(alice)];
-    // The exact effect and the never-touched superset both routed; three
-    // more are the deposit that consumes the withdrawal — where it may
-    // land, where else it may land, and the flag that picks — and the
-    // last is the fence's read of the target's own configuration leaf.
+    // The exact effect and the never-touched superset both routed; one
+    // more is the deposit that consumes the withdrawal, landing in the
+    // vault the resource names, and the last is the fence's read of the
+    // target's own configuration leaf.
     assert!(set.contains(&Effect {
         target: EffectTarget::Point(vault(alice, RES_X)),
         mode: Mode::Reserve { amount: 1 },
     }));
     assert!(set.contains(&fence_read(alice)));
-    assert_eq!(set.len(), 6);
+    assert_eq!(set.len(), 4);
 }
 
 /// A presented instance record is the whole of instantiation: the swap

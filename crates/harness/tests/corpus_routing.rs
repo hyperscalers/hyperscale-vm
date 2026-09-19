@@ -61,12 +61,10 @@ use common::world::*;
 /// address derived from one moves with it. The addresses under the
 /// rendering changed; what each shard is asked to provision did not.
 ///
-/// And again, this time because the vocabulary shrank rather than grew:
-/// the delivery cell beside a vault is gone, so every slot above it
-/// renumbers and every key derived from one moves. What replaces it is
-/// the account's own — a flag saying where a deposit lands and a
-/// quarantine for what it refuses — which is a package's cell rather
-/// than the protocol's, since only the account itself reaches it.
+/// And again, because a deposit stopped choosing where value lands. Its
+/// flag and its quarantine are gone, so the recipient's shard provisions
+/// one cell where it provisioned three, every slot above them renumbers,
+/// and every key derived from one moves.
 ///
 /// Three of the four moved, and this one is the dischargeable drift the
 /// paragraph above admits rather than a routing change. An exclusive
@@ -149,13 +147,13 @@ fn the_catalogue_routes_to_pinned_vectors() {
     );
 }
 
-const PIN_TRANSFER: &str = "39a77bd9ee132f3ca1fad2229a288b43be53f5aeec09cfd4d4ce1108ac382124";
+const PIN_TRANSFER: &str = "d9198cb55bca6f02be71c50edce7f44bad9af941e9e549f5f053fd747cdc4c37";
 
-const PIN_SWAP: &str = "988829945b9d4730affe6b1fba34e9d38c5097236b4e2498e17505ce68b647c6";
+const PIN_SWAP: &str = "248313518ca3a4603fc810f740b76f058c80f0b55392384054bafdcf669e6c83";
 
-const PIN_FILL: &str = "2856057c5eb977253b9fd21777ef167138ee61446cb0d275be2704cd4f4e9607";
+const PIN_FILL: &str = "1b43b9ca85579b129e4aa21fd7c2825a750d05232f35ff1b4267f6f42b2df7f1";
 
-const PIN_PROPOSE: &str = "d6292bae17abc2bda5f209c18a5e5b728d910233cb9cf02af5d6151d8fdbec5e";
+const PIN_PROPOSE: &str = "91449261dfabf1e2b18376f4118d59f9c84ac8e9a425514e4089fd7d79f951c8";
 
 /// One catalogue pattern and the star its shape implies.
 struct Shape {

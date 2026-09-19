@@ -571,12 +571,12 @@ fn an_amendment_enacts_after_the_delay_and_writes_the_roles() {
     let mut waiting = MemoryStore::new();
     seed_proposal(&mut waiting, ALICE, FIRST, t0 + DAY_MS, roles());
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 4)),
-        Some(&waiting.cell(own_cell(ALICE, 4))),
+        receipt.delta.cells.get(&own_cell(ALICE, 2)),
+        Some(&waiting.cell(own_cell(ALICE, 2))),
         "the amendment serves the delay that governs now"
     );
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 2)),
+        receipt.delta.cells.get(&own_cell(ALICE, 0)),
         None,
         "and nothing governs until it is enacted"
     );
@@ -605,15 +605,15 @@ fn an_amendment_enacts_after_the_delay_and_writes_the_roles() {
         panic!("promote must complete; got {:?}", results[0]);
     };
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 2)),
+        receipt.delta.cells.get(&own_cell(ALICE, 0)),
         Some(&Some(stored_rule(TAKER).in_cell()))
     );
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 3)),
+        receipt.delta.cells.get(&own_cell(ALICE, 1)),
         Some(&Some(stored_rule(BOB).in_cell()))
     );
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 5)),
+        receipt.delta.cells.get(&own_cell(ALICE, 3)),
         Some(&Some(HOUR_MS.to_le_bytes().to_vec()))
     );
     assert_eq!(
@@ -681,8 +681,8 @@ fn an_enacted_amendment_hands_recovery_to_the_new_guardian() {
         factors(&stored_rule(BOB), None),
     );
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 4)),
-        Some(&sooner.cell(own_cell(ALICE, 4))),
+        receipt.delta.cells.get(&own_cell(ALICE, 2)),
+        Some(&sooner.cell(own_cell(ALICE, 2))),
         "and the delay the amendment carried is the one the next wait serves"
     );
 }
@@ -717,11 +717,11 @@ fn an_amendment_is_cancelled_by_the_guardians_or_the_veto() {
             panic!("the verdict must complete; got {:?}", results[0]);
         };
         assert_eq!(
-            receipt.delta.cells.get(&own_cell(ALICE, 4)),
+            receipt.delta.cells.get(&own_cell(ALICE, 2)),
             Some(&Some(Vec::new())),
             "no amendment waits"
         );
-        assert_eq!(receipt.delta.cells.get(&own_cell(ALICE, 2)), None);
+        assert_eq!(receipt.delta.cells.get(&own_cell(ALICE, 0)), None);
         let far = env().clock_ms + 10 * DAY_MS;
         let (results, _) = run_both_at(
             &world,
@@ -793,8 +793,8 @@ fn a_recovery_proposal_outranks_an_amendment() {
         factors(&stored_rule(BOB), Some(&stored_rule(ALICE))),
     );
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 4)),
-        Some(&retired.cell(own_cell(ALICE, 4))),
+        receipt.delta.cells.get(&own_cell(ALICE, 2)),
+        Some(&retired.cell(own_cell(ALICE, 2))),
         "a recovery filing retires the amendment: one cell, and the freeze holds it"
     );
     let far = env().clock_ms + 10 * DAY_MS;
@@ -1063,9 +1063,9 @@ fn seed_authority(
         auth(owner),
         Authority::primary_only(governing.clone()).in_cell(),
     );
-    store.write(own_cell(owner, 2), replaces.in_cell());
-    store.write(own_cell(owner, 3), vetoes.in_cell());
-    store.write(own_cell(owner, 5), delay_ms.to_le_bytes().to_vec());
+    store.write(own_cell(owner, 0), replaces.in_cell());
+    store.write(own_cell(owner, 1), vetoes.in_cell());
+    store.write(own_cell(owner, 3), delay_ms.to_le_bytes().to_vec());
 }
 
 /// The proposal `owner` has waiting, as the account writes it, and the
@@ -1082,8 +1082,8 @@ fn seed_proposal(
         effective_at_ms: at_ms,
         replaces,
     };
-    store.write(own_cell(owner, 4), account::encode_proposal(&proposal));
-    store.write(own_cell(owner, 6), serial.to_le_bytes().to_vec());
+    store.write(own_cell(owner, 2), account::encode_proposal(&proposal));
+    store.write(own_cell(owner, 4), serial.to_le_bytes().to_vec());
 }
 
 /// A replacement of the factors: `rule` as the primary, no second
@@ -1155,7 +1155,7 @@ fn carded_store() -> MemoryStore {
         }
         .in_cell(),
     );
-    store.write(own_cell(ALICE, 3), stored_rule(TAKER).in_cell());
+    store.write(own_cell(ALICE, 1), stored_rule(TAKER).in_cell());
     store
 }
 
@@ -1169,9 +1169,9 @@ fn recovered_store() -> MemoryStore {
     let mut store = sealed_store();
     store.write(vault(ALICE, RES_X), encode_amount(150).to_vec());
     store.write(auth(ALICE), governing(ALICE));
-    store.write(own_cell(ALICE, 2), stored_rule(BOB).in_cell());
-    store.write(own_cell(ALICE, 3), stored_rule(MAKER).in_cell());
-    store.write(own_cell(ALICE, 5), DAY_MS.to_le_bytes().to_vec());
+    store.write(own_cell(ALICE, 0), stored_rule(BOB).in_cell());
+    store.write(own_cell(ALICE, 1), stored_rule(MAKER).in_cell());
+    store.write(own_cell(ALICE, 3), DAY_MS.to_le_bytes().to_vec());
     store
 }
 
@@ -1402,8 +1402,8 @@ fn a_proposal_governs_from_its_instant_with_nothing_applying_it() {
         factors(&stored_rule(BOB), None),
     );
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 4)),
-        Some(&waiting.cell(own_cell(ALICE, 4))),
+        receipt.delta.cells.get(&own_cell(ALICE, 2)),
+        Some(&waiting.cell(own_cell(ALICE, 2))),
         "the guest's spliced frame is the codec's encoding, byte for byte"
     );
     assert_eq!(
@@ -1520,7 +1520,7 @@ fn recovery_withdraws_its_own_unmatured_proposal() {
         "the governing rule is exactly what securify wrote"
     );
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 4)),
+        receipt.delta.cells.get(&own_cell(ALICE, 2)),
         Some(&Some(Vec::new())),
         "and what a cancel leaves is no replacement at all"
     );
@@ -1587,8 +1587,8 @@ fn recovery_rotates_a_hostile_primary_out() {
         factors(&stored_rule(BOB), Some(&stored_rule(ALICE))),
     );
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 4)),
-        Some(&waiting.cell(own_cell(ALICE, 4))),
+        receipt.delta.cells.get(&own_cell(ALICE, 2)),
+        Some(&waiting.cell(own_cell(ALICE, 2))),
         "and the proposal carries the primary it displaced"
     );
 
@@ -1665,8 +1665,8 @@ fn a_proposal_while_frozen_carries_the_displaced_primary_forward() {
         factors(&stored_rule(BOB), Some(&stored_rule(ALICE))),
     );
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 4)),
-        Some(&waiting.cell(own_cell(ALICE, 4))),
+        receipt.delta.cells.get(&own_cell(ALICE, 2)),
+        Some(&waiting.cell(own_cell(ALICE, 2))),
         "and the replacement carries the displaced primary forward"
     );
     assert_acts(&world, &store, ALICE, t0, false, 0xA2);
@@ -1724,7 +1724,7 @@ fn a_cancelled_freeze_gives_the_primary_back() {
         "the governing rule is exactly what securify wrote"
     );
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 4)),
+        receipt.delta.cells.get(&own_cell(ALICE, 2)),
         Some(&Some(Vec::new())),
         "and no replacement waits"
     );
@@ -1776,7 +1776,7 @@ fn an_infinite_delay_keeps_a_hostile_recovery_waiting() {
         panic!("veto must complete; got {:?}", results[0]);
     };
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 4)),
+        receipt.delta.cells.get(&own_cell(ALICE, 2)),
         Some(&Some(Vec::new())),
         "a veto drops the proposal"
     );
@@ -1931,7 +1931,7 @@ fn a_veto_ends_a_proposal_and_enacts_nothing() {
         panic!("veto must complete; got {:?}", results[0]);
     };
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 4)),
+        receipt.delta.cells.get(&own_cell(ALICE, 2)),
         Some(&Some(Vec::new())),
         "a veto drops the proposal"
     );
@@ -2061,7 +2061,7 @@ fn a_verdict_names_the_proposal_its_signer_saw() {
         );
     };
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 4)),
+        receipt.delta.cells.get(&own_cell(ALICE, 2)),
         Some(&Some(Vec::new())),
         "no replacement waits"
     );
@@ -2111,8 +2111,8 @@ fn propose_replaces_a_pending_proposal_and_needs_a_cell() {
         factors(&stored_rule(MAKER), None),
     );
     assert_eq!(
-        receipt.delta.cells.get(&own_cell(ALICE, 4)),
-        Some(&replaced.cell(own_cell(ALICE, 4))),
+        receipt.delta.cells.get(&own_cell(ALICE, 2)),
+        Some(&replaced.cell(own_cell(ALICE, 2))),
         "one replacement waiting, restarted from the replacing clock"
     );
 

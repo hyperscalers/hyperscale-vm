@@ -20,7 +20,7 @@ use std::sync::{Arc, LazyLock};
 
 use hyperscale_vm_effects::{
     Declaration, DeclaredAccess, Hash32, Hasher, SlotId, TestHasher, Value, child_key,
-    collection_id, order_key, package_slot,
+    collection_id, order_key,
 };
 use hyperscale_vm_embed::{GuestArg, Invoked};
 use hyperscale_vm_fixtures::{LOTTERY_MODULE, SHIPPED as FIXTURES, lottery};
@@ -80,24 +80,8 @@ fn lending(host: &mut KernelSession, reps: &[u32]) -> Vec<u32> {
         .collect()
 }
 
-/// The recipient's own cells a deposit reaches beside their vault: the
-/// flag it reads to pick a destination, and the quarantine it picks when
-/// the flag is set. Absent here, which is what "not refused" is.
-fn recipient_cells() -> (SubstateKey, SubstateKey) {
-    let keyed = |slot| {
-        child_key(
-            &TestHasher,
-            RECIPIENT,
-            slot,
-            &[Value::Address(RESOURCE.address()).canonical_bytes()],
-        )
-    };
-    (keyed(package_slot(0)), keyed(package_slot(1)))
-}
-
 fn session() -> KernelSession {
     let (sender, recipient) = keys();
-    let (refused, quarantine) = recipient_cells();
     let mut declared = EffectSet::new();
     declared
         .insert_at_cap(Effect {
@@ -111,27 +95,12 @@ fn session() -> KernelSession {
             mode: Mode::Delta { moves: Moves::Both },
         })
         .unwrap();
-    declared
-        .insert_at_cap(Effect {
-            target: EffectTarget::Point(quarantine),
-            mode: Mode::Delta { moves: Moves::Both },
-        })
-        .unwrap();
-    declared
-        .insert_at_cap(Effect {
-            target: EffectTarget::Point(refused),
-            mode: Mode::Read,
-        })
-        .unwrap();
     let mut store = MemoryStore::new();
     store.write(sender, encode_amount(500).to_vec());
-    // Every value cell the transfer moves between holds the same
-    // resource, which is what makes the credit a transfer rather than a
-    // conversion; the flag holds none, being a fact rather than value.
-    let denominations: Vec<_> = declared
-        .iter()
-        .map(|effect| (effect.target != EffectTarget::Point(refused)).then_some(RESOURCE))
-        .collect();
+    // Every cell the transfer moves between holds the same resource,
+    // which is what makes the credit a transfer rather than a
+    // conversion.
+    let denominations: Vec<_> = declared.iter().map(|_| Some(RESOURCE)).collect();
     KernelSession::materialize(
         OverlayStore::new(Arc::new(store)),
         &Declaration {
@@ -210,7 +179,6 @@ fn dual_transfer() -> Result<(Receipt, u64)> {
 
     let mut blessed_host = entering(blessed.session, RECIPIENT);
     let mut reference_host = entering(reference.session, RECIPIENT);
-    let (refused, quarantine) = recipient_cells();
     let recipient_rep = rep_of(
         &blessed_host,
         &Capability::Delta {
@@ -218,39 +186,21 @@ fn dual_transfer() -> Result<(Receipt, u64)> {
             moves: Moves::Both,
         },
     );
-    let flag_rep = rep_of(&blessed_host, &Capability::Read(refused));
-    let quarantine_rep = rep_of(
-        &blessed_host,
-        &Capability::Delta {
-            key: quarantine,
-            moves: Moves::Both,
-        },
-    );
-    let lent = lending(
-        &mut blessed_host,
-        &[flag_rep, quarantine_rep, recipient_rep],
-    );
+    let lent = lending(&mut blessed_host, &[recipient_rep]);
     assert_eq!(
         lent,
-        lending(
-            &mut reference_host,
-            &[flag_rep, quarantine_rep, recipient_rep]
-        ),
+        lending(&mut reference_host, &[recipient_rep]),
         "the two hosts lend the same sites"
     );
     blessed_host.lend_bucket(funds);
     reference_host.lend_bucket(funds);
-    let [flag_site, quarantine_site, recipient_site] = lent[..] else {
-        panic!("three sites")
+    let [recipient_site] = lent[..] else {
+        panic!("one site")
     };
     let mut dual = ACCOUNT.instantiate_pair(FUEL, blessed_host, reference_host)?;
     dual.invoke_both(
         "deposit",
         &[
-            GuestArg::Site { site: flag_site },
-            GuestArg::Site {
-                site: quarantine_site,
-            },
             GuestArg::Site {
                 site: recipient_site,
             },

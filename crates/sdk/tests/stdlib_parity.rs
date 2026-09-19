@@ -53,42 +53,6 @@ fn account() -> Blueprint {
                 t.output(&resource);
             },
         )
-        // Where a resource lands is the holder's own choice, and setting
-        // it takes the same gate spending does — one write of the flag
-        // the deposit reads.
-        .method("accept", &[ParamType::Resource], |t: &mut Trace| {
-            let resource: Sym<Addr> = t.arg(0);
-            let holder = t.self_addr();
-            let rule = t.claim(&holder);
-            t.guarded_by(rule);
-            t.point(&holder.child(own(0), &[resource.cast()])).write();
-            t.bind_handle();
-        })
-        .method("refuse", &[ParamType::Resource], |t: &mut Trace| {
-            let resource: Sym<Addr> = t.arg(0);
-            let holder = t.self_addr();
-            let rule = t.claim(&holder);
-            t.guarded_by(rule);
-            t.point(&holder.child(own(0), &[resource.cast()])).write();
-            t.bind_handle();
-        })
-        // And taking it back out is the holder's alone, on `withdraw`'s
-        // terms: what sits there is theirs and was only ever put aside.
-        .method(
-            "sweep",
-            &[ParamType::Resource, ParamType::U128],
-            |t: &mut Trace| {
-                let resource: Sym<Addr> = t.arg(0);
-                let amount: Sym<U128> = t.arg(1);
-                let holder = t.self_addr();
-                let rule = t.claim(&holder);
-                t.guarded_by(rule);
-                let cell = holder.child(own(1), &[resource.clone().cast()]);
-                t.point(&cell).holding(&resource).reserve(&amount);
-                t.bind_handle();
-                t.output(&resource);
-            },
-        )
         // Retiring what a caller hands over: the resource is the edge's,
         // so the declaration names the parameter and nothing else — the
         // entry that admits it is that resource's own and is injected
@@ -106,19 +70,10 @@ fn account() -> Blueprint {
             let resource = funds.resource();
             let holder = t.self_addr();
 
-            // The flag first, because the body reads it before it picks
-            // a destination — and both destinations after it, in the
-            // order the body's arms reach them, because a total method
-            // materializes every handle it declares or none, so which
-            // one the body fills is not the declaration's business.
-            let refused = holder.child(own(0), &[resource.clone().cast()]);
-            let quarantine = holder.child(own(1), &[resource.clone().cast()]);
             let vault = holder.child(VAULT, &[resource.clone().cast()]);
-            t.point(&refused).read();
-            // Both credits: a deposit only ever pays in, and saying so is
-            // what keeps a resource governing withdrawals from asking
-            // this method for a withdrawal credential.
-            t.point(&quarantine).holding(&resource).credit();
+            // A credit and nothing else: a deposit only ever pays in, and
+            // saying so is what keeps a resource governing withdrawals
+            // from asking this method for a withdrawal credential.
             t.point(&vault).holding(&resource).credit();
         })
         // Securify writes the governing rule onto an absent cell, which is
@@ -140,9 +95,9 @@ fn account() -> Blueprint {
                 let rule = t.claim(&holder);
                 t.guarded_by(rule);
                 t.point(&holder.child(AUTH, &[])).create();
-                t.point(&holder.child(own(2), &[])).write();
+                t.point(&holder.child(own(0), &[])).write();
+                t.point(&holder.child(own(1), &[])).write();
                 t.point(&holder.child(own(3), &[])).write();
-                t.point(&holder.child(own(5), &[])).write();
             },
         )
         // The roles are the primary's to amend, under the delay, and a
@@ -157,10 +112,10 @@ fn account() -> Blueprint {
                 let holder = t.self_addr();
                 let rule = t.claim(&holder);
                 t.guarded_by(rule);
-                t.point(&holder.child(own(4), &[])).write();
+                t.point(&holder.child(own(2), &[])).write();
                 t.point(&holder.child(AUTH, &[])).present().read();
-                t.point(&holder.child(own(5), &[])).read();
-                t.point(&holder.child(own(6), &[])).write();
+                t.point(&holder.child(own(3), &[])).read();
+                t.point(&holder.child(own(4), &[])).write();
             },
         )
         .method(
@@ -178,12 +133,12 @@ fn account() -> Blueprint {
             &[ParamType::PrincipalRule, ParamType::PrincipalRule],
             |t: &mut Trace| {
                 let holder = t.self_addr();
-                t.point(&holder.child(own(2), &[])).read();
+                t.point(&holder.child(own(0), &[])).read();
                 t.governed_by();
-                t.point(&holder.child(own(4), &[])).write();
+                t.point(&holder.child(own(2), &[])).write();
                 t.point(&holder.child(AUTH, &[])).present().read();
-                t.point(&holder.child(own(5), &[])).read();
-                t.point(&holder.child(own(6), &[])).write();
+                t.point(&holder.child(own(3), &[])).read();
+                t.point(&holder.child(own(4), &[])).write();
             },
         )
         // A freeze is a proposal with the primary closed: the same
@@ -193,12 +148,12 @@ fn account() -> Blueprint {
             &[ParamType::PrincipalRule, ParamType::PrincipalRule],
             |t: &mut Trace| {
                 let holder = t.self_addr();
-                t.point(&holder.child(own(2), &[])).read();
+                t.point(&holder.child(own(0), &[])).read();
                 t.governed_by();
                 t.point(&holder.child(AUTH, &[])).present().write();
+                t.point(&holder.child(own(2), &[])).write();
+                t.point(&holder.child(own(3), &[])).read();
                 t.point(&holder.child(own(4), &[])).write();
-                t.point(&holder.child(own(5), &[])).read();
-                t.point(&holder.child(own(6), &[])).write();
             },
         )
         // Promotion is nobody's gate: the record was authorized by the
@@ -206,28 +161,28 @@ fn account() -> Blueprint {
         .method("promote", &[ParamType::U64], |t: &mut Trace| {
             t.fallible();
             let holder = t.self_addr();
-            t.point(&holder.child(own(4), &[])).write();
-            t.point(&holder.child(AUTH, &[])).present().write();
             t.point(&holder.child(own(2), &[])).write();
+            t.point(&holder.child(AUTH, &[])).present().write();
+            t.point(&holder.child(own(0), &[])).write();
+            t.point(&holder.child(own(1), &[])).write();
             t.point(&holder.child(own(3), &[])).write();
-            t.point(&holder.child(own(5), &[])).write();
         })
         // A cancel gives back what a freeze displaced, where one did.
         .method("cancel", &[ParamType::U64], |t: &mut Trace| {
             t.fallible();
             let holder = t.self_addr();
-            t.point(&holder.child(own(2), &[])).read();
+            t.point(&holder.child(own(0), &[])).read();
             t.governed_by();
-            t.point(&holder.child(own(4), &[])).write();
+            t.point(&holder.child(own(2), &[])).write();
             t.point(&holder.child(AUTH, &[])).present().write();
         })
         // A veto is a cancel under the other role: it enacts nothing.
         .method("veto", &[ParamType::U64], |t: &mut Trace| {
             t.fallible();
             let holder = t.self_addr();
-            t.point(&holder.child(own(3), &[])).read();
+            t.point(&holder.child(own(1), &[])).read();
             t.governed_by();
-            t.point(&holder.child(own(4), &[])).write();
+            t.point(&holder.child(own(2), &[])).write();
             t.point(&holder.child(AUTH, &[])).present().write();
         })
         .build()

@@ -20,7 +20,7 @@ use std::collections::BTreeSet;
 
 use common::{ALICE, BOB, account, meta_granting, pkg, world};
 use hyperscale_hbor::{Bytes, Capped, Name};
-use hyperscale_vm_effects::vocabulary::{HALT, VAULT};
+use hyperscale_vm_effects::vocabulary::{CONFIG, HALT, VAULT};
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, Claim, ClaimRef, Clause, EdgeRef, Expr, GrantedBehaviour, GraphArg,
     GraphNode, Hash32, Holding, InstanceMeta, Intent, IntentHeader, IntentTree, JudgedLeaf,
@@ -132,42 +132,6 @@ fn credential(owner: impl Into<Address>) -> SubstateKey {
         VAULT,
         &[Value::Address(BADGE.address()).canonical_bytes()],
     )
-}
-
-/// The custodian paying `holder`, so the value lands in an account —
-/// which keeps two families of vaults rather than one.
-fn paid_out(custodian: ComponentAddr, holder: PrincipalAddr) -> IntentTree {
-    IntentTree {
-        root: Intent::leaf(
-            TEST_HEADER,
-            ALICE,
-            ManifestGraph {
-                nodes: Capped::new(vec![
-                    GraphNode {
-                        target: custodian.into(),
-                        method: "withdraw".into(),
-                        args: vec![GraphArg::Literal(Value::U128(40))],
-                        evidence: Capped::new(BTreeSet::default()).unwrap(),
-                    },
-                    GraphNode {
-                        target: holder.into(),
-                        method: "deposit".into(),
-                        args: vec![GraphArg::edge(
-                            EdgeRef {
-                                producer: 0,
-                                output: 0,
-                            },
-                            Vec::new(),
-                        )],
-                        evidence: Capped::new(BTreeSet::default()).unwrap(),
-                    },
-                ])
-                .unwrap(),
-            },
-        ),
-        instances: Capped::empty(),
-        resources: Capped::empty(),
-    }
 }
 
 /// A round trip through the custodian's own vault and back into it.
@@ -307,31 +271,31 @@ fn a_halt_binds_the_component_holding_the_value() {
 ///
 /// The property the fence rests on. If the flag were per-slot, a holder
 /// would keep a second family of vaults at a second slot and carry on
-/// moving. An account is exactly such a holder: its deposit reaches its
-/// protocol vault and its own quarantine, two families at two slots, and
-/// both answer to the one leaf.
+/// moving. The custodian is exactly such a holder: configured over one
+/// resource, its swap credits the till and debits the other, two
+/// families at two slots, and both answer to the one leaf.
 #[test]
 fn a_halt_covers_every_slot_the_holder_keeps_the_resource_in() {
     let (chain, custodian) = custody_world_over(freezable());
-    let mut env = paid_out(custodian, ALICE);
+    let mut env = swapped(custodian);
     env.resources = Capped::new(vec![freezable_meta()]).unwrap();
-    let admitted = admit_env(&env, &chain).expect("the payout admits");
+    let admitted = admit_env(&env, &chain).expect("the swap admits");
     let declaration = admitted.declaration();
 
-    // Two of the recipient's own cells take the value, at two different
+    // Two of the holder's own cells take the value, at two different
     // slots — which is the shape that would defeat a per-slot flag.
     let landed: BTreeSet<EffectTarget> = declaration
         .ordered
         .iter()
         .filter(|access| {
-            access.holds == Some(freezable()) && access.effect.target.owner() == ALICE.address()
+            access.holds == Some(freezable()) && access.effect.target.owner() == custodian.address()
         })
         .map(|access| access.effect.target)
         .collect();
     assert_eq!(
         landed.len(),
         2,
-        "a deposit reaches the vault and the quarantine"
+        "a swap reaches the till and the other till"
     );
 
     // And one leaf answers for all of them.
@@ -342,18 +306,61 @@ fn a_halt_covers_every_slot_the_holder_keeps_the_resource_in() {
             JudgedLeaf::Presence { target, .. } => Some(*target),
             _ => None,
         })
-        .filter(|target| target.owner() == ALICE.address())
+        .filter(|target| target.owner() == custodian.address())
         .collect();
     assert_eq!(
         asked,
-        BTreeSet::from([EffectTarget::Point(child_key(
-            &TestHasher,
-            ALICE,
-            HALT,
-            &[Value::Address(freezable().address()).canonical_bytes()],
-        ))]),
+        BTreeSet::from([
+            // One flag for the holder and the resource, covering both
+            // slots rather than one apiece.
+            EffectTarget::Point(child_key(
+                &TestHasher,
+                custodian,
+                HALT,
+                &[Value::Address(freezable().address()).canonical_bytes()],
+            )),
+            // And the instance's own configuration leaf, which every
+            // call to it is judged against and which names no slot.
+            EffectTarget::Point(child_key(&TestHasher, custodian, CONFIG, &[])),
+        ]),
         "one flag answers for the holder, whatever slot they keep it at",
     );
+}
+
+/// The custodian moving one resource across both of its own vaults:
+/// out of the till, in through the swap, and back to the till.
+fn swapped(custodian: ComponentAddr) -> IntentTree {
+    let node = |method: &str, args: Vec<GraphArg>| GraphNode {
+        target: custodian.into(),
+        method: method.into(),
+        args,
+        evidence: Capped::new(BTreeSet::default()).unwrap(),
+    };
+    let edge = |producer: u32| {
+        GraphArg::edge(
+            EdgeRef {
+                producer,
+                output: 0,
+            },
+            Vec::new(),
+        )
+    };
+    IntentTree {
+        root: Intent::leaf(
+            TEST_HEADER,
+            ALICE,
+            ManifestGraph {
+                nodes: Capped::new(vec![
+                    node("withdraw", vec![GraphArg::Literal(Value::U128(40))]),
+                    node("swap", vec![edge(0), GraphArg::Literal(Value::U128(20))]),
+                    node("deposit", vec![edge(1)]),
+                ])
+                .unwrap(),
+            },
+        ),
+        instances: Capped::empty(),
+        resources: Capped::new(vec![governed_meta()]).unwrap(),
+    }
 }
 
 /// A resource whose issuer cannot halt anybody puts no read on the

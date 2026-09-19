@@ -27,8 +27,8 @@ use hyperscale_vm_sdk::blueprint;
 #[blueprint(principals)]
 pub mod account {
     use hyperscale_vm_sdk::state::{
-        Bucket, Cell, Ids, Keyed, NfBucket, PrincipalRule, Quantity, RuleBytes, Vault, clock_ms,
-        destroy, destroy_nf,
+        Bucket, Cell, Ids, NfBucket, PrincipalRule, Quantity, RuleBytes, clock_ms, destroy,
+        destroy_nf,
     };
     use hyperscale_vm_sdk::{Address, Authority, ResourceAddr, nobody};
 
@@ -152,24 +152,6 @@ pub mod account {
     /// every rule the account holds.
     #[state]
     struct Account {
-        /// The resources this account does not want in its vault.
-        ///
-        /// A flag rather than a record, and set rather than cleared, so
-        /// that saying nothing is accepting: an account that has never
-        /// thought about a resource takes it, which is what every
-        /// account does today and what a deposit into a fresh address
-        /// has to keep doing.
-        refused: Keyed<bool>,
-        /// Where a refused resource lands instead.
-        ///
-        /// The whole reason `deposit` can stay total: a recipient who
-        /// does not want something is answered by a different
-        /// destination rather than by a refusal, so a sender composing
-        /// a transfer never has to know the recipient's mind. What the
-        /// *issuer* forbids is a different question and a different
-        /// answer — a `Deposit` entry aborts the transfer at admission,
-        /// before there is anything here to sweep.
-        quarantine: Keyed<Vault>,
         /// Who may propose a replacement of the factors, and who may
         /// cancel any proposal.
         ///
@@ -213,61 +195,28 @@ pub mod account {
             funds
         }
 
-        /// Credit the vault, or the quarantine beside it where this
-        /// account has refused the resource.
+        /// Credit the vault for what crossed.
         ///
-        /// The mark the composite earns: a recipient who does not want
-        /// something is answered by a different destination rather than
-        /// by an error, so the one refusal a deposit could otherwise
-        /// carry becomes a place for the value to sit. Both destinations
-        /// are declared whichever the body picks — a total method's
-        /// handles are all materialized or none are — so what the choice
-        /// changes is where the value goes and never what the
-        /// declaration says.
+        /// One destination and one delta, which is what lets the credit
+        /// be completed from the crossing's own leaf: the cell is the
+        /// holder's vault for the resource the record names, and both
+        /// are terms a reader of the leaf already holds. A recipient who
+        /// does not want a resource is answered by not showing it, which
+        /// is a wallet's question rather than a ledger's.
         ///
-        /// What the issuer forbids is not this question. A `Deposit`
-        /// entry that declines aborts the transfer at admission, before
-        /// anything lands here to be swept, so the two never meet.
+        /// What the issuer forbids is not this question either. A
+        /// `Deposit` entry that declines aborts the transfer at
+        /// admission, before anything lands here.
         #[total]
         pub fn deposit(&mut self, funds: Bucket) {
-            // The credits come last because one of them consumes the
-            // edge: value is linear, so every read of what crossed — the
-            // amount the event carries, the resource both cells are keyed
-            // by — happens while there is still a bucket to read it from.
+            // The credit comes last because it consumes the edge: value
+            // is linear, so every read of what crossed — the amount the
+            // event carries, the resource the cell is keyed by — happens
+            // while there is still a bucket to read it from.
             let credited = funds.quantity();
             let resource = funds.resource();
-            let refused = self.refused.at(resource).get();
-            if refused {
-                self.quarantine.at(resource).put(funds);
-            } else {
-                self.vault(resource).put(funds);
-            }
+            self.vault(resource).put(funds);
             Deposited { amount: credited }.emit();
-        }
-
-        /// Send `resource` to the quarantine from here on.
-        ///
-        /// What is already in the vault stays there: this says where the
-        /// next deposit lands, not where the last one went.
-        #[requires(self)]
-        pub fn refuse(&mut self, resource: ResourceAddr) {
-            self.refused.at(resource).set(true);
-        }
-
-        /// Take it back into the vault from here on.
-        #[requires(self)]
-        pub fn accept(&mut self, resource: ResourceAddr) {
-            self.refused.at(resource).set(false);
-        }
-
-        /// Take `amount` of a quarantined resource out.
-        ///
-        /// The way anything leaves the quarantine, and it is the
-        /// holder's alone — the same gate `withdraw` carries, because
-        /// what sits here is theirs and was only ever put aside.
-        #[requires(self)]
-        pub fn sweep(&mut self, resource: ResourceAddr, amount: Quantity) -> Bucket {
-            self.quarantine.at(resource).reserve(amount)
         }
 
         /// Retire what the caller hands over.

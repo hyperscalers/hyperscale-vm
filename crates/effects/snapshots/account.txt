@@ -1,12 +1,10 @@
 state
   the protocol's own — vault, auth, nf-vault
-     16  refused — a leaf per key, holding [u8; 1], at most 1 bytes
-     17  quarantine — a leaf per key, holding u128, at most 16 bytes
-     18  recovery — one leaf, holding [u8]≤4096, at most 4098 bytes
-     19  veto — one leaf, holding [u8]≤4096, at most 4098 bytes
-     20  proposal — one leaf, holding Proposal, at most 12312 bytes
-     21  delay_ms — one leaf, holding u64, at most 8 bytes
-     22  serials — one leaf, holding u64, at most 8 bytes
+     16  recovery — one leaf, holding [u8]≤4096, at most 4098 bytes
+     17  veto — one leaf, holding [u8]≤4096, at most 4098 bytes
+     18  proposal — one leaf, holding Proposal, at most 12312 bytes
+     19  delay_ms — one leaf, holding u64, at most 8 bytes
+     20  serials — one leaf, holding u64, at most 8 bytes
 events
       0  Withdrawn
       1  Deposited
@@ -25,12 +23,6 @@ types
   Proposed = { serial: u64, effective_at_ms: u64 }
   Replacement = < 0 Factors{ primary: [u8]≤4096, confirmation: [u8]≤4096, frozen: [u8]≤4096? } | 1 Roles{ recovery: [u8]≤4096, veto: [u8]≤4096, delay_ms: u64 } >
   Withdrawn = { amount: u128 }
-
-accept(resource-address) — infallible
-  declares
-      0  requires claim self
-      1  write self.refused[arg0]
-  exports  handle for clause 1
 
 amend(rule, rule, u64) — fallible
   emits    Proposed — at most 54 bytes
@@ -64,10 +56,8 @@ cancel(u64) — fallible
 deposit(bucket) — total
   emits    Deposited — at most 54 bytes
   declares
-      0  read self.refused[resource-of(arg0)]
-      1  credit self.quarantine[resource-of(arg0)]
-      2  credit self.vault[resource-of(arg0)]
-  exports  handles for clauses 0–2, edge arg0
+      0  credit self.vault[resource-of(arg0)]
+  exports  handle for clause 0, edge arg0
 
 deposit_nf(nf-bucket) — infallible
   declares
@@ -125,12 +115,6 @@ propose(principal-rule, principal-rule) — infallible
       6  write self.serials
   exports  handle for clause 2, handles for clauses 4–6, arg0, arg1
 
-refuse(resource-address) — infallible
-  declares
-      0  requires claim self
-      1  write self.refused[arg0]
-  exports  handle for clause 1
-
 rotate(principal-rule, principal-rule) — infallible
   declares
       0  requires claim self
@@ -147,13 +131,6 @@ securify(principal-rule, principal-rule, rule, rule, u64) — infallible
       4  write self.veto
       5  write self.delay_ms
   exports  handles for clauses 2–5, arg0, arg1, arg2, arg3, arg4
-
-sweep(resource-address, u128) — infallible
-  declares
-      0  requires claim self
-      1  reserve arg1 self.quarantine[arg0]
-  yields   edge 0 carrying arg0
-  exports  handle for clause 1
 
 veto(u64) — fallible
   emits    Cancelled — at most 46 bytes

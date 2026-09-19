@@ -15,7 +15,7 @@
 use std::thread;
 use std::time::Instant;
 
-use hyperscale_vm_effects::{Hash32, SlotId, TestHasher, Value, child_key, package_slot};
+use hyperscale_vm_effects::{Hash32, SlotId, TestHasher, child_key};
 use hyperscale_vm_fixtures::lottery_artifact;
 use hyperscale_vm_harness::dual::{materialize, rep_where};
 use hyperscale_vm_kernel::{
@@ -28,8 +28,8 @@ use hyperscale_vm_runtime::{
 };
 use hyperscale_vm_stdlib::{account_artifact, staking_artifact};
 use hyperscale_vm_types::{
-    Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Moves, ResourceAddr, SubstateKey,
-    TxHash, encode_amount,
+    Address, AddressClass, Effect, EffectSet, EffectTarget, Mode, Moves, ResourceAddr, TxHash,
+    encode_amount,
 };
 use wasmtime::{
     Engine, InstanceAllocationStrategy, InstancePre, Linker, Module, PoolingAllocationConfig,
@@ -103,29 +103,8 @@ const RECIPIENT: Address = Address::new([2; 31], AddressClass::Component);
 const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 const AMOUNT: u128 = 100;
 
-/// The recipient's own cells a deposit reaches: the flag it reads to
-/// pick a destination, and the quarantine it picks when the flag is set.
-fn refused_key() -> SubstateKey {
-    child_key(
-        &TestHasher,
-        RECIPIENT,
-        package_slot(0),
-        &[Value::Address(RESOURCE.address()).canonical_bytes()],
-    )
-}
-
-fn quarantine_key() -> SubstateKey {
-    child_key(
-        &TestHasher,
-        RECIPIENT,
-        package_slot(1),
-        &[Value::Address(RESOURCE.address()).canonical_bytes()],
-    )
-}
-
-/// A funded transfer session: sender reserved, recipient open for credit
-/// at either of the two places a deposit may land, with the flag that
-/// picks between them read beside them.
+/// A funded transfer session: sender reserved, recipient open for the
+/// one credit a deposit makes.
 fn transfer_session() -> KernelSession {
     let sender = child_key(&TestHasher, SENDER, SlotId(1), &[]);
     let recipient = child_key(&TestHasher, RECIPIENT, SlotId(1), &[]);
@@ -142,24 +121,12 @@ fn transfer_session() -> KernelSession {
             mode: Mode::Delta { moves: Moves::Both },
         })
         .unwrap();
-    declared
-        .insert_at_cap(Effect {
-            target: EffectTarget::Point(quarantine_key()),
-            mode: Mode::Delta { moves: Moves::Both },
-        })
-        .unwrap();
-    declared
-        .insert_at_cap(Effect {
-            target: EffectTarget::Point(refused_key()),
-            mode: Mode::Read,
-        })
-        .unwrap();
     let mut store = MemoryStore::new();
     store.write(sender, encode_amount(500).to_vec());
     let mut session = materialize(
         &store,
         &declared,
-        &[Some(RESOURCE), Some(RESOURCE), Some(RESOURCE), None],
+        &[Some(RESOURCE), Some(RESOURCE)],
         TxHash(Hash32([0x77; 32])),
         EnvInputs::unsealed(77),
     );
@@ -204,15 +171,6 @@ fn one_transfer(
             moves: Moves::Both,
         }
     });
-    let flag_rep = rep_where(&session, |c| *c == Capability::Read(refused_key()));
-    let quarantine_rep = rep_where(&session, |c| {
-        *c == Capability::Delta {
-            key: quarantine_key(),
-            moves: Moves::Both,
-        }
-    });
-    let flag_rep = session.bind_site(vec![Some(flag_rep)]);
-    let quarantine_rep = session.bind_site(vec![Some(quarantine_rep)]);
     let recipient_rep = session.bind_site(vec![Some(recipient_rep)]);
     session.lend_bucket(funds);
     let mut store = Store::new(engine, Invoking::new(session));
@@ -222,12 +180,8 @@ fn one_transfer(
         &instance,
         "deposit",
         &[
-            GuestArg::Site { site: flag_rep },
             GuestArg::Site {
                 site: recipient_rep,
-            },
-            GuestArg::Site {
-                site: quarantine_rep,
             },
             GuestArg::Bucket(funds),
         ],

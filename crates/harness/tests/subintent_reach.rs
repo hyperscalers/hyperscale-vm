@@ -39,7 +39,7 @@ use hyperscale_vm_manifest_builder::{IntentBuilder, Interface};
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     AbortReason, Address, EffectTarget, Mode, NetworkId, Outcome, PrincipalAddr, ResourceAddr,
-    SubstateKey, TxHash,
+    TxHash,
 };
 use wasmtime::Result;
 use wasmtime::error::{Context, bail, ensure};
@@ -64,10 +64,6 @@ const PAYS: u128 = 100;
 
 /// What Bob pays back across the other edge.
 const RETURNS: u128 = 10;
-
-/// The bytes in a cell only Alice's intent declares. Nothing about the
-/// envelope exposes them: Bob's side of the trade is a bucket.
-const ALICES_OWN: &[u8] = b"alices-private-leaf";
 
 /// The event type the fixture emits under; any index the vocabulary
 /// admits.
@@ -147,32 +143,19 @@ fn signers(entry: &BatchTx) -> Result<(Address, Address)> {
 
 /// The first site one signer's `deposit` node was handed: a cell that
 /// signer declared, and that the other signer's intent never names.
-fn first_site_of_deposit(entry: &BatchTx, signer: Address) -> Result<u32> {
-    let Some(call) = entry
-        .calls()
+fn a_cell_only_this_signer_declared(entry: &BatchTx, signer: Address) -> Result<u32> {
+    let found = entry
+        .declaration
+        .ordered
         .iter()
-        .find(|call| call.target == signer && call.export == "deposit")
-    else {
-        bail!("no deposit node targets {signer:?}");
+        .position(
+            |access| matches!(access.effect.target, EffectTarget::Point(key) if key.owner == signer),
+        )
+        .and_then(|index| u32::try_from(index).ok());
+    let Some(rep) = found else {
+        bail!("no cell of {signer:?}'s own in the routed table");
     };
-    match call.args.first() {
-        Some(CallArg::Site { entries }) => match entries.first() {
-            Some(Some(rep)) => Ok(*rep),
-            _ => bail!("the deposit's first site covers no capability"),
-        },
-        other => bail!("the deposit's first argument is {other:?}"),
-    }
-}
-
-/// The cell a rep names, read off the routed declaration.
-fn cell_at(entry: &BatchTx, rep: u32) -> Result<SubstateKey> {
-    let Some(access) = entry.declaration.ordered.get(rep as usize) else {
-        bail!("rep {rep} is past the routed table");
-    };
-    match access.effect.target {
-        EffectTarget::Point(key) => Ok(key),
-        other => bail!("rep {rep} names {other:?} rather than a cell"),
-    }
+    Ok(rep)
 }
 
 /// The account package's guest, as an author who meant to look sideways
@@ -219,7 +202,7 @@ fn account_guest(foreign: Option<u32>) -> Vec<u8> {
   ;; Credit the vault with what arrived — and on the way past, read the
   ;; cell at `foreign` and emit it, where one is named.
   (func (export "deposit")
-    (param $flag i32) (param $vault i32) (param $quarantine i32) (param $funds i32)
+    (param $vault i32) (param $funds i32)
     (local $len i32){tattle}
     (call $site_put (local.get $vault) (i32.const 0) (local.get $funds))
     (call $reply (i32.const 0) (i32.const 0))))
@@ -230,11 +213,10 @@ fn account_guest(foreign: Option<u32>) -> Vec<u8> {
 
 /// Run the trade with `guest` standing in for the account package on
 /// both engines, answering its receipt.
-fn traded_with(entry: &BatchTx, alices_leaf: u32, guest: &[u8]) -> Result<Receipt> {
+fn traded_with(entry: &BatchTx, guest: &[u8]) -> Result<Receipt> {
     let mut store = MemoryStore::new();
     seed_vault(&mut store, ALICE, RES_X, 150);
     seed_vault(&mut store, BOB, RES_Y, 30);
-    store.write(cell_at(entry, alices_leaf)?, ALICES_OWN.to_vec());
 
     let mut lanes = Lanes::new();
     lanes.seed(pkg(), guest);
@@ -303,10 +285,8 @@ fn the_table_spans_both_signers() -> Result<()> {
 fn the_trade_settles_when_each_frame_keeps_to_what_it_was_lent() -> Result<()> {
     let world = world();
     let (entry, _) = routed(&world, &traded())?;
-    let (alice, _) = signers(&entry)?;
-    let alices_leaf = first_site_of_deposit(&entry, alice)?;
 
-    let receipt = traded_with(&entry, alices_leaf, &account_guest(None))?;
+    let receipt = traded_with(&entry, &account_guest(None))?;
     assert!(
         matches!(receipt.outcome, Outcome::Completed { .. }),
         "the trade settled: {:?}",
@@ -331,10 +311,10 @@ fn a_subintent_cannot_read_a_cell_only_the_other_signer_declared() -> Result<()>
     let (entry, _) = routed(&world, &traded())?;
     let (alice, bob) = signers(&entry)?;
 
-    // The leaf Alice's own deposit is handed, and the bytes she keeps in
-    // it. Read off the routed table so the lane names no key by hand.
-    let alices_leaf = first_site_of_deposit(&entry, alice)?;
-    let bobs_leaf = first_site_of_deposit(&entry, bob)?;
+    // A leaf only Alice's intent declared. Read off the routed table so
+    // the lane names no key by hand.
+    let alices_leaf = a_cell_only_this_signer_declared(&entry, alice)?;
+    let bobs_leaf = a_cell_only_this_signer_declared(&entry, bob)?;
     assert_ne!(alices_leaf, bobs_leaf, "each signer was lent its own");
 
     // And no node of Bob's intent was handed Alice's leaf, so what his
@@ -350,7 +330,7 @@ fn a_subintent_cannot_read_a_cell_only_the_other_signer_declared() -> Result<()>
         }
     }
 
-    let receipt = traded_with(&entry, alices_leaf, &account_guest(Some(alices_leaf)))?;
+    let receipt = traded_with(&entry, &account_guest(Some(alices_leaf)))?;
     assert_eq!(
         receipt.outcome,
         Outcome::UserError {

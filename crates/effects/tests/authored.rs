@@ -107,18 +107,15 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
     };
     let open = Vec::new;
     vec![
-        // Where a resource lands is the holder's own choice, so setting
-        // it takes the same gate spending does; retiring and being paid
-        // take none, because what may happen there is the resource's
-        // answer rather than this package's.
-        ("account", "accept", this(), vec![]),
+        // Retiring and being paid take no gate, because what may happen
+        // there is the resource's answer rather than this package's.
         ("account", "amend", this(), vec![]),
         ("account", "burn", open(), vec![]),
         ("account", "burn_nf", open(), vec![]),
-        ("account", "cancel", governs(own_cell(2)), vec![]),
+        ("account", "cancel", governs(own_cell(0)), vec![]),
         ("account", "deposit", open(), vec![]),
         ("account", "deposit_nf", open(), vec![]),
-        ("account", "freeze", governs(own_cell(2)), vec![]),
+        ("account", "freeze", governs(own_cell(0)), vec![]),
         ("account", "present_badge", this(), vec![Expr::Arg(0)]),
         (
             "account",
@@ -127,12 +124,10 @@ fn authored_authority() -> Vec<(&'static str, &'static str, Vec<RuleExpr>, Vec<E
             vec![Expr::Tuple(vec![Expr::Arg(0), Expr::Arg(1)])],
         ),
         ("account", "promote", open(), vec![]),
-        ("account", "propose", governs(own_cell(2)), vec![]),
-        ("account", "refuse", this(), vec![]),
+        ("account", "propose", governs(own_cell(0)), vec![]),
         ("account", "rotate", this(), vec![]),
         ("account", "securify", this(), vec![]),
-        ("account", "sweep", this(), vec![]),
-        ("account", "veto", governs(own_cell(3)), vec![]),
+        ("account", "veto", governs(own_cell(1)), vec![]),
         ("account", "withdraw", this(), vec![]),
         ("account", "withdraw_nf", this(), vec![]),
         ("amm", "add_liquidity", open(), vec![]),
