@@ -230,3 +230,52 @@ fn a_cap_charges_the_bare_depth() {
     let text = to_vec(&Text::<5>::new("a".into()).unwrap()).unwrap();
     assert!(from_slice_with_depth::<Text<5>>(&text, 0).is_ok());
 }
+
+/// What is offered mutably is what cannot reach the cap: an element
+/// replaced in place or moved changes no length, and a removal leaves a
+/// value under any cap the longer one met. The lengthening writers are
+/// the fallible ones above; these are the rest of the surface, and none
+/// of them can put a value past its type.
+#[test]
+fn the_mutable_surface_cannot_lengthen_a_value() {
+    let mut words = Words::from_array([3, 1, 2]);
+    assert_eq!(words.len(), 3, "at the cap to begin with");
+
+    words.swap(0, 2);
+    words.sort_by_key(|word| *word);
+    for word in &mut words {
+        *word += 10;
+    }
+    *words.get_mut(0).expect("an element at the front") += 100;
+    words[1] = 99;
+    words.retain(|_| true);
+    assert_eq!(words.len(), 3, "nothing offered here lengthens");
+    assert_eq!(words, [111u32, 99, 13]);
+
+    // Removal, which a shorter value survives under any cap.
+    assert_eq!(words.remove(0), 111);
+    assert_eq!(words.pop(), Some(13));
+    words.truncate(0);
+    words.clear();
+    assert!(words.is_empty());
+
+    // The same for a byte string: an index and an iterator, no growth.
+    let mut bytes = Bytes::<3>::from_array([1, 2, 3]);
+    bytes[0] = 9;
+    for byte in &mut bytes {
+        *byte += 1;
+    }
+    assert_eq!(bytes, [10u8, 3, 4]);
+    bytes.truncate(1);
+    assert_eq!(bytes.len(), 1);
+
+    // A map's values are replaceable in place; its keys are not, so the
+    // cap stays the insert's business.
+    let mut rows = Rows::default();
+    rows.insert(1, 10).expect("room for the first");
+    for value in rows.values_mut() {
+        *value += 1;
+    }
+    *rows.get_mut(&1).expect("the value at 1") += 1;
+    assert_eq!(rows.get(&1), Some(&12));
+}
