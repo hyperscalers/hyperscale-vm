@@ -871,19 +871,30 @@ fn a_record_names_the_cell_its_value_left() {
         Recourse::Nobody,
         "two cells in the resource name nobody",
     );
-    let reclaimed = execute(
+    let before = balance(&sent, cell(PAYER));
+    let released = execute(
         Arc::new(sent.store) as Arc<dyn Baseline>,
-        &[reclaiming(tx(9))],
+        &[releasing(tx(9))],
         ExecutionMode::Serial,
     )
     .unwrap();
     assert!(
-        matches!(
-            reclaimed.receipts[&tx(9)].outcome,
-            Outcome::ProtocolError { .. }
-        ),
-        "a record nobody may take back cannot be reclaimed: {:?}",
-        reclaimed.receipts[&tx(9)]
+        matches!(released.receipts[&tx(9)].outcome, Outcome::Completed { .. }),
+        "a record nobody may take back releases: {:?}",
+        released.receipts[&tx(9)]
+    );
+    assert_eq!(
+        balance(&released, cell(PAYER)),
+        before,
+        "a release credits nothing",
+    );
+    assert!(
+        released.store.cell(record_site().key()).is_some(),
+        "and the record stands, still naming the claim that may take it",
+    );
+    assert!(
+        released.store.cell(reclaim_site().key()).is_none(),
+        "the producer claims nothing it did not take",
     );
 }
 
@@ -955,6 +966,17 @@ fn reclaiming(who: TxHash) -> BatchTx {
         claim: reclaim_site(),
         disposition: Disposition::Reclaim,
     }])
+}
+
+/// The settlement of a record nobody may take back.
+fn releasing(who: TxHash) -> BatchTx {
+    BatchTx::new(who, declared(&[crossing_cell(record_site())]), env()).with_disposals(vec![
+        Disposal {
+            record: record_site().key(),
+            claim: reclaim_site(),
+            disposition: Disposition::Release,
+        },
+    ])
 }
 
 fn balance(outcome: &BatchOutcome, key: SubstateKey) -> u128 {
