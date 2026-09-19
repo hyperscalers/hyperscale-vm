@@ -10,8 +10,8 @@ mod contract {
     }
 
     impl Contract {
-        // A gate turns callers away before the body runs, which is the one
-        // refusal a total method promises cannot happen.
+        // A caller waits at the gate whatever the body promises, so the
+        // mark beside one is inert rather than false.
         #[total]
         #[requires(self)]
         pub fn deposit(&mut self, funds: Bucket) {

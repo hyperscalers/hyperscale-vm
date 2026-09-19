@@ -1331,9 +1331,15 @@ fn lower_method(
     // through, and a gate that turns callers away before the body runs.
     // The third is a trap, which is a property of compiled code the macro
     // has not emitted yet — so that one is the publish gate's, read off
-    // the artifact. Refusing the two that are visible here is what keeps
-    // an author from meeting them later as a metadata error about a
-    // package rather than as a mistake on a line.
+    // the artifact.
+    //
+    // The two verdicts differ in kind. An error arm beside the mark is a
+    // contradiction and the metadata is refused for it wherever it was
+    // authored. A gate beside the mark is consistent and inert — every
+    // reader acting on early commit asks for the mark *and* an open door
+    // — so the refusal here is the one place an author hears that the
+    // three words buy nothing, and it is this macro's rather than the
+    // protocol's.
     if let Some(claim) = claim {
         if declining.is_some() {
             return Err(syn::Error::new_spanned(
@@ -1345,8 +1351,8 @@ fn lower_method(
         if !matches!(gate, Gate::Public) {
             return Err(syn::Error::new_spanned(
                 claim,
-                "a total method admits every caller, and a gate turns some away before the \
-                 body runs: drop the mark, or drop the gate",
+                "a gate is waited on either way, which leaves the mark buying nothing: \
+                 drop the mark, or drop the gate",
             ));
         }
     }

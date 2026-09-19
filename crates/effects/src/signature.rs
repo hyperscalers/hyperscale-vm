@@ -574,6 +574,13 @@ impl MethodSignature {
     /// a total method carrying. The signed bounds on the edges a call
     /// consumes are the other refusal ahead of the body, and they are the
     /// manifest's rather than the signature's.
+    ///
+    /// This is the conjunction every reader acting on early commit goes
+    /// through, so a mark beside a gate changes nothing any of them sees.
+    /// The SDK refuses that pairing on those grounds, which is an
+    /// ergonomic call rather than a rule this crate enforces: metadata is
+    /// authored as well as derived, and a gated total signature is read
+    /// here the way any other is.
     #[must_use]
     pub(crate) fn is_unrefusable(&self) -> bool {
         self.totality.is_total() && !self.requires_evidence()

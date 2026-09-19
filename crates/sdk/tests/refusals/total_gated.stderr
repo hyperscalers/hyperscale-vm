@@ -1,4 +1,4 @@
-error: a total method admits every caller, and a gate turns some away before the body runs: drop the mark, or drop the gate
+error: a gate is waited on either way, which leaves the mark buying nothing: drop the mark, or drop the gate
   --> tests/refusals/total_gated.rs:15:9
    |
 15 |         #[total]
