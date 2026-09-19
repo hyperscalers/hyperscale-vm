@@ -483,7 +483,7 @@ fn departing(
                 // settlement path already gives these two. What the guest
                 // did with its bucket is its own.
                 let outcome = match trap {
-                    SessionTrap::EscrowOriginUndeclared(_)
+                    SessionTrap::EscrowCreditUndeclared(_)
                     | SessionTrap::CrossingKeyRepeated(_) => Outcome::ProtocolError {
                         reason: trap.into(),
                     },
@@ -627,7 +627,7 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
                     if let Err(trap) = session.escrow_settle(disposal) {
                         let outcome = match trap {
                             SessionTrap::EscrowRecordUnreadable(_)
-                            | SessionTrap::EscrowOriginUndeclared(_) => Outcome::ProtocolError {
+                            | SessionTrap::EscrowCreditUndeclared(_) => Outcome::ProtocolError {
                                 reason: trap.into(),
                             },
                             other => Outcome::UserError {

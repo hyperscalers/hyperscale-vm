@@ -466,7 +466,7 @@ pub enum AbortReason {
     /// The batch's own defect — whoever built the plan named a cell the
     /// declaration beside it does not reach.
     #[hbor(discriminant = 68)]
-    EscrowOriginUndeclared,
+    EscrowCreditUndeclared,
     /// A reclaim named a record cell that is absent, does not decode, or
     /// names an edge other than the one the reclaim claims.
     #[hbor(discriminant = 69)]
@@ -841,7 +841,7 @@ mod tests {
             (65, AbortReason::CellValueTooLarge),
             (66, AbortReason::EscrowOverflow),
             (67, AbortReason::ConditionStraddlesScope),
-            (68, AbortReason::EscrowOriginUndeclared),
+            (68, AbortReason::EscrowCreditUndeclared),
             (69, AbortReason::EscrowRecordUnreadable),
             (71, AbortReason::OutsideScope),
             (72, AbortReason::CrossingKeyRepeated),

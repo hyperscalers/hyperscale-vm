@@ -290,12 +290,25 @@ pub struct CrossingCell {
     /// that prefix until this record's `expiry_ms`, which is where a
     /// reader's window to judge it absent closes.
     pub consumer_claim: SubstateKey,
-    /// The cell the value left, which a reclaim credits: the one cell of
-    /// the producing frame denominated in the resource that crossed,
-    /// resolved by the kernel at the issue. `None` where the frame holds
-    /// no such cell or several, and the crossing is then nobody's to
-    /// take back.
-    pub origin: Option<SubstateKey>,
+    /// Who may take the crossing back where no consumer claims it,
+    /// resolved by the kernel at the issue.
+    pub recourse: Recourse,
+}
+
+/// Who may take a crossing back where no consumer ever claims it.
+///
+/// Resolved once, at the issue, and carried on the record: what outlives
+/// the manifest is the leaf, and the member that settles a record may
+/// hold nothing else — a split child, or a reshape successor whose store
+/// arrives as a prefix of leaves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+pub enum Recourse {
+    /// The cell the value left: the one cell of the producing frame
+    /// denominated in the resource that crossed. A reclaim credits it.
+    Producer(SubstateKey),
+    /// Nobody. The frame held no such cell or several, so a credit to
+    /// either would be a guess.
+    Nobody,
 }
 
 impl CrossingCell {
@@ -571,7 +584,7 @@ impl CrossingSite {
         resource: ResourceAddr,
         amount: u128,
         consumer_claim: SubstateKey,
-        origin: Option<SubstateKey>,
+        recourse: Recourse,
     ) -> CrossingCell {
         CrossingCell {
             resource,
@@ -582,7 +595,7 @@ impl CrossingSite {
             expiry_ms: self.expiry_ms,
             tx,
             consumer_claim,
-            origin,
+            recourse,
         }
     }
 

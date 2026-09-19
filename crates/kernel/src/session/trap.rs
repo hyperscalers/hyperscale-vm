@@ -254,8 +254,8 @@ pub enum SessionTrap {
     /// An escrow crossing naming a cell the declaration does not carry
     /// in the form the crossing needs — no reservation on the cell the
     /// value left, or no movement handle on the cell a reclaim credits.
-    #[error("escrow origin {0:?} is not declared in the form the crossing needs")]
-    EscrowOriginUndeclared(SubstateKey),
+    #[error("escrow cell {0:?} is not declared in the form the crossing needs")]
+    EscrowCreditUndeclared(SubstateKey),
     /// A reclaim's record cell that is absent, does not decode, or names
     /// another edge.
     #[error("escrow record {0:?} is not readable as the edge reclaimed")]
@@ -307,7 +307,7 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::Math(error) => error.into(),
             SessionTrap::Supply(error) => error.into(),
             SessionTrap::Store(store) => store.into(),
-            SessionTrap::EscrowOriginUndeclared(_) => Self::EscrowOriginUndeclared,
+            SessionTrap::EscrowCreditUndeclared(_) => Self::EscrowCreditUndeclared,
             SessionTrap::EscrowRecordUnreadable(_) => Self::EscrowRecordUnreadable,
             SessionTrap::CrossingKeyRepeated(_) => Self::CrossingKeyRepeated,
         }

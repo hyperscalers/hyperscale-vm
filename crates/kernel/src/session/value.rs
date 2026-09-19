@@ -12,7 +12,7 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    CrossingCell, CrossingSite, IssuanceGrant, ResourceKind, distinct_ids,
+    CrossingCell, CrossingSite, IssuanceGrant, Recourse, ResourceKind, distinct_ids,
 };
 use hyperscale_vm_types::{ResourceAddr, SubstateKey};
 
@@ -232,31 +232,36 @@ impl KernelSession {
         };
         let crossed = Crossed { resource, amount };
         self.escrow.issue(node, output, crossed)?;
-        let origin = self.origin_among(frame, resource);
+        let recourse = self.recourse_among(frame, resource);
         self.record_crossing(
             departure.site.key(),
             departure
                 .site
-                .crossing(self.tx, resource, amount, departure.consumer_claim, origin)
+                .crossing(
+                    self.tx,
+                    resource,
+                    amount,
+                    departure.consumer_claim,
+                    recourse,
+                )
                 .to_bytes(),
         )?;
         Ok(crossed)
     }
 
-    /// The cell a crossing in `resource` left, among the capabilities
-    /// `frame` — the producing frame's handles — holds: its one value
-    /// cell denominated in that resource. None where the frame holds no
-    /// such cell or several, since a credit to either would be a guess.
+    /// Who may take a crossing in `resource` back, among the capabilities
+    /// `frame` — the producing frame's handles — holds: the producer,
+    /// where it holds one value cell denominated in that resource.
+    /// Nobody where it holds none or several, since a credit to either
+    /// would be a guess.
     ///
-    /// None too where the one cell is not this shard's to write. A
-    /// reclaim credits the origin on the shard the record sits on, so a
-    /// cell some other member of the core applies could never be
-    /// credited there — naming it would leave the reclaim trapping out
-    /// of scope rather than taking the crossing back. A core node may
-    /// hold such a cell: its scope is the core set, wider than what it
-    /// applies. Nameless, the crossing is nobody's to take back, which
-    /// is what it already is where the frame holds several.
-    fn origin_among(&self, frame: &[u32], resource: ResourceAddr) -> Option<SubstateKey> {
+    /// Nobody too where the one cell is not this shard's to write. A
+    /// reclaim credits on the shard the record sits on, so a cell some
+    /// other member of the core applies could never be credited there —
+    /// naming it would leave the reclaim trapping out of scope rather
+    /// than taking the crossing back. A core node may hold such a cell:
+    /// its scope is the core set, wider than what it applies.
+    fn recourse_among(&self, frame: &[u32], resource: ResourceAddr) -> Recourse {
         let mut cells = frame
             .iter()
             .filter(|&&rep| self.resource_at(rep) == Some(resource))
@@ -273,8 +278,8 @@ impl KernelSession {
             })
             .filter(|key| self.applies.covers(key.owner));
         match (cells.next(), cells.next()) {
-            (Some(only), None) => Some(only),
-            _ => None,
+            (Some(only), None) => Recourse::Producer(only),
+            _ => Recourse::Nobody,
         }
     }
 
@@ -300,10 +305,11 @@ impl KernelSession {
     ///
     /// [`SessionTrap::EscrowRecordUnreadable`] for a record that is
     /// absent, does not decode, names another edge, or — for a reclaim
-    /// — names no origin; [`SessionTrap::EscrowOriginUndeclared`] where
-    /// the declaration carries no movement handle on the cell the record
-    /// says to credit; and any [`SessionTrap`] the claim, the credit or
-    /// the store raises.
+    /// — leaves the crossing nobody's to take back;
+    /// [`SessionTrap::EscrowCreditUndeclared`] where the declaration
+    /// carries no movement handle on the cell the record says to credit;
+    /// and any [`SessionTrap`] the claim, the credit or the store
+    /// raises.
     pub(crate) fn escrow_settle(&mut self, disposal: &Disposal) -> Result<(), SessionTrap> {
         let record: CrossingCell = self
             .store
@@ -312,15 +318,15 @@ impl KernelSession {
             .filter(|record| disposal.claim.names(record))
             .ok_or(SessionTrap::EscrowRecordUnreadable(disposal.record))?;
         if disposal.disposition == Disposition::Reclaim {
-            let origin = record
-                .origin
-                .ok_or(SessionTrap::EscrowRecordUnreadable(disposal.record))?;
+            let Recourse::Producer(credit) = record.recourse else {
+                return Err(SessionTrap::EscrowRecordUnreadable(disposal.record));
+            };
             let site = self
                 .table
                 .iter()
-                .position(|held| matches!(held, Capability::Delta { key, .. } if *key == origin))
+                .position(|held| matches!(held, Capability::Delta { key, .. } if *key == credit))
                 .and_then(|index| u32::try_from(index).ok())
-                .ok_or(SessionTrap::EscrowOriginUndeclared(origin))?;
+                .ok_or(SessionTrap::EscrowCreditUndeclared(credit))?;
             let crossed = Crossed {
                 resource: record.resource,
                 amount: record.amount,

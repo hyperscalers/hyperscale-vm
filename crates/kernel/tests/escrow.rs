@@ -12,7 +12,7 @@ use std::sync::Arc;
 use hyperscale_hbor::from_slice;
 use hyperscale_vm_effects::{
     CallArg, CrossingCell, CrossingSite, Declaration, EdgeContent, Hash32, Hasher, IntentHash,
-    Marker, NodeCall, PackageHash, SlotId, TestHasher, child_key,
+    Marker, NodeCall, PackageHash, Recourse, SlotId, TestHasher, child_key,
 };
 use hyperscale_vm_embed::GuestArg;
 use hyperscale_vm_kernel::{
@@ -828,8 +828,8 @@ fn a_second_consumer_of_one_edge_is_refused_running_whole() {
 
 /// The record names the cell the value left — the producing frame's one
 /// cell denominated in the crossing's resource — so a reclaim needs
-/// nothing but the leaf. A frame holding two such cells names none, and
-/// its crossing is nobody's to take back.
+/// nothing but the leaf. A frame holding two such cells names nobody,
+/// and its crossing cannot be taken back.
 #[test]
 fn a_record_names_the_cell_its_value_left() {
     let mut store = MemoryStore::new();
@@ -841,7 +841,7 @@ fn a_record_names_the_cell_its_value_left() {
     )
     .unwrap();
     let record = CrossingCell::from_bytes(&sent.store.cell(record_site().key()).unwrap()).unwrap();
-    assert_eq!(record.origin, Some(cell(PAYER)));
+    assert_eq!(record.recourse, Recourse::Producer(cell(PAYER)));
 
     let mut ambiguous = sending(200);
     ambiguous.declaration = declared(&[
@@ -866,7 +866,11 @@ fn a_record_names_the_cell_its_value_left() {
     )
     .unwrap();
     let record = CrossingCell::from_bytes(&sent.store.cell(record_site().key()).unwrap()).unwrap();
-    assert_eq!(record.origin, None, "two cells in the resource name none");
+    assert_eq!(
+        record.recourse,
+        Recourse::Nobody,
+        "two cells in the resource name nobody",
+    );
     let reclaimed = execute(
         Arc::new(sent.store) as Arc<dyn Baseline>,
         &[reclaiming(tx(9))],
@@ -878,20 +882,20 @@ fn a_record_names_the_cell_its_value_left() {
             reclaimed.receipts[&tx(9)].outcome,
             Outcome::ProtocolError { .. }
         ),
-        "a record naming no origin cannot be taken back: {:?}",
+        "a record nobody may take back cannot be reclaimed: {:?}",
         reclaimed.receipts[&tx(9)]
     );
 }
 
-/// A cell this shard does not apply names no origin.
+/// A cell this shard does not apply names nobody.
 ///
 /// A core node's scope is the core set, so it may reach a cell a sibling
 /// applies. The record sits where the producer's target is, and a
-/// reclaim credits the origin there — so an origin on the sibling could
-/// never be credited, and naming it would leave every reclaim trapping
-/// out of scope instead of taking the crossing back.
+/// reclaim credits there — so a sibling's cell could never be credited,
+/// and naming it would leave every reclaim trapping out of scope
+/// instead of taking the crossing back.
 #[test]
-fn a_cell_this_shard_does_not_apply_names_no_origin() {
+fn a_cell_this_shard_does_not_apply_names_nobody() {
     const SIBLING: u8 = 0x77;
     let mut store = MemoryStore::new();
     store.write(cell(SIBLING), encode_amount(1_000).to_vec());
@@ -919,7 +923,8 @@ fn a_cell_this_shard_does_not_apply_names_no_origin() {
     .unwrap();
     let record = CrossingCell::from_bytes(&sent.store.cell(record_site().key()).unwrap()).unwrap();
     assert_eq!(
-        record.origin, None,
+        record.recourse,
+        Recourse::Nobody,
         "the one cell in the resource is a sibling's to write",
     );
 }
