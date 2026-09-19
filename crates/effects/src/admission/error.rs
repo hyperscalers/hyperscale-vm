@@ -349,17 +349,19 @@ pub enum AdmissionError {
         /// The offending node.
         node: u32,
     },
-    /// A movement entry a total frame cannot be held to.
+    /// A movement entry a frame nothing waits on cannot be held to.
     ///
-    /// The mark says a caller may commit without waiting to hear back,
-    /// so every verdict the frame carries has to land before any leg
-    /// does. An entry asking both what the mover holds and what the call
-    /// presented is answerable in neither earlier stage alone, so it is
-    /// the declaring node's own walk that would reach it — after a
-    /// caller may already have committed.
+    /// The mark over an open door says a caller may commit without
+    /// waiting to hear back, so every verdict the frame carries has to
+    /// land before any leg does. An entry asking both what the mover
+    /// holds and what the call presented is answerable in neither earlier
+    /// stage alone, so it is the declaring node's own walk that would
+    /// reach it — after a caller may already have committed. A gated
+    /// method is waited on at its gate, so its entries are that walk's to
+    /// answer like any other method's.
     #[error(
-        "node {node} is total and moves {resource:?}, whose {behaviour:?} entry asks both what \
-         the mover holds and what the call presented"
+        "node {node} commits without waiting and moves {resource:?}, whose {behaviour:?} entry \
+         asks both what the mover holds and what the call presented"
     )]
     MovementUnanswerable {
         /// The offending node.

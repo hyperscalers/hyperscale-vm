@@ -18,14 +18,14 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use common::{ALICE, BOB, meta_granting, pkg, world};
+use common::{ALICE, BOB, account, meta_granting, pkg, world};
 use hyperscale_hbor::{Bytes, Capped, Name};
 use hyperscale_vm_effects::vocabulary::{HALT, VAULT};
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, Claim, ClaimRef, EdgeRef, GrantedBehaviour, GraphArg, GraphNode,
-    Hash32, Holding, InstanceMeta, Intent, IntentHeader, IntentTree, JudgedLeaf, ManifestGraph,
-    Records, ResourceGrants, ResourceKind, ResourceMeta, Rule, RuleBytes, SlotRef, StoredRule,
-    TestHasher, Value, admit_tree, child_key,
+    AdmissionError, Admitted, Claim, ClaimRef, Clause, EdgeRef, Expr, GrantedBehaviour, GraphArg,
+    GraphNode, Hash32, Holding, InstanceMeta, Intent, IntentHeader, IntentTree, JudgedLeaf,
+    ManifestGraph, Records, ResourceGrants, ResourceKind, ResourceMeta, Rule, RuleBytes, RuleExpr,
+    RuleLeaf, SlotRef, StoredRule, TestHasher, Value, admit_tree, child_key,
 };
 use hyperscale_vm_fixtures::custodian;
 use hyperscale_vm_types::{
@@ -613,6 +613,61 @@ fn a_total_frame_carries_no_entry_its_own_leg_would_answer() {
             resource,
             behaviour: GrantedBehaviour::Deposit,
         }),
+    );
+}
+
+/// And a gate ahead of the body is what makes the same entry answerable.
+///
+/// The mark covers the body; the method's own gate runs before it, and a
+/// caller of a gated method waits to hear back either way. So nothing
+/// commits early, the declaring node's own walk is free to reach the
+/// entry, and the rule the open deposit cannot carry is ordinary here —
+/// what refuses this call is the gate's unpresented claim, which is the
+/// later stage the entry never reached.
+#[test]
+fn a_gated_frame_carries_the_entry_its_own_walk_answers() {
+    let approver = Claim::of_subject(Address::new([0x4A; 31], AddressClass::Principal));
+    let mixed = StoredRule::CountOf {
+        count: 2,
+        rules: Capped::new(vec![
+            StoredRule::claim(approver),
+            StoredRule::held(BADGE, Holding::Balance),
+        ])
+        .unwrap(),
+    };
+    let record = ResourceMeta {
+        namespace: ISSUER,
+        kind: ResourceKind::Fungible,
+        material: Capped::new(vec![Bytes::new(b"Approved".to_vec()).unwrap()]).unwrap(),
+        rules: {
+            let mut rules = ResourceGrants::new();
+            rules.set(GrantedBehaviour::Deposit, sealed(&mixed));
+            rules
+        },
+    };
+
+    // The protocol's own deposit, gated. Published in place of it rather
+    // than beside it, because a principal's package is what serves every
+    // account address the transfer names.
+    let mut metadata = account::metadata();
+    metadata
+        .methods
+        .get_mut(&Name::declared("deposit"))
+        .expect("the account declares a deposit")
+        .effects
+        .push(Clause::Requires {
+            guard: None,
+            rule: RuleExpr::Require(RuleLeaf::Claim(Expr::SelfAddr)),
+        });
+    let mut chain = Records::new();
+    chain.packages.publish_unchecked(pkg("account"), metadata);
+    chain.instances.serve_principals(pkg("account"));
+
+    let mut env = transferred(ALICE, BOB, record.address(&TestHasher));
+    env.resources = Capped::new(vec![record]).unwrap();
+    assert_eq!(
+        admit_env(&env, &chain),
+        Err(AdmissionError::MissingEvidence { node: 1 }),
     );
 }
 

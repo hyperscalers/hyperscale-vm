@@ -613,7 +613,7 @@ impl Admission<'_> {
             self.hasher,
             self.grants,
             frame,
-            signature.totality.is_total(),
+            signature.is_unrefusable(),
             node_index,
         )?);
         // Issuance is an actor question like any other, so its entry
