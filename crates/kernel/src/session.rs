@@ -797,6 +797,12 @@ impl KernelSession {
 mod tests {
     use std::sync::Arc;
 
+    use hyperscale_hbor::{Bytes, Capped, Name, NodeId, ShapeTable, TypeShape};
+    use hyperscale_vm_effects::instance::{InstanceMeta, MAX_CONFIG_BYTES};
+    use hyperscale_vm_effects::{
+        Hash32, MethodSignature, PACKAGE_SLOT_BASE, PackageHash, PackageMetadata, SlotId, SlotKind,
+        SlotShape, Value, check_metadata,
+    };
     use hyperscale_vm_types::{
         ABSENT_REP, AbortReason, Address, AddressClass, CollectionId, EVENT_FRAME_BYTES, Effect,
         EffectTarget, MAX_EVENT_BYTES_PER_TX, MAX_EVENT_PAYLOAD_BYTES, MAX_EVENT_TYPES,
@@ -1159,6 +1165,143 @@ mod tests {
                 tx: tx(1),
                 key: vault,
             })
+        );
+    }
+
+    /// A byte run at `cap`, and the width its own shape measures: the
+    /// cap behind its length.
+    fn run(cap: u32) -> (ShapeTable, NodeId, u32) {
+        let mut types = ShapeTable::new();
+        let byte = types.push(TypeShape::U8).expect("a form the table holds");
+        let run = types
+            .push(TypeShape::Seq { cap, element: byte })
+            .expect("a form the table holds");
+        let width = u32::try_from(types.most(run)).expect("a width inside u32");
+        (types, run, width)
+    }
+
+    /// The width of the widest run `admits` accepts, walked down from a
+    /// cap past every leaf a package writes.
+    fn widest(admits: impl Fn(u32) -> bool) -> u32 {
+        let cap = (0..=MAX_SLOT_WIDTH + 1)
+            .rev()
+            .find(|cap| admits(*cap))
+            .expect("a run some leaf admits");
+        run(cap).2
+    }
+
+    /// Every leaf a package writes, run through the guard this file
+    /// traps with at the widest the publish gate admits.
+    ///
+    /// Four leaves and no fifth: a package's own slots, an event's
+    /// payload, the record an instance's data cell holds, and the
+    /// configuration leaf a creation seals. Each is bounded at the gate,
+    /// and each of those bounds is worth something only if it is the
+    /// figure checked here — so what the gate admits is *searched for*
+    /// rather than restated, and handed to this file's own guard. A cap
+    /// loosened on either side parts the two, and parting them is what
+    /// this fails on.
+    #[test]
+    fn no_leaf_the_gate_admits_is_one_this_session_traps_on() {
+        // A package's own slots. The gate holds a declared width to the
+        // element's own bound and to the cap it may not pass.
+        let held = |cap: u32| {
+            let (types, element, width) = run(cap);
+            PackageMetadata {
+                types,
+                state: std::iter::once((
+                    SlotId(PACKAGE_SLOT_BASE),
+                    SlotShape {
+                        name: Name::declared("held"),
+                        kind: SlotKind::Keyed,
+                        element,
+                        width,
+                        denomination: None,
+                    },
+                ))
+                .collect(),
+                ..PackageMetadata::default()
+            }
+        };
+        let slot = widest(|cap| check_metadata(&held(cap)) == Ok(()));
+        assert_eq!(
+            KernelSession::check_value_len(slot as usize, MAX_SLOT_WIDTH),
+            Ok(()),
+            "the widest leaf a declared slot admits is one no write traps on"
+        );
+
+        // An event's payload, which has no slot row: the gate measures
+        // the shape and compares it, and this file builds the payload
+        // under a cap of its own.
+        let emitted = |cap: u32| {
+            let (mut types, run, width) = run(cap);
+            types
+                .push(TypeShape::Named {
+                    name: Name::declared("noted"),
+                    shape: run,
+                })
+                .expect("a form the table holds");
+            PackageMetadata {
+                events: vec![Name::declared("noted")],
+                methods: std::iter::once((
+                    Name::declared("moves"),
+                    MethodSignature {
+                        emits: Capped::new(vec![0]).expect("one event"),
+                        event_bytes: u32::try_from(EVENT_FRAME_BYTES).expect("a frame in u32")
+                            + width,
+                        ..MethodSignature::default()
+                    },
+                ))
+                .collect(),
+                types,
+                ..PackageMetadata::default()
+            }
+        };
+        let payload = widest(|cap| check_metadata(&emitted(cap)) == Ok(()));
+        assert!(
+            Bytes::<MAX_EVENT_PAYLOAD_BYTES>::new(vec![0; payload as usize]).is_ok(),
+            "the widest payload the gate admits is one no emit traps on"
+        );
+
+        // The record an instance's data cell holds, which has no slot
+        // row either. The cell sits outside the package band, where a
+        // leaf is bounded at the cap.
+        let declares = |cap: u32| {
+            let (mut types, run, _) = run(cap);
+            types
+                .push(TypeShape::Named {
+                    name: Name::declared("entry"),
+                    shape: run,
+                })
+                .expect("a form the table holds");
+            PackageMetadata {
+                types,
+                ..PackageMetadata::default()
+            }
+        };
+        let record = widest(|cap| check_metadata(&declares(cap)) == Ok(()));
+        assert_eq!(
+            KernelSession::check_value_len(record as usize, MAX_SLOT_WIDTH),
+            Ok(()),
+            "the widest record the gate admits is one no seal traps on"
+        );
+
+        // The configuration leaf, whose width its creator chooses rather
+        // than its package. `MAX_CONFIG_BYTES` bounds the configuration
+        // where it is built, so the sealed record still fits the leaf.
+        let filling = |bytes: usize| InstanceMeta {
+            package: PackageHash(Hash32([1; 32])),
+            config: Capped::new(vec![Value::Bytes(vec![0; bytes])]).expect("one field"),
+            salt: Hash32([2; 32]),
+        };
+        let sealed = (0..=MAX_CONFIG_BYTES)
+            .rev()
+            .find_map(|bytes| filling(bytes).leaf_bytes().ok())
+            .expect("a configuration the cap admits");
+        assert_eq!(
+            KernelSession::check_value_len(sealed.len(), MAX_SLOT_WIDTH),
+            Ok(()),
+            "a configuration the cap admits seals into a leaf no write traps on"
         );
     }
 }
