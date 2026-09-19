@@ -50,6 +50,18 @@ use crate::{
 /// times as tall, and one more for the name over its root.
 const MAX_SHAPE_HEIGHT: usize = 3 * DEFAULT_MAX_DEPTH + 1;
 
+/// The nodes a walk over one shape visits.
+///
+/// Sharing is how a table is written and not how it is read: a subtree
+/// two types name is stored once and walked once for each, so the nodes
+/// a table holds bound neither what rendering one costs nor what reading
+/// a value against it allocates. Both are one visit per position, and
+/// this is what bounds them. Generous against what a declaration
+/// produces — the widest type in the protocol's own packages is under a
+/// hundredth of this — and finite against a table that names one subtree
+/// from every level of itself.
+const MAX_SHAPE_POSITIONS: usize = 65_536;
+
 /// A node's place in a [`ShapeTable`]: its index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 #[hbor(crate = crate, transparent)]
@@ -242,6 +254,15 @@ pub enum ShapeFault {
     /// holds is one a consumer can read.
     #[error("shape stands past the {MAX_SHAPE_HEIGHT} levels a reader of one walks")]
     TooTall,
+    /// A shape whose walk visits more nodes than a reader of one performs.
+    ///
+    /// A subtree two types share is written once and read once per node
+    /// that names it, so a table far smaller than the walk it describes
+    /// is expressible: sixty-six nodes can name a shape whose walk visits
+    /// more positions than there are values to put in them. Refused so
+    /// what a consumer is handed costs what it looks like it costs.
+    #[error("shape walks {0} positions, past the {MAX_SHAPE_POSITIONS} a reader of one visits")]
+    TooBroad(usize),
     /// A sequence, set, or map over an element that occupies no bytes.
     ///
     /// A length is then a count no input pays for, so a claimed one
@@ -296,6 +317,7 @@ impl ShapeFault {
             Self::Duplicate(_) => "shape table repeats a node",
             Self::TooDeep => "shape nests past the levels a decoder follows",
             Self::TooTall => "shape stands past the levels a reader of one walks",
+            Self::TooBroad(_) => "shape walks more positions than a reader of one visits",
             Self::ZeroWidth => "shape runs over an element that carries no bytes",
             Self::AmbiguousName(_) => "shape names two members of one type alike",
             Self::AmbiguousDiscriminant(_) => "shape selects two variants by one discriminant",
@@ -337,6 +359,11 @@ struct Measure {
     /// a walk over the shape recurses through. Every node costs one,
     /// the ones the encoding spends nothing on included.
     height: usize,
+    /// The nodes a walk over the shape visits, counting a shared subtree
+    /// once per node that names it. Sharing is how a table is written,
+    /// not how it is read: a reader reaches a node through each of its
+    /// parents, so this is the work the walk actually does.
+    positions: usize,
     /// The fewest bytes any value of the node occupies.
     least: usize,
     /// The most bytes any value of the node occupies.
@@ -349,6 +376,7 @@ impl Measure {
         Self {
             depth: 0,
             height: 1,
+            positions: 1,
             least: width,
             most: width,
         }
@@ -364,6 +392,7 @@ impl Measure {
         Ok(Self {
             depth: element.depth + 1,
             height: element.height + 1,
+            positions: element.positions.saturating_add(1),
             least: 1,
             most: varint::encoded_len(cap).saturating_add(cap.saturating_mul(element.most)),
         })
@@ -375,17 +404,20 @@ impl Measure {
     fn under(children: impl Iterator<Item = Self>) -> Self {
         let mut deepest = None::<usize>;
         let mut tallest = 0usize;
+        let mut positions = 1usize;
         let mut least = 0usize;
         let mut most = 0usize;
         for child in children {
             deepest = Some(deepest.map_or(child.depth, |seen| seen.max(child.depth)));
             tallest = tallest.max(child.height);
+            positions = positions.saturating_add(child.positions);
             least = least.saturating_add(child.least);
             most = most.saturating_add(child.most);
         }
         Self {
             depth: deepest.map_or(0, |depth| depth + 1),
             height: tallest + 1,
+            positions,
             least,
             most,
         }
@@ -561,6 +593,7 @@ impl ShapeTable {
                 Measure {
                     depth: 0,
                     height: 1,
+                    positions: 1,
                     least: 1,
                     most: varint::encoded_len(cap).saturating_add(cap),
                 }
@@ -575,6 +608,7 @@ impl ShapeTable {
                 let pair = Measure {
                     depth: key.depth.max(value.depth),
                     height: key.height.max(value.height),
+                    positions: key.positions.saturating_add(value.positions),
                     least: key.least.saturating_add(value.least),
                     most: key.most.saturating_add(value.most),
                 };
@@ -587,6 +621,7 @@ impl ShapeTable {
                 Measure {
                     depth: held.depth + 1,
                     height: held.height + 1,
+                    positions: held.positions.saturating_add(1),
                     least: 1,
                     most: held.most.saturating_add(1),
                 }
@@ -614,6 +649,9 @@ impl ShapeTable {
                 let mut selected = BTreeSet::new();
                 let mut deepest = 0usize;
                 let mut tallest = 0usize;
+                // Every variant, because what walks a shape renders or
+                // compares all of them; only a value picks one.
+                let mut positions = 1usize;
                 let mut lightest = None::<usize>;
                 let mut widest = 0usize;
                 for variant in variants {
@@ -623,12 +661,14 @@ impl ShapeTable {
                     let content = self.held(variant.content)?;
                     deepest = deepest.max(content.depth);
                     tallest = tallest.max(content.height);
+                    positions = positions.saturating_add(content.positions);
                     lightest = Some(lightest.map_or(content.least, |seen| seen.min(content.least)));
                     widest = widest.max(content.most);
                 }
                 Measure {
                     depth: deepest,
                     height: tallest + 1,
+                    positions,
                     least: lightest.unwrap_or(0).saturating_add(1),
                     most: widest.saturating_add(1),
                 }
@@ -643,6 +683,7 @@ impl ShapeTable {
                 let held = self.held(*shape)?;
                 Measure {
                     height: held.height + 1,
+                    positions: held.positions.saturating_add(1),
                     ..held
                 }
             }
@@ -672,6 +713,9 @@ impl ShapeTable {
         }
         if measure.height > MAX_SHAPE_HEIGHT {
             return Err(ShapeFault::TooTall);
+        }
+        if measure.positions > MAX_SHAPE_POSITIONS {
+            return Err(ShapeFault::TooBroad(measure.positions));
         }
         let id = NodeId::at(self.nodes.len());
         if let TypeShape::Named { name, .. } = &node {

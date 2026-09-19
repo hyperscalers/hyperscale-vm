@@ -336,3 +336,51 @@ fn a_table_taller_than_a_reader_walks_is_refused_at_decode() {
         ))
     );
 }
+
+/// A shape whose levels each name the one below them twice: the nodes
+/// grow one per level and the walk doubles.
+fn shared_subtrees(levels: u32) -> Result<(ShapeTable, NodeId), ShapeFault> {
+    let mut table = ShapeTable::new();
+    let mut id = table.push(TypeShape::Tuple(Vec::new()))?;
+    for _ in 0..levels {
+        id = table.push(TypeShape::Tuple(vec![id, id]))?;
+    }
+    Ok((table, id))
+}
+
+/// A subtree two nodes share is stored once and walked once for each, so
+/// the nodes a table holds bound neither what rendering it costs nor what
+/// reading a value against it allocates. Nothing else in the measure
+/// catches this: the nodes are few, the tree is shallow, and a run of
+/// units is as wide as it is narrow — zero bytes either way.
+#[test]
+fn a_shape_whose_walk_outgrows_its_table_is_refused() {
+    let (table, root) = shared_subtrees(15).expect("a walk a reader performs");
+    assert_eq!(table.len(), 16, "one node per level");
+    assert_eq!(table.most(root), 0, "and no width to refuse it by");
+    assert_eq!(table.depth(root), 15, "well inside what a decoder follows");
+    assert!(table.read(root, &[]).is_ok());
+
+    assert!(matches!(
+        shared_subtrees(20).map(|_| ()),
+        Err(ShapeFault::TooBroad(_))
+    ));
+}
+
+/// And the refusal is the decoder's, where the table arrives from a peer.
+#[test]
+fn a_table_whose_walk_outgrows_it_is_refused_at_decode() {
+    let mut nodes = vec![TypeShape::Tuple(Vec::new())];
+    for _ in 0..20 {
+        let below = NodeId(u32::try_from(nodes.len() - 1).expect("a short table"));
+        nodes.push(TypeShape::Tuple(vec![below, below]));
+    }
+    let bytes = to_vec(&nodes).expect("the nodes encode");
+    assert!(bytes.len() < 256, "under a quarter kibibyte on the wire");
+    assert_eq!(
+        from_slice::<ShapeTable>(&bytes),
+        Err(DecodeError::FailedValidation(
+            "shape walks more positions than a reader of one visits"
+        ))
+    );
+}
