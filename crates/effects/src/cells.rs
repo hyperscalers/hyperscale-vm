@@ -303,11 +303,11 @@ pub struct CrossingCell {
 /// arrives as a prefix of leaves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub enum Recourse {
-    /// The cell the value left: the one cell of the producing frame
-    /// denominated in the resource that crossed. A reclaim credits it.
+    /// The cell the value left, which a reclaim credits.
     Producer(SubstateKey),
-    /// Nobody. The frame held no such cell or several, so a credit to
-    /// either would be a guess.
+    /// Nobody. A crossing an outbound leg consumes is that consumer's
+    /// from the moment the core commits it, so no cell is the crossing's
+    /// to return to and the record stands until the claim retires it.
     Nobody,
 }
 

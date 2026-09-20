@@ -993,15 +993,15 @@ fn a_crossing_merged_from_two_cells_is_refused_at_the_issue() {
     assert_eq!(balance(&sent, cell(OTHER)), 1_000);
 }
 
-/// A record nobody may take back still releases, and releases credit
-/// nothing.
+/// A reclaim of a record nobody may take back is refused.
 ///
 /// The delivering crossing is the one that reaches this: it is its
-/// consumer's from the moment the core commits it, so the producer's
-/// account of it closes without moving the value and the record stands
-/// for the consumer to claim whenever it can.
+/// consumer's from the moment the core commits it, so there is no cell
+/// to credit and no instant at which taking it back is right. A
+/// settlement that asked anyway would credit the producer for value its
+/// consumer may still claim, so the record's own terms refuse it.
 #[test]
-fn a_delivered_record_releases_and_credits_nothing() {
+fn a_reclaim_of_a_record_nobody_may_take_back_is_refused() {
     let mut store = MemoryStore::new();
     store.write(cell(PAYER), encode_amount(1_000).to_vec());
     let sent = execute(
@@ -1012,29 +1012,27 @@ fn a_delivered_record_releases_and_credits_nothing() {
     .unwrap();
 
     let before = balance(&sent, cell(PAYER));
-    let released = execute(
+    let refused = execute(
         Arc::new(sent.store) as Arc<dyn Baseline>,
-        &[releasing(tx(9))],
+        &[reclaiming(tx(9))],
         ExecutionMode::Serial,
     )
     .unwrap();
-    assert!(
-        matches!(released.receipts[&tx(9)].outcome, Outcome::Completed { .. }),
-        "a record nobody may take back releases: {:?}",
-        released.receipts[&tx(9)]
+    assert_eq!(
+        refused.receipts[&tx(9)].outcome,
+        Outcome::ProtocolError {
+            reason: AbortReason::EscrowRecordUnreadable,
+        },
+        "a record naming nobody is not one a reclaim may read",
     );
     assert_eq!(
-        balance(&released, cell(PAYER)),
+        balance(&refused, cell(PAYER)),
         before,
-        "a release credits nothing",
+        "and nothing is credited back",
     );
     assert!(
-        released.store.cell(record_site().key()).is_some(),
-        "and the record stands, still naming the claim that may take it",
-    );
-    assert!(
-        released.store.cell(reclaim_site().key()).is_none(),
-        "the producer claims nothing it did not take",
+        refused.store.cell(record_site().key()).is_some(),
+        "the record stands, still naming the claim that may take it",
     );
 }
 
@@ -1064,17 +1062,6 @@ fn reclaiming(who: TxHash) -> BatchTx {
         claim: reclaim_site(),
         disposition: Disposition::Reclaim,
     }])
-}
-
-/// The settlement of a record nobody may take back.
-fn releasing(who: TxHash) -> BatchTx {
-    BatchTx::new(who, declared(&[crossing_cell(record_site())]), env()).with_disposals(vec![
-        Disposal {
-            record: record_site().key(),
-            claim: reclaim_site(),
-            disposition: Disposition::Release,
-        },
-    ])
 }
 
 fn balance(outcome: &BatchOutcome, key: SubstateKey) -> u128 {

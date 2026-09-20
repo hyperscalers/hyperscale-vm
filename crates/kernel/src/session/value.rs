@@ -296,7 +296,7 @@ impl KernelSession {
     }
 
     /// Settle one record this execution issued: take the crossing back,
-    /// retire the record once its claim committed, or release it.
+    /// or retire the record once its claim committed.
     ///
     /// Taking it back is the producing node claiming its own record
     /// through the path a consumer claims it: the claim is a loss and
@@ -308,11 +308,8 @@ impl KernelSession {
     /// consumer's claim moved the value where it ran, and what is left
     /// is a cell saying so.
     ///
-    /// A reclaim and a retirement both end the record: it is a balance
-    /// held for a claim, and the claim has happened or never will. A
-    /// release ends neither — nobody may take the crossing back, so the
-    /// balance stands under the claim cell it already names and only the
-    /// producer's account of it closes.
+    /// Either way the record goes: it is a balance held for a claim, and
+    /// the claim has happened or never will.
     ///
     /// The record has to be there and name the edge — one that is not
     /// was settled already, and a second settlement is the batch's
@@ -334,9 +331,6 @@ impl KernelSession {
             .and_then(|bytes| CrossingCell::from_bytes(&bytes))
             .filter(|record| disposal.claim.names(record))
             .ok_or(SessionTrap::EscrowRecordUnreadable(disposal.record))?;
-        if disposal.disposition == Disposition::Release {
-            return Ok(());
-        }
         if disposal.disposition == Disposition::Reclaim {
             let Recourse::Producer(credit) = record.recourse else {
                 return Err(SessionTrap::EscrowRecordUnreadable(disposal.record));

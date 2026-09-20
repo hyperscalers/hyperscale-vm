@@ -169,18 +169,15 @@ pub struct Departure {
 }
 
 /// One record this execution settles rather than runs a node for: a
-/// crossing the producing shard issued, taken back, retired or released.
+/// crossing the producing shard issued, either taken back or retired.
 ///
-/// Taken back, the record's resource and amount are credited to the cell
-/// the value left, a claim is written under the producer's own target on
-/// the machinery a consumer claims with, and the record goes. Retired,
-/// nothing moves and the record goes, since the consumer's committed
-/// claim moved the value where it ran. Released, nothing moves and the
-/// record stays: no cell of the producing frame is the crossing's to
-/// return to, so the value waits in the record for whoever may still
-/// claim it. Every term is the leaf's, so a replica holding the prefix
-/// and nothing else — a split child — composes a settlement from the
-/// record alone.
+/// The record is read and deleted either way. Taken back, its resource
+/// and amount are credited to the cell the value left and a claim is
+/// written under the producer's own target, on the machinery a consumer
+/// claims with; retired, nothing moves, since the consumer's committed
+/// claim moved the value where it ran. Every term is the leaf's, so a
+/// replica holding the prefix and nothing else — a split child —
+/// composes a settlement from the record alone.
 ///
 /// Evidence for either is the parent's to establish. What the kernel
 /// checks is that the record is there and names the edge the claim site
@@ -200,18 +197,17 @@ pub struct Disposal {
 /// What a settlement does with a record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Disposition {
-    /// No consumer claimed and the producing frame names a cell to
-    /// credit: credit the value back and claim the edge under the
-    /// producer's own target.
+    /// No consumer claimed: credit the value back and claim the edge
+    /// under the producer's own target.
+    ///
+    /// Only a crossing naming a cell to credit is disposed of this way.
+    /// One an outbound leg consumes names none and nothing takes it
+    /// back, so its only disposal is the retirement its consumer's
+    /// claim licenses.
     Reclaim,
     /// The consumer's claim committed: delete the record and move
     /// nothing.
     Retire,
-    /// No consumer claimed and nobody may take the crossing back: move
-    /// nothing and leave the record standing. The producer is done with
-    /// it; the value stays where it is, still under the claim cell the
-    /// record names.
-    Release,
 }
 
 /// What arrived for the edge a node this execution does not run would
