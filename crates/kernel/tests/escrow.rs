@@ -18,7 +18,7 @@ use hyperscale_vm_embed::GuestArg;
 use hyperscale_vm_kernel::{
     Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, Departure, Disposal,
     Disposition, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
-    KernelSession, LegPlan, ManifestWalk, MemoryStore, OwnerSet, Receipt, Substates, decode_amount,
+    KernelSession, LegPlan, ManifestWalk, MemoryStore, Receipt, Substates, decode_amount,
     execute_batch,
 };
 use hyperscale_vm_types::{
@@ -1035,55 +1035,6 @@ fn a_delivered_record_releases_and_credits_nothing() {
     assert!(
         released.store.cell(reclaim_site().key()).is_none(),
         "the producer claims nothing it did not take",
-    );
-}
-
-/// A crossing funded from a cell this shard does not apply is refused.
-///
-/// A core node's scope is the core set, so it may reach a cell a sibling
-/// applies. The record sits where the producer's target is, and a
-/// reclaim credits there — so a sibling's cell could never be credited,
-/// and naming it would leave every reclaim trapping out of scope
-/// instead of taking the crossing back. Naming nobody instead would
-/// leave the value with nowhere to go at all, so the crossing is refused
-/// where it is issued.
-#[test]
-fn a_crossing_from_a_cell_this_shard_does_not_apply_is_refused() {
-    const SIBLING: u8 = 0x77;
-    let mut store = MemoryStore::new();
-    store.write(cell(SIBLING), encode_amount(1_000).to_vec());
-    // The node's target — and so the record — is here; the one cell it
-    // moves in the resource is the sibling's. Judged, as a core member
-    // judges its whole core, and applied there rather than here.
-    let mut elsewhere = sending(200);
-    elsewhere.declaration = declared(&[
-        Effect {
-            target: EffectTarget::Point(cell(SIBLING)),
-            mode: Mode::Reserve { amount: 200 },
-        },
-        crossing_cell(record_site()),
-    ]);
-    let elsewhere = elsewhere
-        .with_applies(OwnerSet::of(|candidate: Address| {
-            candidate != owner(SIBLING)
-        }))
-        .with_judges(OwnerSet::whole());
-    let sent = execute(
-        Arc::new(store) as Arc<dyn Baseline>,
-        &[elsewhere],
-        ExecutionMode::Serial,
-    )
-    .unwrap();
-    assert_eq!(
-        sent.receipts[&tx(1)].outcome,
-        Outcome::UserError {
-            reason: AbortReason::CrossingWithoutRecourse,
-        },
-        "the one cell in the resource is a sibling's to write",
-    );
-    assert!(
-        sent.store.cell(record_site().key()).is_none(),
-        "so no record is written",
     );
 }
 

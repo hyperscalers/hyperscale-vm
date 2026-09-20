@@ -83,9 +83,11 @@ pub fn add_meter_import<T: 'static>(linker: &mut Linker<T>) -> Result<()> {
     Ok(())
 }
 
-/// Instantiate under `budget`, prepaying `cost` — what
+/// Instantiate under `budget`, prepaying `cost`.
+///
+/// `cost` is what
 /// [`instantiation_cost`](hyperscale_vm_meter::instantiation_cost)
-/// derived from the same bytes — and leaving the counter holding the
+/// derived from the same bytes, and the counter is left holding the
 /// rest for the call that follows.
 ///
 /// Refused before any instantiation work happens where the budget does

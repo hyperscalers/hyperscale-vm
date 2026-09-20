@@ -245,15 +245,17 @@ impl KernelSession {
         // reaches and no action moves. So the kernel refuses to issue
         // one rather than issue value into a dead end.
         //
-        // Two shapes reach it. No single cell behind the bucket — a
-        // mint, a crossing claimed in, or a bucket merged from two — and
-        // a cell that is not this shard's to write, since a reclaim
-        // credits on the shard the record sits on and a cell some other
-        // core member applies could never be credited there.
+        // One shape reaches it: value with no single cell behind it — a
+        // mint, a crossing claimed in, or a bucket merged from two. A
+        // cell this execution could not credit does not, because value
+        // only leaves a cell through a capability, and a capability on a
+        // cell another member judges is refused where it is exercised.
+        // So the origin is this member's to credit wherever there is
+        // one, which is what a reclaim needs of it.
         let recourse = if departure.delivers {
             Recourse::Nobody
         } else {
-            let Some(cell) = origin.filter(|key| self.applies.covers(key.owner)) else {
+            let Some(cell) = origin else {
                 return Err(SessionTrap::CrossingWithoutRecourse(departure.site.key()));
             };
             Recourse::Producer(cell)
