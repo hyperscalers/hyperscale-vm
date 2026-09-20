@@ -225,15 +225,13 @@ impl KernelSession {
         departure: Departure,
     ) -> Result<Crossed, SessionTrap> {
         let resource = self.buckets.resource_of(funds)?;
-        // Read before the take: what the bucket carried is what the
-        // record has to be able to give back.
+        // Both refusals below read the bucket rather than consume it, so
+        // a crossing the kernel declines leaves the value where it was:
+        // an instance-bearing edge is the sender's own defect, and a
+        // crossing with nothing to go back to is refused with the bucket
+        // still whole.
+        let amount = self.bucket_amount(funds)?;
         let origin = self.bucket_origin(funds);
-        let held = self.take_bucket(funds)?;
-        let Held::Amount(amount) = held else {
-            return Err(SessionTrap::WrongEdgeKind);
-        };
-        let crossed = Crossed { resource, amount };
-        self.escrow.issue(node, output, crossed)?;
         // A crossing an outbound leg consumes is that consumer's from
         // the moment the core commits it. No cell is the crossing's to
         // return to, whatever produced it, so the record names nobody
@@ -241,18 +239,28 @@ impl KernelSession {
         //
         // Every other crossing goes back where its value came from: the
         // cell the bucket was debited from, which the table carried
-        // here. Nobody where no single cell is behind it — a mint, a
-        // crossing claimed in, or a bucket merged from two — and nobody
-        // where the cell is not this shard's to write, since a reclaim
+        // here. Where there is no such cell there is no crossing: a
+        // consumer that refuses leaves a record nobody may claim and
+        // nobody may take back, and the value stands in a cell no sweep
+        // reaches and no action moves. So the kernel refuses to issue
+        // one rather than issue value into a dead end.
+        //
+        // Two shapes reach it. No single cell behind the bucket — a
+        // mint, a crossing claimed in, or a bucket merged from two — and
+        // a cell that is not this shard's to write, since a reclaim
         // credits on the shard the record sits on and a cell some other
         // core member applies could never be credited there.
         let recourse = if departure.delivers {
             Recourse::Nobody
         } else {
-            origin
-                .filter(|key| self.applies.covers(key.owner))
-                .map_or(Recourse::Nobody, Recourse::Producer)
+            let Some(cell) = origin.filter(|key| self.applies.covers(key.owner)) else {
+                return Err(SessionTrap::CrossingWithoutRecourse(departure.site.key()));
+            };
+            Recourse::Producer(cell)
         };
+        self.take_bucket(funds)?;
+        let crossed = Crossed { resource, amount };
+        self.escrow.issue(node, output, crossed)?;
         self.record_crossing(
             departure.site.key(),
             departure
@@ -453,7 +461,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use hyperscale_vm_effects::{CrossingSite, Hash32, IntentHash, TestHasher};
-    use hyperscale_vm_types::{Address, AddressClass, ResourceAddr};
+    use hyperscale_vm_types::{Address, AddressClass, LocalKey, ResourceAddr, SubstateKey};
 
     use super::super::fixtures::{declared, session_over};
     use super::Held;
@@ -472,6 +480,15 @@ mod tests {
             0,
             1_000,
         )
+    }
+
+    /// A cell the session applies, so a crossing funded from it names a
+    /// producer that could take it back.
+    fn origin_cell() -> SubstateKey {
+        SubstateKey {
+            owner: Address::new([0xA1; 31], AddressClass::Component),
+            local: LocalKey([0x11; 16]),
+        }
     }
 
     fn departure() -> Departure {
@@ -509,7 +526,7 @@ mod tests {
     #[test]
     fn a_fungible_bucket_crosses_as_what_it_carried() {
         let mut session = session_over(MemoryStore::new(), &declared(&[]));
-        let funds = session.open_bucket(Held::Amount(40), RESOURCE, None);
+        let funds = session.open_bucket(Held::Amount(40), RESOURCE, Some(origin_cell()));
         assert_eq!(
             session.escrow_out(0, 0, funds, departure()),
             Ok(Crossed {
@@ -519,5 +536,48 @@ mod tests {
         );
         assert!(session.bucket(funds).is_err(), "consumed on the way out");
         assert_eq!(session.escrow.issued(RESOURCE), 40);
+    }
+
+    /// A crossing no outbound leg consumes has to be able to come home.
+    ///
+    /// Value with no one cell behind it — a mint, a crossing claimed in,
+    /// a bucket merged from two — would leave a record naming nobody: a
+    /// consumer that refuses can never claim it and nothing may take it
+    /// back, so it would stand in a cell no sweep reaches and no action
+    /// moves. Refused at the issue, with the bucket still whole.
+    #[test]
+    fn a_crossing_with_nothing_to_go_back_to_is_refused_at_the_issue() {
+        let mut session = session_over(MemoryStore::new(), &declared(&[]));
+        let merged = session.open_bucket(Held::Amount(40), RESOURCE, None);
+        assert_eq!(
+            session.escrow_out(0, 0, merged, departure()),
+            Err(SessionTrap::CrossingWithoutRecourse(site().key())),
+        );
+        assert!(
+            session.bucket(merged).is_ok(),
+            "the value stays where it was",
+        );
+        assert_eq!(session.escrow.issued(RESOURCE), 0, "and nothing crossed");
+    }
+
+    /// A crossing an outbound leg consumes is the exception the shape is
+    /// built on: it is that consumer's from the moment the core commits
+    /// it and nothing is meant to take it back, so it issues whatever
+    /// produced the value.
+    #[test]
+    fn a_delivering_crossing_needs_nothing_to_go_back_to() {
+        let mut session = session_over(MemoryStore::new(), &declared(&[]));
+        let minted = session.open_bucket(Held::Amount(40), RESOURCE, None);
+        let delivering = Departure {
+            delivers: true,
+            ..departure()
+        };
+        assert_eq!(
+            session.escrow_out(0, 0, minted, delivering),
+            Ok(Crossed {
+                resource: RESOURCE,
+                amount: 40,
+            }),
+        );
     }
 }

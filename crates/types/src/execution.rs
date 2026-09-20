@@ -492,6 +492,19 @@ pub enum AbortReason {
     /// write the state either way.
     #[hbor(discriminant = 72)]
     CrossingKeyRepeated,
+    /// A crossing no outbound leg consumes, carrying value with no one
+    /// cell behind it.
+    ///
+    /// Such a record names nobody: its consumer may claim it, and if the
+    /// consumer refuses nothing may take it back, so the value stands in
+    /// a cell no sweep reaches and no action can move. A crossing an
+    /// outbound leg consumes is the exception the whole shape is built
+    /// on — it is owed to that consumer and nothing is meant to take it
+    /// back. Every other one has to be able to come home, so the kernel
+    /// refuses to issue one that cannot rather than issue value into a
+    /// dead end.
+    #[hbor(discriminant = 76)]
+    CrossingWithoutRecourse,
     /// A body named a handle the table holds and its frame was never
     /// lent: a site bound for another node, or a bucket an earlier node
     /// left in flight.
@@ -848,6 +861,7 @@ mod tests {
             (73, AbortReason::HandleOutsideFrame),
             (74, AbortReason::MissingCeiling),
             (75, AbortReason::EventBytesExceeded),
+            (76, AbortReason::CrossingWithoutRecourse),
         ];
         for (byte, reason) in classes {
             assert_eq!(

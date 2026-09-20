@@ -267,6 +267,10 @@ pub enum SessionTrap {
     /// Refused here whatever admitted the shape.
     #[error("crossing cell {0:?} is written twice in one execution")]
     CrossingKeyRepeated(SubstateKey),
+    /// A crossing no outbound leg consumes whose value has no one cell
+    /// to go back to, so nothing could ever take it back.
+    #[error("crossing cell {0:?} carries value with no cell to return it to")]
+    CrossingWithoutRecourse(SubstateKey),
 }
 
 impl From<SessionTrap> for AbortReason {
@@ -310,6 +314,7 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::EscrowCreditUndeclared(_) => Self::EscrowCreditUndeclared,
             SessionTrap::EscrowRecordUnreadable(_) => Self::EscrowRecordUnreadable,
             SessionTrap::CrossingKeyRepeated(_) => Self::CrossingKeyRepeated,
+            SessionTrap::CrossingWithoutRecourse(_) => Self::CrossingWithoutRecourse,
         }
     }
 }

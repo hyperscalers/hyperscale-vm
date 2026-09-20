@@ -957,10 +957,17 @@ fn a_record_names_the_cell_its_value_left() {
 /// A crossing funded from two cells names nobody: value off two cells
 /// has no one cell to go back to, and naming either would be a guess.
 ///
-/// The case the bucket's own origin cannot answer, and the only one
-/// left that a reclaim of a non-delivering crossing cannot settle.
+/// A crossing no outbound leg consumes has to be able to come home, and
+/// a bucket merged from two cells cannot: neither is the crossing's to
+/// go back to.
+///
+/// Issuing it would leave a record naming nobody. Its consumer could
+/// still claim it, but a consumer that refuses never will — and then
+/// nothing may take it back, so the value stands in a cell no sweep
+/// reaches and no action moves. The kernel refuses at the issue instead,
+/// with both cells untouched.
 #[test]
-fn a_crossing_merged_from_two_cells_names_nobody() {
+fn a_crossing_merged_from_two_cells_is_refused_at_the_issue() {
     const OTHER: u8 = 0x66;
     let mut store = MemoryStore::new();
     store.write(cell(PAYER), encode_amount(1_000).to_vec());
@@ -971,13 +978,38 @@ fn a_crossing_merged_from_two_cells_names_nobody() {
         ExecutionMode::Serial,
     )
     .unwrap();
-    let record = CrossingCell::from_bytes(&sent.store.cell(record_site().key()).unwrap()).unwrap();
-    assert_eq!(record.amount, 200, "the crossing carries both takes");
     assert_eq!(
-        record.recourse,
-        Recourse::Nobody,
-        "a bucket merged from two cells names neither",
+        sent.receipts[&tx(1)].outcome,
+        Outcome::UserError {
+            reason: AbortReason::CrossingWithoutRecourse,
+        },
+        "a crossing with nothing to go back to is the sender's own defect",
     );
+    assert!(
+        sent.store.cell(record_site().key()).is_none(),
+        "no record is written",
+    );
+    assert_eq!(balance(&sent, cell(PAYER)), 1_000, "and neither cell moved");
+    assert_eq!(balance(&sent, cell(OTHER)), 1_000);
+}
+
+/// A record nobody may take back still releases, and releases credit
+/// nothing.
+///
+/// The delivering crossing is the one that reaches this: it is its
+/// consumer's from the moment the core commits it, so the producer's
+/// account of it closes without moving the value and the record stands
+/// for the consumer to claim whenever it can.
+#[test]
+fn a_delivered_record_releases_and_credits_nothing() {
+    let mut store = MemoryStore::new();
+    store.write(cell(PAYER), encode_amount(1_000).to_vec());
+    let sent = execute(
+        Arc::new(store) as Arc<dyn Baseline>,
+        &[sending_on(200, delivered_departure())],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
 
     let before = balance(&sent, cell(PAYER));
     let released = execute(
@@ -1006,15 +1038,17 @@ fn a_crossing_merged_from_two_cells_names_nobody() {
     );
 }
 
-/// A cell this shard does not apply names nobody.
+/// A crossing funded from a cell this shard does not apply is refused.
 ///
 /// A core node's scope is the core set, so it may reach a cell a sibling
 /// applies. The record sits where the producer's target is, and a
 /// reclaim credits there — so a sibling's cell could never be credited,
 /// and naming it would leave every reclaim trapping out of scope
-/// instead of taking the crossing back.
+/// instead of taking the crossing back. Naming nobody instead would
+/// leave the value with nowhere to go at all, so the crossing is refused
+/// where it is issued.
 #[test]
-fn a_cell_this_shard_does_not_apply_names_nobody() {
+fn a_crossing_from_a_cell_this_shard_does_not_apply_is_refused() {
     const SIBLING: u8 = 0x77;
     let mut store = MemoryStore::new();
     store.write(cell(SIBLING), encode_amount(1_000).to_vec());
@@ -1040,11 +1074,16 @@ fn a_cell_this_shard_does_not_apply_names_nobody() {
         ExecutionMode::Serial,
     )
     .unwrap();
-    let record = CrossingCell::from_bytes(&sent.store.cell(record_site().key()).unwrap()).unwrap();
     assert_eq!(
-        record.recourse,
-        Recourse::Nobody,
+        sent.receipts[&tx(1)].outcome,
+        Outcome::UserError {
+            reason: AbortReason::CrossingWithoutRecourse,
+        },
         "the one cell in the resource is a sibling's to write",
+    );
+    assert!(
+        sent.store.cell(record_site().key()).is_none(),
+        "so no record is written",
     );
 }
 
