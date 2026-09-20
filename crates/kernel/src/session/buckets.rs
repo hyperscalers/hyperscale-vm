@@ -19,8 +19,8 @@
 
 use std::collections::BTreeSet;
 
-use hyperscale_vm_types::ResourceAddr;
 use hyperscale_vm_types::math::{MathError, Rounding, U256, mul_div};
+use hyperscale_vm_types::{ResourceAddr, SubstateKey};
 
 use super::reach::Reach;
 use super::{KernelSession, SessionTrap};
@@ -90,6 +90,20 @@ pub(super) struct Buckets {
     /// came off. A bucket that could carry nothing in particular would
     /// be one every destination had to admit.
     resources: Vec<ResourceAddr>,
+    /// The cell each live bucket's value was debited from, by the same
+    /// rep the slots use, or `None` where no single cell is behind it.
+    ///
+    /// Stamped where the value comes off a cell and carried through
+    /// every split, because a split is the same value in two places. A
+    /// merge of two different origins keeps neither: value from two
+    /// cells has no one cell to go back to, and naming either would be
+    /// a guess. `None` too for what no cell produced — a mint, or a
+    /// crossing claimed in from another shard.
+    ///
+    /// What a crossing records as its recourse, so taking one back
+    /// returns it where it came from rather than where the producing
+    /// frame's shape suggests.
+    origins: Vec<Option<SubstateKey>>,
     /// The reps the executing frame may resolve.
     reach: Reach,
 }
@@ -120,12 +134,31 @@ impl Buckets {
     /// Only past `u32` buckets in one transaction. Reps are minted per
     /// take and split, so the bound is the fuel budget — four billion
     /// host calls — not any declared count.
-    pub(super) fn open(&mut self, held: Held, resource: ResourceAddr) -> u32 {
+    pub(super) fn open(
+        &mut self,
+        held: Held,
+        resource: ResourceAddr,
+        origin: Option<SubstateKey>,
+    ) -> u32 {
         let rep = u32::try_from(self.slots.len()).expect("bounded");
         self.slots.push(Some(held));
         self.resources.push(resource);
+        self.origins.push(origin);
         self.reach.lend(rep);
         rep
+    }
+
+    /// The cell the bucket at `rep` was debited from, or `None` where no
+    /// single cell is behind it.
+    ///
+    /// Answered for any rep the table has ever held, as the resource is,
+    /// so a bucket's origin outlives the value leaving it.
+    pub(super) fn origin_of(&self, rep: u32) -> Option<SubstateKey> {
+        usize::try_from(rep)
+            .ok()
+            .and_then(|index| self.origins.get(index))
+            .copied()
+            .flatten()
     }
 
     /// The slot of the live bucket at `rep`, once the frame is held to
@@ -236,8 +269,9 @@ impl Buckets {
         let left = held
             .checked_sub(amount)
             .ok_or(SessionTrap::BucketUnderflow { amount, held })?;
+        let origin = self.origin_of(rep);
         self.set(rep, Held::Amount(left));
-        Ok(self.open(Held::Amount(amount), resource))
+        Ok(self.open(Held::Amount(amount), resource, origin))
     }
 
     /// Split `num/den` of the bucket at `rep` off, as a new bucket.
@@ -282,8 +316,9 @@ impl Buckets {
                 amount: share,
                 held,
             })?;
+        let origin = self.origin_of(rep);
         self.set(rep, Held::Amount(left));
-        Ok(self.open(Held::Amount(share), resource))
+        Ok(self.open(Held::Amount(share), resource, origin))
     }
 
     /// Merge the bucket at `other` into the one at `rep`, consuming it.
@@ -312,6 +347,14 @@ impl Buckets {
                 cell: into,
                 carried,
             });
+        }
+        // Value from two cells has no one cell to go back to, so a
+        // merge that mixes origins keeps neither.
+        if self.origin_of(rep) != self.origin_of(other)
+            && let Ok(index) = usize::try_from(rep)
+            && let Some(origin) = self.origins.get_mut(index)
+        {
+            *origin = None;
         }
         let added = self.take(other)?;
         let merged = match (self.get(rep)?, added) {
@@ -374,8 +417,19 @@ impl KernelSession {
     /// Only past `u32` buckets in one transaction. Reps are minted per
     /// take and split, so the bound is the fuel budget — four billion
     /// host calls — not any declared count.
-    pub(crate) fn open_bucket(&mut self, held: Held, resource: ResourceAddr) -> u32 {
-        self.buckets.open(held, resource)
+    pub(crate) fn open_bucket(
+        &mut self,
+        held: Held,
+        resource: ResourceAddr,
+        origin: Option<SubstateKey>,
+    ) -> u32 {
+        self.buckets.open(held, resource, origin)
+    }
+
+    /// The cell the bucket at `rep` was debited from, or `None` where no
+    /// single cell is behind it.
+    pub(crate) fn bucket_origin(&self, rep: u32) -> Option<SubstateKey> {
+        self.buckets.origin_of(rep)
     }
 
     /// What the bucket at `rep` carries.
@@ -463,11 +517,67 @@ impl KernelSession {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_types::ResourceAddr;
+    use hyperscale_vm_types::{Address, AddressClass, LocalKey, ResourceAddr, SubstateKey};
 
     use super::{Buckets, Held, MathError, SessionTrap, U256};
 
     const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
+
+    fn cell(tag: u8) -> SubstateKey {
+        SubstateKey {
+            owner: Address::new([tag; 31], AddressClass::Component),
+            local: LocalKey([tag; 16]),
+        }
+    }
+
+    /// A split is the same value in two places, so both halves can go
+    /// back where it came from. A merge of two origins can go back to
+    /// neither: naming either would send one cell's value to the other.
+    #[test]
+    fn an_origin_survives_a_split_and_not_a_mixing_merge() {
+        let mut buckets = Buckets::default();
+
+        let rep = buckets.open(Held::Amount(100), RESOURCE, Some(cell(1)));
+        let part = buckets.split(rep, 40).expect("a fungible edge");
+        assert_eq!(buckets.origin_of(rep), Some(cell(1)));
+        assert_eq!(
+            buckets.origin_of(part),
+            Some(cell(1)),
+            "what came off carries the origin of what it came off",
+        );
+
+        let shared = buckets
+            .split_share(rep, U256::from_u128(1), U256::from_u128(2))
+            .expect("a share at or under one");
+        assert_eq!(
+            buckets.origin_of(shared),
+            Some(cell(1)),
+            "a proportional split carries it too",
+        );
+
+        buckets.merge(rep, part).expect("one resource");
+        assert_eq!(
+            buckets.origin_of(rep),
+            Some(cell(1)),
+            "a merge of one origin into itself keeps it",
+        );
+
+        let elsewhere = buckets.open(Held::Amount(7), RESOURCE, Some(cell(2)));
+        buckets.merge(rep, elsewhere).expect("one resource");
+        assert_eq!(
+            buckets.origin_of(rep),
+            None,
+            "and a merge of two keeps neither",
+        );
+
+        let minted = buckets.open(Held::Amount(5), RESOURCE, None);
+        let off_mint = buckets.split(minted, 2).expect("a fungible edge");
+        assert_eq!(
+            buckets.origin_of(off_mint),
+            None,
+            "what no cell produced names none however it is divided",
+        );
+    }
 
     /// A deterministic generator: the property is exact, so the corpus
     /// only has to be wide and reproducible.
@@ -504,7 +614,7 @@ mod tests {
             let held = rng.amount();
             let den = rng.amount().max(1);
             let num = rng.amount() % (den + 1);
-            let rep = buckets.open(Held::Amount(held), RESOURCE);
+            let rep = buckets.open(Held::Amount(held), RESOURCE, None);
             let part = buckets
                 .split_share(rep, U256::from_u128(num), U256::from_u128(den))
                 .expect("a share at or under one");
@@ -526,7 +636,7 @@ mod tests {
     #[test]
     fn a_split_leaves_its_dust_with_the_remainder() {
         let mut buckets = Buckets::default();
-        let rep = buckets.open(Held::Amount(10), RESOURCE);
+        let rep = buckets.open(Held::Amount(10), RESOURCE, None);
         let part = buckets
             .split_share(rep, U256::from_u128(1), U256::from_u128(3))
             .expect("a third");
@@ -540,7 +650,7 @@ mod tests {
     #[test]
     fn a_split_holds_a_product_the_amount_width_cannot() {
         let mut buckets = Buckets::default();
-        let rep = buckets.open(Held::Amount(u128::MAX), RESOURCE);
+        let rep = buckets.open(Held::Amount(u128::MAX), RESOURCE, None);
         let part = buckets
             .split_share(
                 rep,
@@ -561,7 +671,7 @@ mod tests {
     #[test]
     fn a_share_above_one_is_refused_rather_than_saturated() {
         let mut buckets = Buckets::default();
-        let rep = buckets.open(Held::Amount(100), RESOURCE);
+        let rep = buckets.open(Held::Amount(100), RESOURCE, None);
         assert_eq!(
             buckets.split_share(rep, U256::from_u128(3), U256::from_u128(2)),
             Err(SessionTrap::ShareAboveOne)
@@ -578,7 +688,7 @@ mod tests {
     #[test]
     fn a_split_by_nothing_is_refused() {
         let mut buckets = Buckets::default();
-        let rep = buckets.open(Held::Amount(100), RESOURCE);
+        let rep = buckets.open(Held::Amount(100), RESOURCE, None);
         assert_eq!(
             buckets.split_share(rep, U256::from_u128(1), U256::ZERO),
             Err(SessionTrap::Math(MathError::DivideByZero))
@@ -593,6 +703,7 @@ mod tests {
         let rep = buckets.open(
             Held::Instances([1u128, 2, 3].into_iter().collect()),
             RESOURCE,
+            None,
         );
         assert_eq!(
             buckets.split_share(rep, U256::from_u128(1), U256::from_u128(2)),
@@ -609,7 +720,7 @@ mod tests {
     #[test]
     fn a_merge_of_a_bucket_into_itself_is_not_two_buckets() {
         let mut buckets = Buckets::default();
-        let funds = buckets.open(Held::Amount(40), RESOURCE);
+        let funds = buckets.open(Held::Amount(40), RESOURCE, None);
         assert_eq!(
             buckets.merge(funds, funds),
             Err(SessionTrap::UnknownHandle(funds)),
@@ -624,7 +735,7 @@ mod tests {
     #[test]
     fn a_take_leaves_the_rep_naming_nothing() {
         let mut buckets = Buckets::default();
-        let rep = buckets.open(Held::Amount(7), RESOURCE);
+        let rep = buckets.open(Held::Amount(7), RESOURCE, None);
         assert_eq!(buckets.take(rep), Ok(Held::Amount(7)));
         assert_eq!(buckets.take(rep), Err(SessionTrap::UnknownHandle(rep)));
         assert!(!buckets.carries_value());
@@ -635,7 +746,7 @@ mod tests {
     #[test]
     fn a_drop_loses_nothing() {
         let mut buckets = Buckets::default();
-        let full = buckets.open(Held::Amount(3), RESOURCE);
+        let full = buckets.open(Held::Amount(3), RESOURCE, None);
         assert_eq!(buckets.drop(full), Ok(()));
         assert!(buckets.carries_value());
         let emptied = buckets.split(full, 0).expect("nothing comes off");

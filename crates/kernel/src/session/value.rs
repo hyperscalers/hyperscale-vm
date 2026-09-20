@@ -62,7 +62,7 @@ impl KernelSession {
             Settlement::Queued(key) => key,
         };
         self.store.queue_delta(key, DeltaOp::Sub(amount))?;
-        Ok(self.open_bucket(Held::Amount(amount), resource))
+        Ok(self.open_bucket(Held::Amount(amount), resource, Some(key)))
     }
 
     /// Credit this cell with what the bucket at `funds` carries.
@@ -157,7 +157,7 @@ impl KernelSession {
     pub fn mint(&mut self, grant: u32, amount: u128) -> Result<u32, SessionTrap> {
         let resource = self.issued(grant, ResourceKind::Fungible)?;
         self.supply.mint(resource, amount)?;
-        Ok(self.open_bucket(Held::Amount(amount), resource))
+        Ok(self.open_bucket(Held::Amount(amount), resource, None))
     }
 
     /// Create the named instances of what this invocation issues.
@@ -173,7 +173,7 @@ impl KernelSession {
         // An instance's supply is its existence: what a non-fungible
         // mints is a count, which is what its holdings are measured in.
         self.supply.mint(resource, instances.len() as u128)?;
-        Ok(self.open_bucket(Held::Instances(instances), resource))
+        Ok(self.open_bucket(Held::Instances(instances), resource, None))
     }
 
     /// Destroy what this invocation issues, consuming the bucket.
@@ -223,9 +223,11 @@ impl KernelSession {
         output: u32,
         funds: u32,
         departure: Departure,
-        frame: &[u32],
     ) -> Result<Crossed, SessionTrap> {
         let resource = self.buckets.resource_of(funds)?;
+        // Read before the take: what the bucket carried is what the
+        // record has to be able to give back.
+        let origin = self.bucket_origin(funds);
         let held = self.take_bucket(funds)?;
         let Held::Amount(amount) = held else {
             return Err(SessionTrap::WrongEdgeKind);
@@ -233,14 +235,23 @@ impl KernelSession {
         let crossed = Crossed { resource, amount };
         self.escrow.issue(node, output, crossed)?;
         // A crossing an outbound leg consumes is that consumer's from
-        // the moment the core commits it. No cell of the producing frame
-        // is the crossing's to return to, whatever the frame holds, so
-        // the record names nobody and stands until the consumer claims
-        // it.
+        // the moment the core commits it. No cell is the crossing's to
+        // return to, whatever produced it, so the record names nobody
+        // and stands until the consumer claims it.
+        //
+        // Every other crossing goes back where its value came from: the
+        // cell the bucket was debited from, which the table carried
+        // here. Nobody where no single cell is behind it — a mint, a
+        // crossing claimed in, or a bucket merged from two — and nobody
+        // where the cell is not this shard's to write, since a reclaim
+        // credits on the shard the record sits on and a cell some other
+        // core member applies could never be credited there.
         let recourse = if departure.delivers {
             Recourse::Nobody
         } else {
-            self.recourse_among(frame, resource)
+            origin
+                .filter(|key| self.applies.covers(key.owner))
+                .map_or(Recourse::Nobody, Recourse::Producer)
         };
         self.record_crossing(
             departure.site.key(),
@@ -258,37 +269,19 @@ impl KernelSession {
         Ok(crossed)
     }
 
-    /// Who may take a crossing in `resource` back, among the capabilities
-    /// `frame` — the producing frame's handles — holds: the producer,
-    /// where it holds one value cell denominated in that resource.
-    /// Nobody where it holds none or several, since a credit to either
-    /// would be a guess.
-    ///
-    /// Nobody too where the one cell is not this shard's to write. A
-    /// reclaim credits on the shard the record sits on, so a cell some
-    /// other member of the core applies could never be credited there —
-    /// naming it would leave the reclaim trapping out of scope rather
-    /// than taking the crossing back. A core node may hold such a cell:
-    /// its scope is the core set, wider than what it applies.
-    fn recourse_among(&self, frame: &[u32], resource: ResourceAddr) -> Recourse {
-        let mut cells = frame
-            .iter()
-            .filter(|&&rep| self.resource_at(rep) == Some(resource))
-            .filter_map(|&rep| match self.table.get(usize::try_from(rep).ok()?)? {
-                Capability::Amount { key, .. }
-                | Capability::Delta { key, .. }
-                | Capability::Reserve { key, .. } => Some(*key),
-                Capability::Read(_)
-                | Capability::Write(_)
-                | Capability::AmountRead(_)
-                | Capability::RangeRead(_)
-                | Capability::RangeWrite(_)
-                | Capability::Instances { .. } => None,
-            })
-            .filter(|key| self.applies.covers(key.owner));
-        match (cells.next(), cells.next()) {
-            (Some(only), None) => Recourse::Producer(only),
-            _ => Recourse::Nobody,
+    /// The cell the capability at `rep` moves value through, if it
+    /// moves value at all.
+    fn cell_at(&self, rep: u32) -> Option<SubstateKey> {
+        match self.table.get(usize::try_from(rep).ok()?)? {
+            Capability::Amount { key, .. }
+            | Capability::Delta { key, .. }
+            | Capability::Reserve { key, .. } => Some(*key),
+            Capability::Read(_)
+            | Capability::Write(_)
+            | Capability::AmountRead(_)
+            | Capability::RangeRead(_)
+            | Capability::RangeWrite(_)
+            | Capability::Instances { .. } => None,
         }
     }
 
@@ -393,7 +386,7 @@ impl KernelSession {
     ) -> Result<u32, SessionTrap> {
         self.escrow.claim(crossed)?;
         self.record_crossing(site.key(), site.claimed_by(self.tx).to_bytes())?;
-        Ok(self.open_bucket(Held::Amount(crossed.amount), crossed.resource))
+        Ok(self.open_bucket(Held::Amount(crossed.amount), crossed.resource, None))
     }
 
     /// Grant the executing invocation the issuances its declaration
@@ -450,7 +443,8 @@ impl KernelSession {
         if !self.taken.insert(rep) {
             return Err(SessionTrap::ReservationTaken);
         }
-        Ok(self.open_bucket(Held::Amount(amount), resource))
+        let origin = self.cell_at(rep);
+        Ok(self.open_bucket(Held::Amount(amount), resource, origin))
     }
 }
 
@@ -503,9 +497,9 @@ mod tests {
     #[test]
     fn an_instance_bucket_is_refused_at_the_issue() {
         let mut session = session_over(MemoryStore::new(), &declared(&[]));
-        let instances = session.open_bucket(Held::Instances(BTreeSet::from([7])), RESOURCE);
+        let instances = session.open_bucket(Held::Instances(BTreeSet::from([7])), RESOURCE, None);
         assert_eq!(
-            session.escrow_out(0, 0, instances, departure(), &[]),
+            session.escrow_out(0, 0, instances, departure()),
             Err(SessionTrap::WrongEdgeKind),
         );
     }
@@ -515,9 +509,9 @@ mod tests {
     #[test]
     fn a_fungible_bucket_crosses_as_what_it_carried() {
         let mut session = session_over(MemoryStore::new(), &declared(&[]));
-        let funds = session.open_bucket(Held::Amount(40), RESOURCE);
+        let funds = session.open_bucket(Held::Amount(40), RESOURCE, None);
         assert_eq!(
-            session.escrow_out(0, 0, funds, departure(), &[]),
+            session.escrow_out(0, 0, funds, departure()),
             Ok(Crossed {
                 resource: RESOURCE,
                 amount: 40,

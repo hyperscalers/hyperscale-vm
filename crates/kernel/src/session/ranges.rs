@@ -508,7 +508,8 @@ impl KernelSession {
                 .entry_remove(interval.owner, interval.collection, *order)?;
         }
         self.invalidate(interval.owner, interval.collection);
-        Ok(self.open_bucket(Held::Instances(taken), resource))
+        // Instances never cross, so no origin is asked of one.
+        Ok(self.open_bucket(Held::Instances(taken), resource, None))
     }
 
     /// File every instance the bucket at `funds` carries as an entry of a
@@ -870,7 +871,7 @@ mod tests {
         }]);
         let mut session = session_holding(store, &set);
 
-        let carried = session.open_bucket(Held::Instances([90].into()), RESOURCE);
+        let carried = session.open_bucket(Held::Instances([90].into()), RESOURCE, None);
         assert_eq!(
             session.range_put(0, 0, carried, &[1]),
             Err(SessionTrap::InstanceHeldTwice(90))
@@ -878,7 +879,7 @@ mod tests {
 
         // An order it does not hold still files, so what the probe
         // refuses is the collision and not the filing.
-        let fresh = session.open_bucket(Held::Instances([500].into()), RESOURCE);
+        let fresh = session.open_bucket(Held::Instances([500].into()), RESOURCE, None);
         assert_eq!(session.range_put(0, 0, fresh, &[1]), Ok(()));
     }
 
@@ -926,7 +927,7 @@ mod tests {
 
         // A filing pays for the instances its bucket carries, not for
         // the interval it files into.
-        let carried = session.open_bucket(Held::Instances([500, 501].into()), RESOURCE);
+        let carried = session.open_bucket(Held::Instances([500, 501].into()), RESOURCE, None);
         assert_eq!(session.put_floor(0, 0, carried), Ok(2 * one));
     }
 

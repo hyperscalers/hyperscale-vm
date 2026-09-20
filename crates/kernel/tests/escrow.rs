@@ -205,6 +205,21 @@ impl GuestBackend for Moving {
                 }
                 taken
             }
+            // Two reserves merged into one bucket: the value that
+            // crosses came off two cells, so no one cell is behind it.
+            "take_both" => {
+                let reserves: Vec<u32> = caps
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, cap)| matches!(cap, Capability::Reserve { .. }))
+                    .map(|(rep, _)| u32::try_from(rep).unwrap())
+                    .collect();
+                assert_eq!(reserves.len(), 2, "the fixture declares two");
+                let first = session.reserve_take(site, reserves[0]).unwrap();
+                let second = session.reserve_take(site, reserves[1]).unwrap();
+                session.bucket_put(first, second).unwrap();
+                vec![first]
+            }
             "put" => {
                 let delta = find(|cap| matches!(cap, Capability::Delta { .. }))
                     .expect("the fixture declares one");
@@ -308,6 +323,30 @@ fn sending_on(amount: u128, departure: Departure) -> BatchTx {
         env(),
     )
     .with_calls(vec![taking()])
+    .with_legs(legs)
+}
+
+/// A transfer whose one crossing is funded from two cells at once.
+fn sending_from_both(each: u128) -> BatchTx {
+    const OTHER: u8 = 0x66;
+    let mut legs = LegPlan::whole(1);
+    legs.departs(0, 0, record_departure()).unwrap();
+    BatchTx::new(
+        tx(1),
+        declared(&[
+            Effect {
+                target: EffectTarget::Point(cell(PAYER)),
+                mode: Mode::Reserve { amount: each },
+            },
+            Effect {
+                target: EffectTarget::Point(cell(OTHER)),
+                mode: Mode::Reserve { amount: each },
+            },
+            crossing_cell(record_site()),
+        ]),
+        env(),
+    )
+    .with_calls(vec![call("take_both", 0, 1)])
     .with_legs(legs)
 }
 
@@ -864,10 +903,14 @@ fn a_delivered_crossing_names_nobody() {
     );
 }
 
-/// The record names the cell the value left — the producing frame's one
-/// cell denominated in the crossing's resource — so a reclaim needs
-/// nothing but the leaf. A frame holding two such cells names nobody,
-/// and its crossing cannot be taken back.
+/// The record names the cell the value actually left, so a reclaim
+/// needs nothing but the leaf.
+///
+/// The cell the bucket was debited from, not a cell inferred from the
+/// producing frame's shape: a frame holding a second cell in the same
+/// resource says nothing about where this crossing's value came from,
+/// and reading the shape rather than the source would name nobody for a
+/// crossing whose origin is not in doubt.
 #[test]
 fn a_record_names_the_cell_its_value_left() {
     let mut store = MemoryStore::new();
@@ -906,9 +949,36 @@ fn a_record_names_the_cell_its_value_left() {
     let record = CrossingCell::from_bytes(&sent.store.cell(record_site().key()).unwrap()).unwrap();
     assert_eq!(
         record.recourse,
-        Recourse::Nobody,
-        "two cells in the resource name nobody",
+        Recourse::Producer(cell(PAYER)),
+        "a second cell in the frame does not unname the one the value left",
     );
+}
+
+/// A crossing funded from two cells names nobody: value off two cells
+/// has no one cell to go back to, and naming either would be a guess.
+///
+/// The case the bucket's own origin cannot answer, and the only one
+/// left that a reclaim of a non-delivering crossing cannot settle.
+#[test]
+fn a_crossing_merged_from_two_cells_names_nobody() {
+    const OTHER: u8 = 0x66;
+    let mut store = MemoryStore::new();
+    store.write(cell(PAYER), encode_amount(1_000).to_vec());
+    store.write(cell(OTHER), encode_amount(1_000).to_vec());
+    let sent = execute(
+        Arc::new(store) as Arc<dyn Baseline>,
+        &[sending_from_both(100)],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    let record = CrossingCell::from_bytes(&sent.store.cell(record_site().key()).unwrap()).unwrap();
+    assert_eq!(record.amount, 200, "the crossing carries both takes");
+    assert_eq!(
+        record.recourse,
+        Recourse::Nobody,
+        "a bucket merged from two cells names neither",
+    );
+
     let before = balance(&sent, cell(PAYER));
     let released = execute(
         Arc::new(sent.store) as Arc<dyn Baseline>,

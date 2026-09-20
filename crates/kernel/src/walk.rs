@@ -447,35 +447,19 @@ fn claimed_outputs(
 /// from being both crossed and spent.
 fn departing(
     node: u32,
-    calls: &[NodeCall],
     legs: &LegPlan,
     produced: Vec<u32>,
     mut session: KernelSession,
     consumed: u64,
 ) -> Result<(KernelSession, Vec<Option<u32>>), NodeFailure> {
     let mut kept = Vec::with_capacity(produced.len());
-    // The producing frame's handles, which is where the cell a crossing
-    // left is looked for: one site per handle parameter, each covering
-    // the table entries the declaration resolved for it.
-    let frame: Vec<u32> = calls
-        .get(usize::try_from(node).unwrap_or(usize::MAX))
-        .map_or_else(Vec::new, |call| {
-            call.args
-                .iter()
-                .filter_map(|arg| match arg {
-                    CallArg::Site { entries } => Some(entries.iter().flatten().copied()),
-                    _ => None,
-                })
-                .flatten()
-                .collect()
-        });
     for (slot, rep) in produced.into_iter().enumerate() {
         let output = u32::try_from(slot).unwrap_or(u32::MAX);
         let Some(departure) = legs.departure(node, output) else {
             kept.push(Some(rep));
             continue;
         };
-        match session.escrow_out(node, output, rep, departure, &frame) {
+        match session.escrow_out(node, output, rep, departure) {
             Ok(_) => kept.push(None),
             Err(trap) => {
                 // A departure refused for the plan's shape is the batch's
@@ -690,7 +674,7 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
                 Ok((returned, produced, answered, consumed)) => {
                     session = returned;
                     session.leave_invocation();
-                    match departing(node, calls, legs, produced, session, consumed) {
+                    match departing(node, legs, produced, session, consumed) {
                         Ok((returned, produced)) => {
                             session = returned;
                             spent.push(consumed);
