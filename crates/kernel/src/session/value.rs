@@ -12,13 +12,13 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    CrossingCell, CrossingSite, IssuanceGrant, Recourse, ResourceKind, distinct_ids,
+    CrossingCell, CrossingSite, IssuanceGrant, ResourceKind, Terms, distinct_ids,
 };
 use hyperscale_vm_types::{ResourceAddr, SubstateKey};
 
 use super::buckets::Held;
 use super::{Capability, KernelSession, Op, SessionTrap, Settlement};
-use crate::escrow::{Crossed, Departure, Disposal, Disposition};
+use crate::escrow::{Crossed, Departure, Disposal, Disposition, Kind};
 use crate::ledger::AmountLedger;
 use crate::modes::{DeltaOp, decode_amount};
 use crate::store::WorkingStore;
@@ -77,7 +77,7 @@ impl KernelSession {
         // Nothing is consumed until everything is judged. A refusal
         // aborts the whole transaction, so no state would escape either
         // way; what the ordering keeps true is that the kernel is never
-        // holding a credit it did not make, which is the property the
+        // terms a credit it did not make, which is the property the
         // bucket table exists to state.
         let held = self.acting(site, element, Op::Put)?;
         self.judge_credit(site, element, funds)?;
@@ -252,13 +252,14 @@ impl KernelSession {
         // cell another member judges is refused where it is exercised.
         // So the origin is this member's to credit wherever there is
         // one, which is what a reclaim needs of it.
-        let recourse = if departure.delivers {
-            Recourse::Nobody
-        } else {
-            let Some(cell) = origin else {
-                return Err(SessionTrap::CrossingWithoutRecourse(departure.site.key()));
-            };
-            Recourse::Producer(cell)
+        let terms = match departure.kind {
+            Kind::Owed => Terms::Owed,
+            Kind::Escrowed => {
+                let Some(credit) = origin else {
+                    return Err(SessionTrap::CrossingWithoutRecourse(departure.site.key()));
+                };
+                Terms::Escrowed { credit }
+            }
         };
         self.take_bucket(funds)?;
         let crossed = Crossed { resource, amount };
@@ -267,13 +268,7 @@ impl KernelSession {
             departure.site.key(),
             departure
                 .site
-                .crossing(
-                    self.tx,
-                    resource,
-                    amount,
-                    departure.consumer_claim,
-                    recourse,
-                )
+                .crossing(self.tx, resource, amount, departure.consumer_claim, terms)
                 .to_bytes(),
         )?;
         Ok(crossed)
@@ -332,7 +327,7 @@ impl KernelSession {
             .filter(|record| disposal.claim.names(record))
             .ok_or(SessionTrap::EscrowRecordUnreadable(disposal.record))?;
         if disposal.disposition == Disposition::Reclaim {
-            let Recourse::Producer(credit) = record.recourse else {
+            let Terms::Escrowed { credit } = record.terms else {
                 return Err(SessionTrap::EscrowRecordUnreadable(disposal.record));
             };
             let site = self
@@ -461,7 +456,7 @@ mod tests {
 
     use super::super::fixtures::{declared, session_over};
     use super::Held;
-    use crate::escrow::{Crossed, Departure};
+    use crate::escrow::{Crossed, Departure, Kind};
     use crate::session::SessionTrap;
     use crate::store::MemoryStore;
 
@@ -489,7 +484,7 @@ mod tests {
 
     fn departure() -> Departure {
         Departure {
-            delivers: false,
+            kind: Kind::Escrowed,
             site: site(),
             consumer_claim: CrossingSite::claim(
                 &TestHasher,
@@ -565,7 +560,7 @@ mod tests {
         let mut session = session_over(MemoryStore::new(), &declared(&[]));
         let minted = session.open_bucket(Held::Amount(40), RESOURCE, None);
         let delivering = Departure {
-            delivers: true,
+            kind: Kind::Owed,
             ..departure()
         };
         assert_eq!(

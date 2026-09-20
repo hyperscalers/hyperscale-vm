@@ -55,9 +55,8 @@ pub use artifact::{
 pub use auth::{Authority, PrincipalRule, RuleBytes, auth_cell_admits};
 pub use cells::{
     COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, CrossingCell, CrossingSite, ESCROW_CLAIM_SLOT,
-    ESCROW_RECORD_SLOT, MARKER_CELL_BYTES, Marked, Marker, NULLIFIER_SLOT, Recourse,
-    committed_tx_key, crossing_expiry_ms, escrow_claim_key, escrow_record_key, nullifier_expiry_ms,
-    nullifier_key,
+    ESCROW_RECORD_SLOT, MARKER_CELL_BYTES, Marked, Marker, NULLIFIER_SLOT, Terms, committed_tx_key,
+    crossing_expiry_ms, escrow_claim_key, escrow_record_key, nullifier_expiry_ms, nullifier_key,
 };
 pub use claim::Claim;
 pub use dsl::{

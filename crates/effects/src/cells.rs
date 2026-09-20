@@ -3,7 +3,7 @@
 //! the values they hold.
 //!
 //! Every family is self-describing: the value re-derives its own key,
-//! so a reader holding nothing but the leaf can tell which family it
+//! so a reader terms nothing but the leaf can tell which family it
 //! belongs to and when it stops being needed. The sweepable families
 //! lead their key with the expiry's bucket, so one owner's cells for
 //! one bucket are a contiguous range a sweep walks.
@@ -49,7 +49,7 @@ pub const ESCROW_CLAIM_SLOT: SlotId = SlotId(0xFFFE);
 /// What a shard writes at block commit for every transaction the block
 /// carries: the fact that it committed it, provable and refutable
 /// against the state root every header carries. No kernel writes one;
-/// the chain does, and a reader holding nothing but the leaf can tell
+/// the chain does, and a reader terms nothing but the leaf can tell
 /// it from any other cell and tell when it stops being needed.
 pub const COMMITTED_TX_SLOT: SlotId = SlotId(0xFFFC);
 
@@ -242,14 +242,14 @@ fn escrow_key(
 /// left on, when it stops being claimable, and who issued it.
 ///
 /// Self-describing on [`Marker`]'s terms: the value re-derives the
-/// key, so a reader holding nothing but the leaf can tell what it is.
+/// key, so a reader terms nothing but the leaf can tell what it is.
 /// Unlike the sweepable families the key carries no bucket, so re-deriving
 /// it is all a reader gets — a record is not sweepable and no expiry in
 /// the key could make it so.
 ///
 /// The edge is named here as well as in the key because a reclaim reads
 /// this cell and nothing else — the producing shard credits the resource
-/// and the amount back from the leaf alone, holding no transaction body
+/// and the amount back from the leaf alone, terms no transaction body
 /// and no window of them. So is the cell the value left: a reclaim
 /// credits it, and no rule the kernel could hold says which of an owner's
 /// cells that is — an account's vault for a resource is the account
@@ -286,29 +286,41 @@ pub struct CrossingCell {
     /// The transaction whose execution issued the crossing.
     pub tx: TxHash,
     /// The claim cell the consumer writes when it takes the crossing,
-    /// under the consuming node's target. Retained by the shard holding
+    /// under the consuming node's target. Retained by the shard terms
     /// that prefix until this record's `expiry_ms`, which is where a
     /// reader's window to judge it absent closes.
     pub consumer_claim: SubstateKey,
-    /// Who may take the crossing back where no consumer claims it,
-    /// resolved by the kernel at the issue.
-    pub recourse: Recourse,
+    /// What kind of record this is, and the terms that kind carries.
+    /// Resolved by the kernel at the issue.
+    pub terms: Terms,
 }
 
-/// Who may take a crossing back where no consumer ever claims it.
+/// What a crossing record is: value staged against a verdict that has
+/// not happened, or value a verdict already moved.
+///
+/// The two agree on almost nothing. An escrowed crossing has an owner
+/// and comes home where no consumer claims it; an owed one has neither,
+/// and stands until its consumer takes it. Which disposals are possible,
+/// which readings answer, what a clock may do to it — all of it follows
+/// from which of the two a record is, so the record says so rather than
+/// leaving every reader to work it out again.
 ///
 /// Resolved once, at the issue, and carried on the record: what outlives
 /// the manifest is the leaf, and the member that settles a record may
 /// hold nothing else — a split child, or a reshape successor whose store
 /// arrives as a prefix of leaves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
-pub enum Recourse {
-    /// The cell the value left, which a reclaim credits.
-    Producer(SubstateKey),
-    /// Nobody. A crossing an outbound leg consumes is that consumer's
-    /// from the moment the core commits it, so no cell is the crossing's
-    /// to return to and the record stands until the claim retires it.
-    Nobody,
+pub enum Terms {
+    /// Staged against a verdict that has not happened.
+    Escrowed {
+        /// The cell the value left, which a reclaim credits.
+        credit: SubstateKey,
+    },
+    /// Owed to its consumer by a verdict that has. A crossing an
+    /// outbound leg consumes is that consumer's from the moment the core
+    /// commits it, so no cell is the crossing's to return to and the
+    /// record stands until the claim retires it.
+    Owed,
 }
 
 impl CrossingCell {
@@ -336,7 +348,7 @@ impl CrossingCell {
 ///
 /// Three families share this one value, and each is self-describing on
 /// the same terms: the value re-derives the cell's own key under the
-/// family's role, so a reader holding nothing but the leaf can tell a
+/// family's role, so a reader terms nothing but the leaf can tell a
 /// marker from any other cell, tell which family it is, and tell whether
 /// it is still owed. The key leads with the expiry's bucket, so a shard's
 /// markers for one bucket are a contiguous range a sweep walks, and
@@ -584,7 +596,7 @@ impl CrossingSite {
         resource: ResourceAddr,
         amount: u128,
         consumer_claim: SubstateKey,
-        recourse: Recourse,
+        terms: Terms,
     ) -> CrossingCell {
         CrossingCell {
             resource,
@@ -595,7 +607,7 @@ impl CrossingSite {
             expiry_ms: self.expiry_ms,
             tx,
             consumer_claim,
-            recourse,
+            terms,
         }
     }
 

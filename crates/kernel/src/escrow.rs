@@ -163,9 +163,28 @@ pub struct Departure {
     /// The claim cell the consumer writes when it takes the crossing,
     /// under the consuming node's target.
     pub consumer_claim: SubstateKey,
-    /// Whether the consumer is an outbound leg, so the crossing is owed
-    /// to it and credited nowhere else.
-    pub delivers: bool,
+    /// Which kind of record this departure writes.
+    pub kind: Kind,
+}
+
+/// Which kind of crossing record a departure writes.
+///
+/// The parent reads it off the shape — a crossing an outbound leg
+/// consumes is owed, and every other one is escrowed — and the kernel
+/// turns it into the record's own
+/// [`Terms`](hyperscale_vm_effects::Terms) at the issue, where it knows
+/// what the value came off and so what an escrowed one credits back.
+/// Two types for one distinction because only the second half of it can
+/// carry that cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// Staged against a verdict that has not happened: the producer
+    /// keeps the cell the value left and takes the crossing back where
+    /// no consumer claims it.
+    Escrowed,
+    /// Owed to its consumer by a verdict that has: no cell is the
+    /// crossing's to return to, and nothing takes it back.
+    Owed,
 }
 
 /// One record this execution settles rather than runs a node for: a
@@ -464,8 +483,8 @@ mod tests {
     use hyperscale_vm_types::ResourceAddr;
 
     use super::{
-        Arrival, Crossed, CrossingSite, Departure, EscrowDelta, LegPlan, MAX_CROSSINGS_PER_TX,
-        ModeError, PlanFault,
+        Arrival, Crossed, CrossingSite, Departure, EscrowDelta, Kind, LegPlan,
+        MAX_CROSSINGS_PER_TX, ModeError, PlanFault,
     };
 
     fn resource(tag: u8) -> ResourceAddr {
@@ -485,7 +504,7 @@ mod tests {
 
     fn departing(tag: u8) -> Departure {
         Departure {
-            delivers: false,
+            kind: Kind::Escrowed,
             site: cell(tag),
             consumer_claim: cell(tag.wrapping_add(1)).key(),
         }

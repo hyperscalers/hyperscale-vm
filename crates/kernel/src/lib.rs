@@ -35,7 +35,7 @@ pub mod supply;
 pub mod walk;
 
 pub use escrow::{
-    Arrival, Crossed, Departure, Disposal, Disposition, EdgeAction, EscrowDelta, LegPlan,
+    Arrival, Crossed, Departure, Disposal, Disposition, EdgeAction, EscrowDelta, Kind, LegPlan,
     NodeAction, PlanFault,
 };
 pub use executor::{

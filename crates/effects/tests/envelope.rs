@@ -16,8 +16,8 @@ use hyperscale_vm_effects::{
     GraphNode, Hash32, Hasher, InstanceMeta, Intent, IntentHash, IntentHeader, IntentRecord,
     IntentTree, JudgedLeaf, MAX_ACCOUNTS, MAX_SOCKETS, MAX_TREE_DEPTH, MAX_VALUE_DEPTH,
     ManifestGraph, ManifestHash, Marked, Marker, Member, NULLIFIER_SLOT, NodeInput, PackageHash,
-    PrefixShardResolver, Records, Recourse, ResourceKind, Rule, ShardResolver, SignedIntent,
-    Socket, TREE_WIRE_DEPTH, TestHasher, TreeDecodeError, Value, ValueRef, admit_tree,
+    PrefixShardResolver, Records, ResourceKind, Rule, ShardResolver, SignedIntent, Socket,
+    TREE_WIRE_DEPTH, Terms, TestHasher, TreeDecodeError, Value, ValueRef, admit_tree,
     bucketed_child_key, child_key, decode_tree, encode_tree, escrow_claim_key, escrow_record_key,
     explain_admission_tree, nullifier_key, per_shard,
 };
@@ -828,7 +828,7 @@ fn a_claim_leads_with_its_bucket_and_a_record_does_not() {
 
 /// A crossing cell says what left, on which edge, when it stops being
 /// claimable, which transaction issued it and which cell would say it
-/// was taken — so a reclaim reads the leaf and nothing else, holding no
+/// was taken — so a reclaim reads the leaf and nothing else, terms no
 /// transaction body and no window of them. A successor inherits the
 /// prefix and its cells and has all of it.
 #[test]
@@ -841,7 +841,7 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
     let site = CrossingSite::record(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS);
     let consumer = CrossingSite::claim(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS);
     let credit = child_key(&TestHasher, BOB, ESCROW_RECORD_SLOT, &[b"vault".to_vec()]);
-    let cell = site.crossing(tx, RES_Y, 10, consumer.key(), Recourse::Producer(credit));
+    let cell = site.crossing(tx, RES_Y, 10, consumer.key(), Terms::Escrowed { credit });
 
     assert_eq!(cell.resource, RES_Y);
     assert_eq!(cell.amount, 10);
@@ -850,7 +850,7 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
     assert_eq!(cell.expiry_ms, EXPIRY_MS);
     assert_eq!(cell.tx, tx);
     assert_eq!(cell.consumer_claim, consumer.key());
-    assert_eq!(cell.recourse, Recourse::Producer(credit));
+    assert_eq!(cell.terms, Terms::Escrowed { credit });
 
     // The value re-derives the key, and a site built for another edge
     // does not take it.
@@ -2304,7 +2304,7 @@ fn a_tree_round_trips_its_encoding() {
 mod cell_widths {
     use hyperscale_hbor::Hash32;
     use hyperscale_vm_effects::{
-        CROSSING_CELL_BYTES, CrossingCell, MARKER_CELL_BYTES, Marked, Marker, Recourse,
+        CROSSING_CELL_BYTES, CrossingCell, MARKER_CELL_BYTES, Marked, Marker, Terms,
     };
     use hyperscale_vm_types::{
         Address, AddressClass, IntentHash, LocalKey, ResourceAddr, SubstateKey, TxHash,
@@ -2356,7 +2356,7 @@ mod cell_widths {
             expiry_ms: u64::MAX,
             tx: TxHash(hash32()),
             consumer_claim: key(),
-            recourse: Recourse::Producer(key()),
+            terms: Terms::Escrowed { credit: key() },
         };
         assert!(
             cell.to_bytes().len() <= CROSSING_CELL_BYTES as usize,

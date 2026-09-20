@@ -100,9 +100,9 @@ pub(super) struct Buckets {
     /// a guess. `None` too for what no cell produced — a mint, or a
     /// crossing claimed in from another shard.
     ///
-    /// What a crossing records as its recourse, so taking one back
-    /// returns it where it came from rather than where the producing
-    /// frame's shape suggests.
+    /// What an escrowed crossing records as the cell it credits, so
+    /// taking one back returns it where it came from rather than where
+    /// the producing frame's shape suggests.
     origins: Vec<Option<SubstateKey>>,
     /// The reps the executing frame may resolve.
     reach: Reach,

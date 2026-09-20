@@ -12,13 +12,13 @@ use std::sync::Arc;
 use hyperscale_hbor::from_slice;
 use hyperscale_vm_effects::{
     CallArg, CrossingCell, CrossingSite, Declaration, EdgeContent, Hash32, Hasher, IntentHash,
-    Marker, NodeCall, PackageHash, Recourse, SlotId, TestHasher, child_key,
+    Marker, NodeCall, PackageHash, SlotId, Terms, TestHasher, child_key,
 };
 use hyperscale_vm_embed::GuestArg;
 use hyperscale_vm_kernel::{
     Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, Departure, Disposal,
     Disposition, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
-    KernelSession, LegPlan, ManifestWalk, MemoryStore, Receipt, Substates, decode_amount,
+    KernelSession, Kind, LegPlan, ManifestWalk, MemoryStore, Receipt, Substates, decode_amount,
     execute_batch,
 };
 use hyperscale_vm_types::{
@@ -71,7 +71,7 @@ fn claim_site() -> CrossingSite {
 /// its consumer would write for the same edge.
 fn record_departure() -> Departure {
     Departure {
-        delivers: false,
+        kind: Kind::Escrowed,
         site: record_site(),
         consumer_claim: claim_site().key(),
     }
@@ -80,7 +80,7 @@ fn record_departure() -> Departure {
 /// The same edge, where the consumer is an outbound leg.
 fn delivered_departure() -> Departure {
     Departure {
-        delivers: true,
+        kind: Kind::Owed,
         ..record_departure()
     }
 }
@@ -897,8 +897,8 @@ fn a_delivered_crossing_names_nobody() {
     .unwrap();
     let record = CrossingCell::from_bytes(&sent.store.cell(record_site().key()).unwrap()).unwrap();
     assert_eq!(
-        record.recourse,
-        Recourse::Nobody,
+        record.terms,
+        Terms::Owed,
         "a delivering edge credits the producing frame for nothing",
     );
 }
@@ -907,7 +907,7 @@ fn a_delivered_crossing_names_nobody() {
 /// needs nothing but the leaf.
 ///
 /// The cell the bucket was debited from, not a cell inferred from the
-/// producing frame's shape: a frame holding a second cell in the same
+/// producing frame's shape: a frame terms a second cell in the same
 /// resource says nothing about where this crossing's value came from,
 /// and reading the shape rather than the source would name nobody for a
 /// crossing whose origin is not in doubt.
@@ -922,7 +922,12 @@ fn a_record_names_the_cell_its_value_left() {
     )
     .unwrap();
     let record = CrossingCell::from_bytes(&sent.store.cell(record_site().key()).unwrap()).unwrap();
-    assert_eq!(record.recourse, Recourse::Producer(cell(PAYER)));
+    assert_eq!(
+        record.terms,
+        Terms::Escrowed {
+            credit: cell(PAYER)
+        }
+    );
 
     let mut ambiguous = sending(200);
     ambiguous.declaration = declared(&[
@@ -948,8 +953,10 @@ fn a_record_names_the_cell_its_value_left() {
     .unwrap();
     let record = CrossingCell::from_bytes(&sent.store.cell(record_site().key()).unwrap()).unwrap();
     assert_eq!(
-        record.recourse,
-        Recourse::Producer(cell(PAYER)),
+        record.terms,
+        Terms::Escrowed {
+            credit: cell(PAYER)
+        },
         "a second cell in the frame does not unname the one the value left",
     );
 }
