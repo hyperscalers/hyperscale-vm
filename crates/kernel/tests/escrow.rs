@@ -71,8 +71,17 @@ fn claim_site() -> CrossingSite {
 /// its consumer would write for the same edge.
 fn record_departure() -> Departure {
     Departure {
+        delivers: false,
         site: record_site(),
         consumer_claim: claim_site().key(),
+    }
+}
+
+/// The same edge, where the consumer is an outbound leg.
+fn delivered_departure() -> Departure {
+    Departure {
+        delivers: true,
+        ..record_departure()
     }
 }
 
@@ -276,8 +285,13 @@ fn then(store: &MemoryStore, entry: BatchTx, again: BatchTx) -> Receipt {
 /// The sending half: one node reserves, and what it produced departs
 /// rather than reaching a local consumer.
 fn sending(amount: u128) -> BatchTx {
+    sending_on(amount, record_departure())
+}
+
+/// The same, with the departure the caller names.
+fn sending_on(amount: u128, departure: Departure) -> BatchTx {
     let mut legs = LegPlan::whole(1);
-    legs.departs(0, 0, record_departure()).unwrap();
+    legs.departs(0, 0, departure).unwrap();
     BatchTx::new(
         tx(1),
         declared(&[
@@ -823,6 +837,30 @@ fn a_second_consumer_of_one_edge_is_refused_running_whole() {
     assert!(
         receipt.delta.movements.is_empty(),
         "and nothing was credited"
+    );
+}
+
+/// A crossing an outbound leg consumes is that consumer's, so its
+/// record names nobody however unambiguous the producing frame is. The
+/// frame here holds exactly one cell in the resource — the case that
+/// names the producer for every other edge — and the delivered crossing
+/// still names nobody, because no cell of the producing frame is the
+/// crossing's to return to.
+#[test]
+fn a_delivered_crossing_names_nobody() {
+    let mut store = MemoryStore::new();
+    store.write(cell(PAYER), encode_amount(1_000).to_vec());
+    let sent = execute(
+        Arc::new(store) as Arc<dyn Baseline>,
+        &[sending_on(200, delivered_departure())],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    let record = CrossingCell::from_bytes(&sent.store.cell(record_site().key()).unwrap()).unwrap();
+    assert_eq!(
+        record.recourse,
+        Recourse::Nobody,
+        "a delivering edge credits the producing frame for nothing",
     );
 }
 

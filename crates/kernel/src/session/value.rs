@@ -232,7 +232,16 @@ impl KernelSession {
         };
         let crossed = Crossed { resource, amount };
         self.escrow.issue(node, output, crossed)?;
-        let recourse = self.recourse_among(frame, resource);
+        // A crossing an outbound leg consumes is that consumer's from
+        // the moment the core commits it. No cell of the producing frame
+        // is the crossing's to return to, whatever the frame holds, so
+        // the record names nobody and stands until the consumer claims
+        // it.
+        let recourse = if departure.delivers {
+            Recourse::Nobody
+        } else {
+            self.recourse_among(frame, resource)
+        };
         self.record_crossing(
             departure.site.key(),
             departure
@@ -473,6 +482,7 @@ mod tests {
 
     fn departure() -> Departure {
         Departure {
+            delivers: false,
             site: site(),
             consumer_claim: CrossingSite::claim(
                 &TestHasher,

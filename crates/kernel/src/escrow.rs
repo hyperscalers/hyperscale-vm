@@ -163,6 +163,9 @@ pub struct Departure {
     /// The claim cell the consumer writes when it takes the crossing,
     /// under the consuming node's target.
     pub consumer_claim: SubstateKey,
+    /// Whether the consumer is an outbound leg, so the crossing is owed
+    /// to it and credited nowhere else.
+    pub delivers: bool,
 }
 
 /// One record this execution settles rather than runs a node for: a
@@ -486,6 +489,7 @@ mod tests {
 
     fn departing(tag: u8) -> Departure {
         Departure {
+            delivers: false,
             site: cell(tag),
             consumer_claim: cell(tag.wrapping_add(1)).key(),
         }
