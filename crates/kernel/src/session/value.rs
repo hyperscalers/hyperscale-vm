@@ -494,7 +494,6 @@ mod tests {
                 0,
                 0,
                 1_000,
-                Kind::Escrowed,
             )
             .key(),
         }

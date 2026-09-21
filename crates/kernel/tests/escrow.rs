@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use hyperscale_hbor::from_slice;
 use hyperscale_vm_effects::{
-    CallArg, CrossingCell, CrossingSite, Declaration, EdgeContent, Hash32, Hasher, IntentHash,
-    Kind, Marker, NodeCall, PackageHash, SlotId, Terms, TestHasher, child_key,
+    CallArg, CrossingCell, CrossingClaim, CrossingSite, Declaration, EdgeContent, Hash32, Hasher,
+    IntentHash, Kind, NodeCall, PackageHash, SlotId, Terms, TestHasher, child_key,
 };
 use hyperscale_vm_embed::GuestArg;
 use hyperscale_vm_kernel::{
@@ -64,15 +64,7 @@ fn record_site() -> CrossingSite {
 }
 
 fn claim_site() -> CrossingSite {
-    CrossingSite::claim(
-        &TestHasher,
-        owner(PAYEE),
-        intent(),
-        0,
-        0,
-        EXPIRY_MS,
-        Kind::Escrowed,
-    )
+    CrossingSite::claim(&TestHasher, owner(PAYEE), intent(), 0, 0, EXPIRY_MS)
 }
 
 /// The edge as a producer files it: the record it writes, and the claim
@@ -468,13 +460,14 @@ fn the_two_halves_of_one_crossing_reconcile() {
     );
     assert_eq!(taken.escrow.claimed(RESOURCE), sent.escrow.issued(RESOURCE));
 
-    let claim: Marker = from_slice(
+    let claim: CrossingClaim = from_slice(
         taken.delta.cells[&claim_site().key()]
             .as_deref()
             .expect("the claim committed"),
     )
     .expect("a claim cell decodes");
     assert_eq!(claim.tx, tx(2));
+    assert_eq!(claim.record, record_site().key());
 }
 
 /// Each half conserves where it runs, which is what lets a divided
@@ -1056,15 +1049,7 @@ fn a_reclaim_of_a_record_nobody_may_take_back_is_refused() {
 
 /// The reclaim's claim cell, under the producer's own target.
 fn reclaim_site() -> CrossingSite {
-    CrossingSite::claim(
-        &TestHasher,
-        owner(PAYER),
-        intent(),
-        0,
-        0,
-        EXPIRY_MS,
-        Kind::Escrowed,
-    )
+    CrossingSite::claim(&TestHasher, owner(PAYER), intent(), 0, 0, EXPIRY_MS)
 }
 
 /// The producing node taking its own record back: reads the record,
@@ -1142,7 +1127,7 @@ fn a_reclaim_restores_the_producing_vault_exactly() {
         reclaimed.store.cell(record_site().key()).is_none(),
         "the record goes with the value it held",
     );
-    let claim: Marker = from_slice(
+    let claim: CrossingClaim = from_slice(
         reclaimed
             .store
             .cell(reclaim_site().key())
@@ -1151,6 +1136,11 @@ fn a_reclaim_restores_the_producing_vault_exactly() {
     )
     .unwrap();
     assert_eq!(claim.tx, tx(9));
+    assert_eq!(
+        claim.record,
+        record_site().key(),
+        "and it names the record it answers for, as every claim does",
+    );
 }
 
 /// A second reclaim of one crossing finds the first's claim and moves

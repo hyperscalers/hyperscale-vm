@@ -11,16 +11,16 @@ mod common;
 use common::admit_leaf;
 use hyperscale_vm_effects::vocabulary::AUTH;
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, Binding, Bounds, ChainRecords, Claim, ClaimRef, Constraint,
-    CrossingCell, CrossingSite, ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, GiveRef, GraphArg,
-    GraphNode, Hash32, Hasher, InstanceMeta, Intent, IntentHash, IntentHeader, IntentRecord,
-    IntentTree, JudgedLeaf, Kind, MAX_ACCOUNTS, MAX_SOCKETS, MAX_TREE_DEPTH, MAX_VALUE_DEPTH,
-    ManifestGraph, ManifestHash, Marked, Marker, Member, NULLIFIER_SLOT, NodeInput,
-    OWED_CLAIM_CELL_BYTES, OwedClaim, PackageHash, PrefixShardResolver, Records, ResourceKind,
-    Rule, ShardResolver, SignedIntent, Socket, TREE_WIRE_DEPTH, Terms, TestHasher, TreeDecodeError,
-    Value, ValueRef, admit_tree, bucketed_child_key, child_key, decode_tree, encode_tree,
-    escrow_claim_key, escrow_record_key, explain_admission_tree, nullifier_key, owed_claim_key,
-    per_shard,
+    AdmissionError, Admitted, Binding, Bounds, CROSSING_CLAIM_CELL_BYTES, CROSSING_CLAIM_SLOT,
+    ChainRecords, Claim, ClaimRef, Constraint, CrossingCell, CrossingClaim, CrossingSite,
+    ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, GiveRef, GraphArg, GraphNode, Hash32, Hasher,
+    InstanceMeta, Intent, IntentHash, IntentHeader, IntentRecord, IntentTree, JudgedLeaf,
+    MAX_ACCOUNTS, MAX_SOCKETS, MAX_TREE_DEPTH, MAX_VALUE_DEPTH, ManifestGraph, ManifestHash,
+    Marked, Marker, Member, NULLIFIER_SLOT, NodeInput, PackageHash, PrefixShardResolver, Records,
+    ResourceKind, Rule, ShardResolver, SignedIntent, Socket, TREE_WIRE_DEPTH, Terms, TestHasher,
+    TreeDecodeError, Value, ValueRef, admit_tree, bucketed_child_key, child_key, committed_tx_key,
+    crossing_claim_key, decode_tree, encode_tree, escrow_record_key, explain_admission_tree,
+    nullifier_key, per_shard,
 };
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
@@ -740,7 +740,7 @@ fn an_escrow_key_separates_what_it_names() {
 
     assert_ne!(
         key,
-        escrow_claim_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS),
+        crossing_claim_key(&TestHasher, BOB, bob, 1, 0),
         "a record and its claim are two cells"
     );
     assert_ne!(
@@ -781,34 +781,35 @@ fn an_escrow_key_separates_what_it_names() {
     );
 }
 
-/// A claim leads with the bucket its expiry falls in, so a sweep walks
-/// one owner's cells for one bucket as a range — the property the
-/// nullifier has, asserted here because the sweep asks the key rather
-/// than the family.
+/// Neither half of a crossing leads with a bucket, so no sweep walks to
+/// either — the nullifier's property read in the negative, asserted here
+/// because the sweep asks the key rather than the family.
 ///
-/// A record does not, and that is the point: it is a balance, retired
-/// by whoever consumes it, and a key that led with a bucket would be a
-/// key a sweep could find.
+/// That is what the two of them rest on. A record is a balance, retired
+/// by whoever consumes it; a claim is the answer its producer reads, at
+/// whatever anchor it gets there. A key that led with a bucket would be
+/// a key a sweep could find, and finding either is a value lost.
 #[test]
-fn a_claim_leads_with_its_bucket_and_a_record_does_not() {
+fn neither_a_record_nor_its_claim_carries_a_bucket() {
     let bob = composed_tree(100).root.members[0]
         .signed
         .intent
         .hash(&TestHasher);
-    let claim = escrow_claim_key(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS);
+    let claim = crossing_claim_key(&TestHasher, BOB, bob, 1, 0);
     assert_eq!(
-        SweepBucket::claimed_by(claim.local),
-        SweepBucket::of(EXPIRY_MS)
+        claim,
+        child_key(
+            &TestHasher,
+            BOB,
+            CROSSING_CLAIM_SLOT,
+            &[
+                bob.0.0.to_vec(),
+                1u32.to_le_bytes().to_vec(),
+                0u32.to_le_bytes().to_vec(),
+            ]
+        ),
+        "a claim carries no bucket"
     );
-    let later = escrow_claim_key(
-        &TestHasher,
-        BOB,
-        bob,
-        1,
-        0,
-        EXPIRY_MS + (1 << SWEEP_BUCKET_SHIFT),
-    );
-    assert!(claim.to_bytes() < later.to_bytes());
 
     let record = escrow_record_key(&TestHasher, BOB, bob, 1, 0);
     assert_eq!(
@@ -840,7 +841,7 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
         .hash(&TestHasher);
     let tx = TxHash(Hash32([7; 32]));
     let site = CrossingSite::record(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS);
-    let consumer = CrossingSite::claim(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS, Kind::Escrowed);
+    let consumer = CrossingSite::claim(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS);
     let credit = child_key(&TestHasher, BOB, ESCROW_RECORD_SLOT, &[b"vault".to_vec()]);
     let cell = site.crossing(tx, RES_Y, 10, consumer.key(), Terms::Escrowed { credit });
 
@@ -859,7 +860,7 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
     assert!(!CrossingSite::record(&TestHasher, BOB, bob, 0, 0, EXPIRY_MS).names(&cell));
     assert_eq!(
         CrossingSite::claim_on(&TestHasher, BOB, &cell).key(),
-        CrossingSite::claim(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS, Kind::Escrowed).key()
+        CrossingSite::claim(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS).key()
     );
 
     // Round trip: the cell reads back as itself, and bytes that are not
@@ -867,58 +868,56 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
     assert_eq!(CrossingCell::from_bytes(&cell.to_bytes()), Some(cell));
     assert_eq!(CrossingCell::from_bytes(b"not a cell"), None);
 
-    // The claim's value: which transaction took it, on this edge. An
-    // escrowed crossing's answer is a marker, which names no record —
-    // the window it is read in is what bounds it, and the producer that
-    // reads it holds the record already.
-    let claimed = Marker::from_bytes(&consumer.claimed_by(tx, site.key()))
-        .expect("an escrowed claim is a marker");
+    // The claim's value: which transaction took it, on this edge, and
+    // the record it answers for.
+    let claimed = CrossingClaim::from_bytes(&consumer.claimed_by(tx, site.key()))
+        .expect("a claim is its own value");
     assert_eq!(
         claimed,
-        Marker {
+        CrossingClaim {
             tx,
-            expiry_ms: EXPIRY_MS,
-            marks: Marked::Claimed {
-                intent: bob,
-                local: 1,
-                output: 0,
-            },
+            intent: bob,
+            local: 1,
+            output: 0,
+            record: site.key(),
         }
     );
     assert_eq!(claimed.key(&TestHasher, ALICE), consumer.key());
-    assert_eq!(Marker::from_bytes(&claimed.to_bytes()), Some(claimed));
+    assert_eq!(
+        CrossingClaim::from_bytes(&claimed.to_bytes()),
+        Some(claimed)
+    );
 }
 
-/// An owed crossing's answer is its own family: unbucketed, carrying the
-/// record it answers for, and reachable by no sweep.
+/// A crossing's answer is one family whatever its terms: unbucketed,
+/// carrying the record it answers for, and reachable by no sweep.
 ///
-/// The two halves of why. A delivery may be admitted for as long as the
-/// record stands, and this cell is the only thing refusing a second one,
-/// so a clock that swept it would license the second. And the consumer
-/// that wrote it has to be able to ask the producer about the record —
-/// which it could not derive, the record's owner being the producing
-/// node's target — so the cell states it.
+/// The two halves of why. An answer stands while the record it answers
+/// for does, and it is the only thing refusing a second answer, so a
+/// clock that swept it would license the second. And the consumer that
+/// wrote it has to be able to ask the producer about the record — which
+/// it could not derive, the record's owner being the producing node's
+/// target — so the cell states it.
 #[test]
-fn an_owed_claim_names_its_record_and_no_sweep_reaches_it() {
+fn a_claim_names_its_record_and_no_sweep_reaches_it() {
     let bob = composed_tree(100).root.members[0]
         .signed
         .intent
         .hash(&TestHasher);
     let tx = TxHash(Hash32([9; 32]));
     let record = CrossingSite::record(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS);
-    let owed = CrossingSite::claim(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS, Kind::Owed);
-    let escrowed = CrossingSite::claim(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS, Kind::Escrowed);
+    let answer = CrossingSite::claim(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS);
     assert_ne!(
-        owed.key(),
-        escrowed.key(),
-        "the two answers are two families, so one cell can never stand for the other",
+        answer.key(),
+        record.key(),
+        "a claim never aliases the record it claims",
     );
 
-    let claim = OwedClaim::from_bytes(&owed.claimed_by(tx, record.key()))
-        .expect("an owed claim is its own value");
+    let claim = CrossingClaim::from_bytes(&answer.claimed_by(tx, record.key()))
+        .expect("a claim is its own value");
     assert_eq!(
         claim,
-        OwedClaim {
+        CrossingClaim {
             tx,
             intent: bob,
             local: 1,
@@ -926,33 +925,32 @@ fn an_owed_claim_names_its_record_and_no_sweep_reaches_it() {
             record: record.key(),
         }
     );
-    assert_eq!(claim.key(&TestHasher, ALICE), owed.key());
-    assert_eq!(OwedClaim::from_bytes(&claim.to_bytes()), Some(claim));
-    assert_eq!(OwedClaim::from_bytes(b"not a claim"), None);
+    assert_eq!(claim.key(&TestHasher, ALICE), answer.key());
+    assert_eq!(CrossingClaim::from_bytes(&claim.to_bytes()), Some(claim));
+    assert_eq!(CrossingClaim::from_bytes(b"not a claim"), None);
     assert!(
-        claim.to_bytes().len() <= OWED_CLAIM_CELL_BYTES as usize,
-        "an owed claim encodes under the width the declaration prices it at: {} bytes",
+        claim.to_bytes().len() <= CROSSING_CLAIM_CELL_BYTES as usize,
+        "a claim encodes under the width the declaration prices it at: {} bytes",
         claim.to_bytes().len(),
     );
 
     // Its key carries no expiry bucket, which is what keeps every sweep
     // off it — the record's own property, for the record's own reason.
     assert_eq!(
-        owed.key(),
-        owed_claim_key(&TestHasher, ALICE, bob, 1, 0),
+        answer.key(),
+        crossing_claim_key(&TestHasher, ALICE, bob, 1, 0),
         "unbucketed, so the expiry is not in the identity at all",
     );
     assert_eq!(
-        CrossingSite::claim(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS + 1, Kind::Owed).key(),
-        owed.key(),
+        CrossingSite::claim(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS + 1).key(),
+        answer.key(),
         "and so a different expiry names the same cell",
     );
 }
 
 /// A cell's life is its family's, and a writer does not get to choose
-/// it: one grace serves every family but the crossing, which is the one
-/// a reshape reads across a cut and so the one that has to stay readable
-/// for the whole terminal evidence span.
+/// it: the key a marker sits at is re-derived from the expiry its own
+/// family gives it, so a life nobody's family names reaches no cell.
 #[test]
 fn a_marker_takes_the_life_its_family_has_and_no_other() {
     let bob = composed_tree(100).root.members[0]
@@ -971,23 +969,11 @@ fn a_marker_takes_the_life_its_family_has_and_no_other() {
 
     let committed = Marker::of(tx, end, Marked::Committed);
     assert_eq!(committed.expiry_ms, end + COMMITTED_GRACE_MS);
-
-    let claimed = Marker::of(
-        tx,
-        end,
-        Marked::Claimed {
-            intent: bob,
-            local: 1,
-            output: 0,
-        },
-    );
-    assert_eq!(claimed.expiry_ms, end + CROSSING_GRACE_MS);
     assert_eq!(
-        claimed.key(&TestHasher, ALICE),
-        escrow_claim_key(&TestHasher, ALICE, bob, 1, 0, end + CROSSING_GRACE_MS)
+        committed.key(&TestHasher, BOB),
+        committed_tx_key(&TestHasher, BOB, tx, end + COMMITTED_GRACE_MS)
     );
     const {
-        assert!(CROSSING_GRACE_MS > ARTIFACT_GRACE_MS);
         assert!(COMMITTED_GRACE_MS > ARTIFACT_GRACE_MS);
     }
 }
@@ -2388,15 +2374,7 @@ mod cell_widths {
 
     #[test]
     fn a_marker_encodes_under_its_width() {
-        let widest = [
-            Marked::Spent(IntentHash(hash32())),
-            Marked::Committed,
-            Marked::Claimed {
-                intent: IntentHash(hash32()),
-                local: u32::MAX,
-                output: u32::MAX,
-            },
-        ];
+        let widest = [Marked::Spent(IntentHash(hash32())), Marked::Committed];
         for marks in widest {
             let marker = Marker {
                 tx: TxHash(hash32()),

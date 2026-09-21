@@ -19,7 +19,7 @@ use hyperscale_vm_types::{
 };
 
 use crate::admission::{Admitted, NodeOrigin};
-use crate::cells::{CrossingSite, Kind};
+use crate::cells::CrossingSite;
 use crate::claim::Claim;
 use crate::hash::Hasher;
 use crate::manifest::{Manifest, NodeInput};
@@ -532,12 +532,9 @@ impl Placed<'_> {
                     continue;
                 }
                 // An outbound leg's arrival is owed and every other is
-                // escrowed, which is what puts the consumer's answer in
-                // one claim family or the other — so the two facts are
-                // read off the one question, here, rather than derived
-                // twice.
+                // escrowed, which is what the consumer's answer credits
+                // back to — or does not.
                 let delivers = self.role(consumer) == LegRole::Outbound;
-                let kind = if delivers { Kind::Owed } else { Kind::Escrowed };
                 edges.push(CrossingEdge {
                     producer: edge.source,
                     output: edge.output,
@@ -546,7 +543,7 @@ impl Placed<'_> {
                     to,
                     delivers,
                     record: CrossingSite::record_of(hasher, producer, edge.output),
-                    claim: CrossingSite::claim_of(hasher, node.target, producer, edge.output, kind),
+                    claim: CrossingSite::claim_of(hasher, node.target, producer, edge.output),
                 });
             }
         }

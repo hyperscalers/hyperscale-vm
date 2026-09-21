@@ -219,7 +219,7 @@ pub struct Arrival {
     pub claim: CrossingSite,
     /// The record cell on the producer's chain the claim answers for.
     ///
-    /// Carried because an owed claim states it, and states it because
+    /// Carried because the claim states it, and states it because
     /// nothing else ever will: the record's owner is the producing
     /// node's target, which lives in the manifest and not in either
     /// leaf.

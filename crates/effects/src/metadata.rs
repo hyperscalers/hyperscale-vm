@@ -186,8 +186,9 @@ impl SlotWidths {
 /// An amount cell is sixteen bytes; an instance entry holds nothing, its
 /// id being its order; a halt flag is a byte; a resource record is a
 /// kind and its display digits; a stored rule is an argument's width. A
-/// nullifier, a committed cell and a claim are markers, and an escrow
-/// record is a crossing cell, each at the width its encoding pins. The
+/// nullifier and a committed cell are markers, a claim carries the
+/// record it answers for beside them, and an escrow record is a crossing
+/// cell, each at the width its encoding pins. The
 /// configuration leaf is the whole instance record, whose configuration
 /// [`MAX_CONFIG_BYTES`] bounds where a creator chooses it, so the leaf
 /// occupies the slot. An instance's data is a record whose shape belongs
@@ -195,8 +196,8 @@ impl SlotWidths {
 /// every slot outside the band.
 fn protocol_width(slot: SlotId) -> u32 {
     use crate::cells::{
-        COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, ESCROW_CLAIM_SLOT, ESCROW_RECORD_SLOT,
-        MARKER_CELL_BYTES, NULLIFIER_SLOT,
+        COMMITTED_TX_SLOT, CROSSING_CELL_BYTES, CROSSING_CLAIM_CELL_BYTES, CROSSING_CLAIM_SLOT,
+        ESCROW_RECORD_SLOT, MARKER_CELL_BYTES, NULLIFIER_SLOT,
     };
     use crate::vocabulary::{AUTH, HALT, NF_VAULT, RESOURCE, VAULT};
     match slot {
@@ -205,7 +206,8 @@ fn protocol_width(slot: SlotId) -> u32 {
         HALT => 1,
         RESOURCE => 2,
         AUTH => authority_width(),
-        NULLIFIER_SLOT | ESCROW_CLAIM_SLOT | COMMITTED_TX_SLOT => MARKER_CELL_BYTES,
+        NULLIFIER_SLOT | COMMITTED_TX_SLOT => MARKER_CELL_BYTES,
+        CROSSING_CLAIM_SLOT => CROSSING_CLAIM_CELL_BYTES,
         ESCROW_RECORD_SLOT => CROSSING_CELL_BYTES,
         _ => MAX_SLOT_WIDTH,
     }
