@@ -12,13 +12,14 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    CrossingCell, CrossingSite, IssuanceGrant, Kind, ResourceKind, Terms, distinct_ids,
+    CrossingAnswer, CrossingCell, CrossingSite, IssuanceGrant, Kind, ResourceKind, Terms,
+    distinct_ids,
 };
 use hyperscale_vm_types::{ResourceAddr, SubstateKey};
 
 use super::buckets::Held;
 use super::{Capability, KernelSession, Op, SessionTrap, Settlement};
-use crate::escrow::{Crossed, Departure, Disposal, Disposition, Refusal};
+use crate::escrow::{Crossed, Deletion, Departure, Disposal, Disposition, Refusal};
 use crate::ledger::AmountLedger;
 use crate::modes::{DeltaOp, decode_amount};
 use crate::store::WorkingStore;
@@ -378,6 +379,42 @@ impl KernelSession {
             return Err(SessionTrap::CrossingUnrefusable(refusal.record));
         }
         self.record_crossing(refusal.site, refusal.answer().to_bytes())
+    }
+
+    /// Delete an answer cell this shard wrote, once the crossing it
+    /// answered for is over.
+    ///
+    /// The last of the three cell jobs, and the only one that ends a
+    /// crossing rather than deciding it. An answer — a claim or a
+    /// decline — is needed while the record it answers for stands, and
+    /// nothing removes a record but its producer's own disposal, which
+    /// happens against this cell read present. So a deletion moves no
+    /// value and states no verdict: it takes away a cell whose question
+    /// has been asked for the last time.
+    ///
+    /// What licenses it is a pair of readings of the record, absent, at
+    /// producer anchors far enough apart that nothing the producer once
+    /// promised can still be served — and every one of those is the
+    /// composing chain's, carried in the block that deletes. What is
+    /// checked here is the narrower thing the parent could get wrong:
+    /// that the cell is there and answers for the record the licence
+    /// was established against. Named the same way
+    /// [`escrow_settle`](Self::escrow_settle) holds a record to naming
+    /// its edge.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionTrap::CrossingAnswerUnreadable`] for an answer cell
+    /// that is absent, does not decode, or answers for another record;
+    /// and any [`SessionTrap`] the store raises.
+    pub(crate) fn escrow_delete(&mut self, deletion: &Deletion) -> Result<(), SessionTrap> {
+        self.store
+            .read(deletion.answer)?
+            .and_then(|bytes| CrossingAnswer::from_bytes(&bytes))
+            .filter(|answer| answer.record == deletion.record)
+            .ok_or(SessionTrap::CrossingAnswerUnreadable(deletion.answer))?;
+        self.store.remove(deletion.answer)?;
+        Ok(())
     }
 
     /// Write the crossing `value` at `key`, where nothing has written

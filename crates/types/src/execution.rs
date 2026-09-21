@@ -517,6 +517,17 @@ pub enum AbortReason {
     /// left to whoever composed the batch.
     #[hbor(discriminant = 77)]
     CrossingUnrefusable,
+    /// A deletion named an answer cell that is absent, does not decode,
+    /// or answers for a record other than the one it deletes against.
+    ///
+    /// The composing chain establishes that the crossing is over — the
+    /// record read absent twice, at producer anchors far enough apart
+    /// that nothing it promised is servable — and names the cell that
+    /// answered it. Both are the parent's, so a mismatch here is the
+    /// batch's own defect, and the kernel refuses rather than remove a
+    /// cell still answering for a record that stands.
+    #[hbor(discriminant = 78)]
+    CrossingAnswerUnreadable,
     /// A body named a handle the table holds and its frame was never
     /// lent: a site bound for another node, or a bucket an earlier node
     /// left in flight.
@@ -875,6 +886,7 @@ mod tests {
             (75, AbortReason::EventBytesExceeded),
             (76, AbortReason::CrossingWithoutRecourse),
             (77, AbortReason::CrossingUnrefusable),
+            (78, AbortReason::CrossingAnswerUnreadable),
         ];
         for (byte, reason) in classes {
             assert_eq!(

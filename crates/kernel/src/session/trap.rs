@@ -276,6 +276,10 @@ pub enum SessionTrap {
     /// already claimed.
     #[error("crossing record {0:?} is not this shard's to refuse")]
     CrossingUnrefusable(SubstateKey),
+    /// A deletion's answer cell that is absent, does not decode, or
+    /// answers for a record other than the one deleted against.
+    #[error("crossing answer {0:?} is not readable as the answer deleted")]
+    CrossingAnswerUnreadable(SubstateKey),
 }
 
 impl From<SessionTrap> for AbortReason {
@@ -321,6 +325,7 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::CrossingKeyRepeated(_) => Self::CrossingKeyRepeated,
             SessionTrap::CrossingWithoutRecourse(_) => Self::CrossingWithoutRecourse,
             SessionTrap::CrossingUnrefusable(_) => Self::CrossingUnrefusable,
+            SessionTrap::CrossingAnswerUnreadable(_) => Self::CrossingAnswerUnreadable,
         }
     }
 }

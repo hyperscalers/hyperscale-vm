@@ -601,21 +601,21 @@ fn satisfies(
 /// Run a job that invokes no node: what it writes, in order, or the
 /// first trap that stops it.
 ///
-/// A settlement and a refusal are the two of them. Neither costs fuel,
-/// neither reaches a guest, and so neither can refuse for a guest's
-/// reason — what each can refuse for is its own cells, which is the
-/// batch's defect and not the transaction's.
+/// A settlement, a refusal and a deletion are the three of them. None
+/// costs fuel, none reaches a guest, and so none can refuse for a
+/// guest's reason — what each can refuse for is its own cells, which is
+/// the batch's defect and not the transaction's.
 fn walk_cells(
     mut session: KernelSession,
     mut each: impl FnMut(&mut KernelSession) -> Result<(), SessionTrap>,
 ) -> RunResult {
     if let Err(trap) = each(&mut session) {
         let outcome = match trap {
-            SessionTrap::EscrowRecordUnreadable(_) | SessionTrap::EscrowCreditUndeclared(_) => {
-                Outcome::ProtocolError {
-                    reason: trap.into(),
-                }
-            }
+            SessionTrap::EscrowRecordUnreadable(_)
+            | SessionTrap::EscrowCreditUndeclared(_)
+            | SessionTrap::CrossingAnswerUnreadable(_) => Outcome::ProtocolError {
+                reason: trap.into(),
+            },
             other => Outcome::UserError {
                 reason: other.into(),
             },
@@ -652,6 +652,15 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
                     refusals
                         .iter()
                         .try_for_each(|refusal| session.escrow_refuse(refusal))
+                }));
+            }
+            // The answer cells it deletes: crossings this shard answered
+            // whose records their producers have since disposed of.
+            Job::Deletions(deletions) => {
+                return Ok(walk_cells(session, |session| {
+                    deletions
+                        .iter()
+                        .try_for_each(|deletion| session.escrow_delete(deletion))
                 }));
             }
             Job::Manifest { calls, legs } => (calls, legs),

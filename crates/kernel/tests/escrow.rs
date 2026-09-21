@@ -17,10 +17,10 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_embed::GuestArg;
 use hyperscale_vm_kernel::{
-    Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, Departure, Disposal,
-    Disposition, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
-    KernelSession, LegPlan, ManifestWalk, MemoryStore, Receipt, Refusal, Substates, decode_amount,
-    execute_batch,
+    Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, Deletion, Departure,
+    Disposal, Disposition, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult,
+    Invoked, KernelSession, LegPlan, ManifestWalk, MemoryStore, Receipt, Refusal, Substates,
+    decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, MAX_CROSSINGS_PER_TX,
@@ -1485,4 +1485,134 @@ fn a_reclaim_of_a_record_that_is_not_there_is_a_defect() {
         },
     );
     assert!(receipt.delta.movements.is_empty());
+}
+
+/// The consumer deleting its own answer, once the record it answered
+/// for is gone from the producer's chain: reads the cell, removes it,
+/// moves nothing. No node runs.
+fn deleting(who: TxHash, record: SubstateKey) -> BatchTx {
+    BatchTx::new(
+        who,
+        declared(&[Effect {
+            target: EffectTarget::Point(claim_site().key()),
+            mode: Mode::Write { moves: Moves::Both },
+        }]),
+        env(),
+    )
+    .with_deletions(vec![Deletion {
+        answer: claim_site().key(),
+        record,
+    }])
+}
+
+/// A store holding the claim this shard wrote for the fixture's edge.
+fn answered_store() -> MemoryStore {
+    let mut store = MemoryStore::new();
+    store.write(
+        claim_site().key(),
+        claim_site().claimed_by(tx(1), record_site().key()),
+    );
+    store
+}
+
+/// A deletion takes the answer away and nothing else.
+#[test]
+fn a_deletion_removes_the_answer_and_moves_nothing() {
+    let outcome = execute(
+        Arc::new(answered_store()) as Arc<dyn Baseline>,
+        &[deleting(tx(0x50), record_site().key())],
+        ExecutionMode::Serial,
+    )
+    .expect("a deletion is a batch");
+    let receipt = &outcome.receipts[&tx(0x50)];
+
+    assert!(
+        matches!(receipt.outcome, Outcome::Completed { .. }),
+        "a deletion completes; outcome {:?}",
+        receipt.outcome,
+    );
+    assert!(
+        outcome.store.cell(claim_site().key()).is_none(),
+        "and the answer is gone",
+    );
+    assert!(
+        receipt.delta.movements.is_empty(),
+        "nothing moved: the value was decided when the crossing was answered",
+    );
+    assert_eq!(receipt.fuel, 0, "no node ran");
+}
+
+/// An answer is deleted against the record it names and no other.
+///
+/// What licenses a deletion is that record read absent twice, and the
+/// cell and the licence would come apart if the kernel took the
+/// parent's word for which cell answers for which record — a crossing
+/// still open would lose the answer holding it open.
+#[test]
+fn an_answer_is_not_deleted_against_another_record() {
+    let outcome = execute(
+        Arc::new(answered_store()) as Arc<dyn Baseline>,
+        &[deleting(tx(0x51), reclaim_site().key())],
+        ExecutionMode::Serial,
+    )
+    .expect("a deletion is a batch");
+
+    assert_eq!(
+        outcome.receipts[&tx(0x51)].outcome,
+        Outcome::ProtocolError {
+            reason: AbortReason::CrossingAnswerUnreadable,
+        },
+        "an answer for another record is not this deletion's to remove",
+    );
+    assert!(
+        outcome.store.cell(claim_site().key()).is_some(),
+        "and the answer stands",
+    );
+}
+
+/// An answer that is not there is not one to delete: a member naming
+/// one is the batch's own defect.
+#[test]
+fn an_absent_answer_is_not_deletable() {
+    let outcome = execute(
+        Arc::new(MemoryStore::new()) as Arc<dyn Baseline>,
+        &[deleting(tx(0x52), record_site().key())],
+        ExecutionMode::Serial,
+    )
+    .expect("a deletion is a batch");
+
+    assert_eq!(
+        outcome.receipts[&tx(0x52)].outcome,
+        Outcome::ProtocolError {
+            reason: AbortReason::CrossingAnswerUnreadable,
+        },
+    );
+}
+
+/// A deletion declares the cell it removes.
+///
+/// A removal is a write, so it belongs in the same conflict group as
+/// every other writer of that cell and wants the same exclusive
+/// declaration. Screened where the batch is judged, because a member
+/// that reached the kernel without it would fail at finish as an
+/// undeclared access — a halt, where a batch that cannot be run should
+/// simply refuse.
+#[test]
+fn a_deletion_declares_the_answer_it_removes() {
+    let undeclared = BatchTx::new(tx(0x53), declared(&[]), env()).with_deletions(vec![Deletion {
+        answer: claim_site().key(),
+        record: record_site().key(),
+    }]);
+
+    assert!(
+        matches!(
+            execute(
+                Arc::new(answered_store()) as Arc<dyn Baseline>,
+                &[undeclared],
+                ExecutionMode::Serial,
+            ),
+            Err(BatchError::UndeclaredCrossingCell { .. })
+        ),
+        "a deletion naming a cell its declaration does not reach is refused",
+    );
 }

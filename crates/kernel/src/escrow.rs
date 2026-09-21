@@ -239,6 +239,33 @@ impl Refusal {
     }
 }
 
+/// One answer cell a member deletes: the cell, and the record it has to
+/// name.
+///
+/// The consumer's own housekeeping, once the crossing it answered is
+/// over. An answer is needed only while the record it answers for
+/// stands, and the only thing that removes a record is the producer's
+/// disposal — which happens against this very cell read present. So an
+/// answer whose record is gone answers a question nobody can ask again.
+///
+/// What licenses the deletion is a pair of readings the deleting block
+/// carries, and none of it reaches here: the kernel holds the member to
+/// naming a cell that is there and answers for the record claimed, the
+/// way [`Disposal`] is held to a record naming its edge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Deletion {
+    /// The answer cell to read and remove, under the consuming node's
+    /// target — this shard's own leaf, which is why a deletion needs
+    /// nothing carried with it.
+    pub answer: SubstateKey,
+    /// The record on the producer's chain that answer answers for.
+    ///
+    /// Carried so the cell and the licence cannot come apart: the
+    /// readings that license the deletion are of this record, and the
+    /// cell is deleted only where it says the same.
+    pub record: SubstateKey,
+}
+
 /// What a settlement does with a record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Disposition {
