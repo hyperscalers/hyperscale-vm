@@ -271,6 +271,11 @@ pub enum SessionTrap {
     /// to go back to, so nothing could ever take it back.
     #[error("crossing cell {0:?} carries value with no cell to return it to")]
     CrossingWithoutRecourse(SubstateKey),
+    /// A crossing refused where no refusal is the answer: one owed to
+    /// its consumer, which nothing takes back, or one this shard has
+    /// already claimed.
+    #[error("crossing record {0:?} is not this shard's to refuse")]
+    CrossingUnrefusable(SubstateKey),
 }
 
 impl From<SessionTrap> for AbortReason {
@@ -315,6 +320,7 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::EscrowRecordUnreadable(_) => Self::EscrowRecordUnreadable,
             SessionTrap::CrossingKeyRepeated(_) => Self::CrossingKeyRepeated,
             SessionTrap::CrossingWithoutRecourse(_) => Self::CrossingWithoutRecourse,
+            SessionTrap::CrossingUnrefusable(_) => Self::CrossingUnrefusable,
         }
     }
 }

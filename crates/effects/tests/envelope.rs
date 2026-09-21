@@ -996,10 +996,20 @@ fn a_decline_is_the_claims_other_half_at_its_own_key() {
          which is what lets a producer refuse it",
     );
     assert_ne!(claim_key, record.key());
+
+    // The expiry is not in either key, which is the whole of why no
+    // sweep reaches them: a sweep walks a bucket, a bucket is derived
+    // from an expiry, and a site built with any other expiry names the
+    // same two cells. The site carries one because a record's own value
+    // states it; the key deliberately does not use it.
+    let later = CrossingSite::claim(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS * 2);
+    assert_eq!(site.key(), later.key());
     assert_eq!(
-        SweepBucket::claimed_by(claim_key.local),
-        SweepBucket::claimed_by(taken.key(&TestHasher, ALICE).local),
-        "and neither leads with a bucket, so no sweep walks to either",
+        claim_key,
+        CrossingAnswer::from_bytes(&later.answered_by(tx, record.key(), Answered::Declined))
+            .expect("a decline is its own value")
+            .key(&TestHasher, ALICE),
+        "so a decline of one edge is one cell whatever expiry the site was built with",
     );
     assert!(declined.to_bytes().len() <= CROSSING_ANSWER_CELL_BYTES as usize);
 }

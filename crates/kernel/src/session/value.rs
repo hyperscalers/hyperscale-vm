@@ -18,7 +18,7 @@ use hyperscale_vm_types::{ResourceAddr, SubstateKey};
 
 use super::buckets::Held;
 use super::{Capability, KernelSession, Op, SessionTrap, Settlement};
-use crate::escrow::{Crossed, Departure, Disposal, Disposition};
+use crate::escrow::{Crossed, Departure, Disposal, Disposition, Refusal};
 use crate::ledger::AmountLedger;
 use crate::modes::{DeltaOp, decode_amount};
 use crate::store::WorkingStore;
@@ -345,6 +345,39 @@ impl KernelSession {
         }
         self.store.remove(disposal.record)?;
         Ok(())
+    }
+
+    /// Refuse a crossing this shard was handed: write the decline cell
+    /// and move nothing.
+    ///
+    /// The other half of [`escrow_settle`](Self::escrow_settle), and the
+    /// shorter one, because a refusal decides value on a chain this one
+    /// cannot touch. What the producer does with it is credit the value
+    /// back to the cell its own record names; what happens here is one
+    /// cell written saying the crossing will never be taken.
+    ///
+    /// Two things are checked, and they are the two that would move
+    /// value if they were wrong. A crossing owed to its consumer is not
+    /// refusable at all — nothing takes one back, so a decline of one
+    /// would credit a cell nobody named — and a crossing this shard has
+    /// already claimed is answered, so a second answer beside the first
+    /// would license a retirement and a reclaim of one value. The claim
+    /// is read against the committed baseline, which is what makes the
+    /// two answers exclusive by construction rather than by two
+    /// composers agreeing.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionTrap::CrossingUnrefusable`] for a crossing whose terms
+    /// leave no verdict to give, or one this shard has already claimed.
+    pub(crate) fn escrow_refuse(&mut self, refusal: &Refusal) -> Result<(), SessionTrap> {
+        if !matches!(refusal.cell.terms, Terms::Escrowed { .. }) {
+            return Err(SessionTrap::CrossingUnrefusable(refusal.record));
+        }
+        if self.store.read(refusal.cell.consumer_claim)?.is_some() {
+            return Err(SessionTrap::CrossingUnrefusable(refusal.record));
+        }
+        self.record_crossing(refusal.site, refusal.answer().to_bytes())
     }
 
     /// Write the crossing `value` at `key`, where nothing has written

@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::{CrossingSite, Kind};
+use hyperscale_vm_effects::{Answered, CrossingAnswer, CrossingCell, CrossingSite, Kind};
 use hyperscale_vm_types::{MAX_CROSSINGS_PER_TX, ResourceAddr, SubstateKey};
 
 use crate::modes::ModeError;
@@ -191,6 +191,52 @@ pub struct Disposal {
     pub claim: CrossingSite,
     /// What the settlement does with the record.
     pub disposition: Disposition,
+}
+
+/// One crossing a member refuses: the record cell as its producer
+/// committed it, and the key it sits at on the producing chain.
+///
+/// The cell travels with the member because the refusing shard holds no
+/// leaf for a crossing it has not answered — that is the whole asymmetry
+/// of this direction. What makes carrying it safe is where it came from:
+/// a bundle, whose every cell is proven against the producer's committed
+/// state root under a header its own committee certified. So these are
+/// the producer's bytes wherever they are read, and the kernel holds
+/// them to naming the record they are carried for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Refusal {
+    /// The record cell on the producer's chain the refusal answers for.
+    pub record: SubstateKey,
+    /// What that cell holds, as the producer committed it.
+    pub cell: CrossingCell,
+    /// Where the refusal's own cell sits, under the consuming node's
+    /// target.
+    ///
+    /// Derived by the parent, as every key this kernel is handed is: the
+    /// hashing seam here takes bytes and not a domain, so it could not
+    /// derive a child key if it wanted to.
+    pub site: SubstateKey,
+}
+
+impl Refusal {
+    /// The answer this refusal writes, under the consuming node's own
+    /// target.
+    ///
+    /// Derived rather than carried, so the cell a refusal writes and the
+    /// crossing it names cannot come apart: the owner is the one the
+    /// record's own `consumer_claim` sits under, and the edge is the
+    /// record's.
+    #[must_use]
+    pub const fn answer(&self) -> CrossingAnswer {
+        CrossingAnswer {
+            tx: self.cell.tx,
+            intent: self.cell.intent,
+            local: self.cell.local,
+            output: self.cell.output,
+            record: self.record,
+            answered: Answered::Declined,
+        }
+    }
 }
 
 /// What a settlement does with a record.

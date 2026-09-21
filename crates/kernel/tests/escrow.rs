@@ -13,12 +13,13 @@ use hyperscale_hbor::from_slice;
 use hyperscale_vm_effects::{
     CallArg, CrossingAnswer, CrossingCell, CrossingSite, Declaration, EdgeContent, Hash32, Hasher,
     IntentHash, Kind, NodeCall, PackageHash, SlotId, Terms, TestHasher, child_key,
+    crossing_decline_key,
 };
 use hyperscale_vm_embed::GuestArg;
 use hyperscale_vm_kernel::{
     Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, Departure, Disposal,
     Disposition, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
-    KernelSession, LegPlan, ManifestWalk, MemoryStore, Receipt, Substates, decode_amount,
+    KernelSession, LegPlan, ManifestWalk, MemoryStore, Receipt, Refusal, Substates, decode_amount,
     execute_batch,
 };
 use hyperscale_vm_types::{
@@ -1044,6 +1045,136 @@ fn a_reclaim_of_a_record_nobody_may_take_back_is_refused() {
     assert!(
         refused.store.cell(record_site().key()).is_some(),
         "the record stands, still naming the claim that may take it",
+    );
+}
+
+/// Where the consumer's refusal of this edge sits.
+fn decline_key() -> SubstateKey {
+    crossing_decline_key(&TestHasher, owner(PAYEE), intent(), 0, 0)
+}
+
+/// The escrowed terms this fixture's edge carries: a cell of the
+/// producer's to credit the value back to.
+fn escrowed_terms() -> Terms {
+    Terms::Escrowed {
+        credit: cell(PAYER),
+    }
+}
+
+/// The record as its producer committed it, which is what travels with
+/// a refusal.
+fn refused_cell(terms: Terms) -> CrossingCell {
+    record_site().crossing(tx(1), RESOURCE, 200, claim_site().key(), terms)
+}
+
+/// The consumer refusing the crossing: reads the claim it must not
+/// find, writes the decline, moves nothing. No node runs.
+fn refusing(who: TxHash, terms: Terms) -> BatchTx {
+    BatchTx::new(
+        who,
+        declared(&[
+            Effect {
+                target: EffectTarget::Point(decline_key()),
+                mode: Mode::Write { moves: Moves::Both },
+            },
+            Effect {
+                target: EffectTarget::Point(claim_site().key()),
+                mode: Mode::Read,
+            },
+        ]),
+        env(),
+    )
+    .with_refusals(vec![Refusal {
+        record: record_site().key(),
+        cell: refused_cell(terms),
+        site: decline_key(),
+    }])
+}
+
+/// A refusal writes one cell and moves nothing.
+#[test]
+fn a_refusal_writes_the_decline_and_moves_nothing() {
+    let store = MemoryStore::new();
+    let outcome = execute(
+        Arc::new(store) as Arc<dyn Baseline>,
+        &[refusing(tx(0x40), escrowed_terms())],
+        ExecutionMode::Serial,
+    )
+    .expect("a refusal is a batch");
+    let receipt = &outcome.receipts[&tx(0x40)];
+
+    assert!(
+        matches!(receipt.outcome, Outcome::Completed { .. }),
+        "a refusal completes; outcome {:?}",
+        receipt.outcome,
+    );
+    assert!(
+        outcome.store.cell(decline_key()).is_some(),
+        "the refusal's own cell is there",
+    );
+    assert!(
+        receipt.delta.movements.is_empty(),
+        "and nothing moved: the producer keeps what it already has",
+    );
+    assert_eq!(receipt.fuel, 0, "no node ran");
+}
+
+/// A crossing this shard has already claimed cannot be refused.
+///
+/// The exclusivity the whole design rests on, read against committed
+/// state inside the execution rather than agreed between composers: two
+/// answers for one crossing license a retirement and a reclaim of one
+/// value, and they are two cells, so nothing structural prevents it.
+#[test]
+fn a_claimed_crossing_cannot_also_be_refused() {
+    let mut claimed = MemoryStore::new();
+    claimed.write(
+        claim_site().key(),
+        claim_site().claimed_by(tx(1), record_site().key()),
+    );
+    let outcome = execute(
+        Arc::new(claimed) as Arc<dyn Baseline>,
+        &[refusing(tx(0x41), escrowed_terms())],
+        ExecutionMode::Serial,
+    )
+    .expect("a refusal is a batch");
+
+    assert!(
+        matches!(
+            outcome.receipts[&tx(0x41)].outcome,
+            Outcome::UserError {
+                reason: AbortReason::CrossingUnrefusable,
+            }
+        ),
+        "a crossing with a claim is answered; outcome {:?}",
+        outcome.receipts[&tx(0x41)].outcome,
+    );
+    assert!(
+        outcome.store.cell(decline_key()).is_none(),
+        "and no second answer is written",
+    );
+}
+
+/// An owed crossing is never refused: nothing takes one back, so a
+/// decline of one would credit a cell nobody named.
+#[test]
+fn an_owed_crossing_cannot_be_refused() {
+    let outcome = execute(
+        Arc::new(MemoryStore::new()) as Arc<dyn Baseline>,
+        &[refusing(tx(0x42), Terms::Owed)],
+        ExecutionMode::Serial,
+    )
+    .expect("a refusal is a batch");
+
+    assert!(
+        matches!(
+            outcome.receipts[&tx(0x42)].outcome,
+            Outcome::UserError {
+                reason: AbortReason::CrossingUnrefusable,
+            }
+        ),
+        "outcome {:?}",
+        outcome.receipts[&tx(0x42)].outcome,
     );
 }
 

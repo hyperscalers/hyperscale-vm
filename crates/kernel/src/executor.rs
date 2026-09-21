@@ -39,7 +39,7 @@ use hyperscale_vm_types::{
     MAX_EVENT_BYTES_PER_TX, Mode, ModeKind, Moves, Outcome, SubstateKey, TxHash, UnmetCondition,
 };
 
-use crate::escrow::{Departure, Disposal, Disposition, EscrowDelta, LegPlan};
+use crate::escrow::{Departure, Disposal, Disposition, EscrowDelta, LegPlan, Refusal};
 use crate::ledger::AmountLedger;
 use crate::locality::OwnerSet;
 use crate::overlay::OverlayStore;
@@ -195,7 +195,7 @@ impl BatchTx {
     pub fn with_legs(mut self, legs: LegPlan) -> Self {
         let calls = match self.job {
             Job::Manifest { calls, .. } => calls,
-            Job::Records(_) => Vec::new(),
+            Job::Records(_) | Job::Refusals(_) => Vec::new(),
         };
         self.job = Job::Manifest { calls, legs };
         self
@@ -206,6 +206,14 @@ impl BatchTx {
     #[must_use]
     pub fn with_disposals(mut self, disposals: Vec<Disposal>) -> Self {
         self.job = Job::Records(disposals);
+        self
+    }
+
+    /// Bind the crossings this execution refuses instead of walking a
+    /// manifest.
+    #[must_use]
+    pub fn with_refusals(mut self, refusals: Vec<Refusal>) -> Self {
+        self.job = Job::Refusals(refusals);
         self
     }
 
@@ -253,7 +261,7 @@ impl BatchTx {
     pub fn with_calls(mut self, calls: Vec<NodeCall>) -> Self {
         let legs = match self.job {
             Job::Manifest { legs, .. } => legs,
-            Job::Records(_) => LegPlan::whole(0),
+            Job::Records(_) | Job::Refusals(_) => LegPlan::whole(0),
         };
         self.job = Job::Manifest { calls, legs };
         self
@@ -264,7 +272,7 @@ impl BatchTx {
     pub fn calls(&self) -> &[NodeCall] {
         match &self.job {
             Job::Manifest { calls, .. } => calls,
-            Job::Records(_) => &[],
+            Job::Records(_) | Job::Refusals(_) => &[],
         }
     }
 
@@ -275,7 +283,7 @@ impl BatchTx {
     pub(crate) fn record_cells(&self) -> Vec<SubstateKey> {
         match &self.job {
             Job::Manifest { legs, .. } => legs.records().collect(),
-            Job::Records(_) => Vec::new(),
+            Job::Records(_) | Job::Refusals(_) => Vec::new(),
         }
     }
 
@@ -285,7 +293,7 @@ impl BatchTx {
     #[must_use]
     pub(crate) fn disposed_records(&self) -> Vec<SubstateKey> {
         match &self.job {
-            Job::Manifest { .. } => Vec::new(),
+            Job::Manifest { .. } | Job::Refusals(_) => Vec::new(),
             Job::Records(disposals) => disposals.iter().map(|disposal| disposal.record).collect(),
         }
     }
@@ -301,6 +309,7 @@ impl BatchTx {
                 .filter(|disposal| disposal.disposition == Disposition::Reclaim)
                 .map(|disposal| disposal.claim.key())
                 .collect(),
+            Job::Refusals(refusals) => refusals.iter().map(|refusal| refusal.site).collect(),
         }
     }
 
@@ -357,6 +366,14 @@ pub enum Job {
     },
     /// Settle the records named, in order, invoking nothing.
     Records(Vec<Disposal>),
+    /// Refuse the crossings named, in order, invoking nothing.
+    ///
+    /// The other side of [`Self::Records`]: that one disposes of records
+    /// this shard holds, this one answers records another shard holds,
+    /// and neither walks a manifest. A refusal writes one cell and moves
+    /// no value — the producer keeps what it already has, and the cell
+    /// is the licence to keep it.
+    Refusals(Vec<Refusal>),
 }
 
 impl Job {
@@ -366,7 +383,7 @@ impl Job {
     pub fn departure(&self, node: u32, output: u32) -> Option<Departure> {
         match self {
             Self::Manifest { legs, .. } => legs.departure(node, output),
-            Self::Records(_) => None,
+            Self::Records(_) | Self::Refusals(_) => None,
         }
     }
 }
