@@ -11,16 +11,16 @@ mod common;
 use common::admit_leaf;
 use hyperscale_vm_effects::vocabulary::AUTH;
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, Binding, Bounds, CROSSING_CLAIM_CELL_BYTES, CROSSING_CLAIM_SLOT,
-    ChainRecords, Claim, ClaimRef, Constraint, CrossingCell, CrossingClaim, CrossingSite,
-    ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, GiveRef, GraphArg, GraphNode, Hash32, Hasher,
-    InstanceMeta, Intent, IntentHash, IntentHeader, IntentRecord, IntentTree, JudgedLeaf,
+    AdmissionError, Admitted, Answered, Binding, Bounds, CROSSING_ANSWER_CELL_BYTES,
+    CROSSING_CLAIM_SLOT, ChainRecords, Claim, ClaimRef, Constraint, CrossingAnswer, CrossingCell,
+    CrossingSite, ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, GiveRef, GraphArg, GraphNode, Hash32,
+    Hasher, InstanceMeta, Intent, IntentHash, IntentHeader, IntentRecord, IntentTree, JudgedLeaf,
     MAX_ACCOUNTS, MAX_SOCKETS, MAX_TREE_DEPTH, MAX_VALUE_DEPTH, ManifestGraph, ManifestHash,
     Marked, Marker, Member, NULLIFIER_SLOT, NodeInput, PackageHash, PrefixShardResolver, Records,
     ResourceKind, Rule, ShardResolver, SignedIntent, Socket, TREE_WIRE_DEPTH, Terms, TestHasher,
     TreeDecodeError, Value, ValueRef, admit_tree, bucketed_child_key, child_key, committed_tx_key,
-    crossing_claim_key, decode_tree, encode_tree, escrow_record_key, explain_admission_tree,
-    nullifier_key, per_shard,
+    crossing_claim_key, crossing_decline_key, decode_tree, encode_tree, escrow_record_key,
+    explain_admission_tree, nullifier_key, per_shard,
 };
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
@@ -870,21 +870,22 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
 
     // The claim's value: which transaction took it, on this edge, and
     // the record it answers for.
-    let claimed = CrossingClaim::from_bytes(&consumer.claimed_by(tx, site.key()))
+    let claimed = CrossingAnswer::from_bytes(&consumer.claimed_by(tx, site.key()))
         .expect("a claim is its own value");
     assert_eq!(
         claimed,
-        CrossingClaim {
+        CrossingAnswer {
             tx,
             intent: bob,
             local: 1,
             output: 0,
             record: site.key(),
+            answered: Answered::Taken,
         }
     );
     assert_eq!(claimed.key(&TestHasher, ALICE), consumer.key());
     assert_eq!(
-        CrossingClaim::from_bytes(&claimed.to_bytes()),
+        CrossingAnswer::from_bytes(&claimed.to_bytes()),
         Some(claimed)
     );
 }
@@ -913,23 +914,24 @@ fn a_claim_names_its_record_and_no_sweep_reaches_it() {
         "a claim never aliases the record it claims",
     );
 
-    let claim = CrossingClaim::from_bytes(&answer.claimed_by(tx, record.key()))
+    let claim = CrossingAnswer::from_bytes(&answer.claimed_by(tx, record.key()))
         .expect("a claim is its own value");
     assert_eq!(
         claim,
-        CrossingClaim {
+        CrossingAnswer {
             tx,
             intent: bob,
             local: 1,
             output: 0,
             record: record.key(),
+            answered: Answered::Taken,
         }
     );
     assert_eq!(claim.key(&TestHasher, ALICE), answer.key());
-    assert_eq!(CrossingClaim::from_bytes(&claim.to_bytes()), Some(claim));
-    assert_eq!(CrossingClaim::from_bytes(b"not a claim"), None);
+    assert_eq!(CrossingAnswer::from_bytes(&claim.to_bytes()), Some(claim));
+    assert_eq!(CrossingAnswer::from_bytes(b"not a claim"), None);
     assert!(
-        claim.to_bytes().len() <= CROSSING_CLAIM_CELL_BYTES as usize,
+        claim.to_bytes().len() <= CROSSING_ANSWER_CELL_BYTES as usize,
         "a claim encodes under the width the declaration prices it at: {} bytes",
         claim.to_bytes().len(),
     );
@@ -946,6 +948,60 @@ fn a_claim_names_its_record_and_no_sweep_reaches_it() {
         answer.key(),
         "and so a different expiry names the same cell",
     );
+}
+
+/// A decline is the claim's other half: the same terms, the same owner,
+/// the same width — and its own key.
+///
+/// Its own key because what a producer asks is which cell is *there*. A
+/// proof of presence carries a value hash and nothing a reader could
+/// compare against without pinning the answer's encoding, so the role is
+/// what has to say which answer was given. The value says so too, for a
+/// reader holding the leaf, and that is what re-derives the key: a cell
+/// claiming one answer and sitting at the other's role is at no key its
+/// own value names.
+#[test]
+fn a_decline_is_the_claims_other_half_at_its_own_key() {
+    let bob = composed_tree(100).root.members[0]
+        .signed
+        .intent
+        .hash(&TestHasher);
+    let tx = TxHash(Hash32([9; 32]));
+    let record = CrossingSite::record(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS);
+    let site = CrossingSite::claim(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS);
+
+    let declined =
+        CrossingAnswer::from_bytes(&site.answered_by(tx, record.key(), Answered::Declined))
+            .expect("a decline is its own value");
+    let taken = CrossingAnswer::from_bytes(&site.claimed_by(tx, record.key()))
+        .expect("a claim is its own value");
+    assert_eq!(
+        declined,
+        CrossingAnswer {
+            answered: Answered::Declined,
+            ..taken
+        },
+        "the two answers differ in what they say and in nothing else",
+    );
+
+    let claim_key = declined.key(&TestHasher, ALICE);
+    assert_eq!(
+        claim_key,
+        crossing_decline_key(&TestHasher, ALICE, bob, 1, 0),
+    );
+    assert_ne!(
+        claim_key,
+        taken.key(&TestHasher, ALICE),
+        "so a record holding both answers is a record holding two cells, \
+         which is what lets a producer refuse it",
+    );
+    assert_ne!(claim_key, record.key());
+    assert_eq!(
+        SweepBucket::claimed_by(claim_key.local),
+        SweepBucket::claimed_by(taken.key(&TestHasher, ALICE).local),
+        "and neither leads with a bucket, so no sweep walks to either",
+    );
+    assert!(declined.to_bytes().len() <= CROSSING_ANSWER_CELL_BYTES as usize);
 }
 
 /// A cell's life is its family's, and a writer does not get to choose

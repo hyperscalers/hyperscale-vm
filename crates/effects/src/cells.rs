@@ -37,17 +37,33 @@ pub const ESCROW_RECORD_SLOT: SlotId = SlotId(0xFFFD);
 /// The kernel-reserved role of crossing claim substates under the
 /// claiming node's target.
 ///
-/// What the shard taking a crossing writes, on whatever terms the record
-/// carries. The record says value was issued and never that it is still
-/// available; this is what says it was taken, and it is what makes
+/// What the shard *taking* a crossing writes, on whatever terms the
+/// record carries. The record says value was issued and never that it is
+/// still available; this is what says it was taken, and it is what makes
 /// exactly one of the consumer's claim and the producer's reclaim
 /// happen.
 ///
-/// One role for both kinds, because both are held on one term: a claim
-/// answers its crossing for as long as the record it answers for stands,
+/// One role for both kinds of crossing, because both are held on one
+/// term: an answer stands for as long as the record it answers for does,
 /// which is a fact about another chain rather than a clock. So it
 /// outlives every window and carries the record it answers for.
 pub const CROSSING_CLAIM_SLOT: SlotId = SlotId(0xFFFB);
+
+/// The reserved role of crossing decline substates under the consuming
+/// node's target.
+///
+/// What the shard *refusing* a crossing writes: the other half of the
+/// obligation a crossing puts on its consumer, and the licence its
+/// producer credits the value back on. No kernel writes one — the chain
+/// does, from what the block carries — because a refused member's own
+/// writes are discarded and a member that never ran writes nothing at
+/// all, which is exactly the case a decline is for.
+///
+/// Its own role rather than its own value, so a producer asking which
+/// answer it got asks two keys under one owner and reads a presence. A
+/// reader holding the leaf still learns which it is from the value,
+/// which is what re-derives this key.
+pub const CROSSING_DECLINE_SLOT: SlotId = SlotId(0xFFFA);
 
 /// The reserved role of committed-transaction substates under a shard's
 /// own owner.
@@ -70,13 +86,13 @@ pub const MARKER_CELL_BYTES: u32 = 96;
 /// producing node's target, on [`MARKER_CELL_BYTES`]'s terms.
 pub const CROSSING_CELL_BYTES: u32 = 256;
 
-/// The most bytes a [`CrossingClaim`] cell holds.
+/// The most bytes a [`CrossingAnswer`] cell holds, in either family.
 ///
 /// Wider than [`MARKER_CELL_BYTES`] because it carries a whole
 /// [`SubstateKey`] a marker does not: the record under the producing
-/// node's target, which a consumer holding only its own claim could
+/// node's target, which a consumer holding only its own answer could
 /// never derive.
-pub const CROSSING_CLAIM_CELL_BYTES: u32 = 160;
+pub const CROSSING_ANSWER_CELL_BYTES: u32 = 160;
 
 // Held at compile time rather than by a test: every side is a constant,
 // so a kernel cell colliding with a package's own — or with another
@@ -84,13 +100,18 @@ pub const CROSSING_CLAIM_CELL_BYTES: u32 = 160;
 const _: () = assert!(NULLIFIER_SLOT.0 > PACKAGE_SLOT_BASE);
 const _: () = assert!(ESCROW_RECORD_SLOT.0 > PACKAGE_SLOT_BASE);
 const _: () = assert!(CROSSING_CLAIM_SLOT.0 > PACKAGE_SLOT_BASE);
+const _: () = assert!(CROSSING_DECLINE_SLOT.0 > PACKAGE_SLOT_BASE);
 const _: () = assert!(COMMITTED_TX_SLOT.0 > PACKAGE_SLOT_BASE);
 const _: () = assert!(NULLIFIER_SLOT.0 != ESCROW_RECORD_SLOT.0);
 const _: () = assert!(NULLIFIER_SLOT.0 != CROSSING_CLAIM_SLOT.0);
 const _: () = assert!(ESCROW_RECORD_SLOT.0 != CROSSING_CLAIM_SLOT.0);
+const _: () = assert!(CROSSING_DECLINE_SLOT.0 != CROSSING_CLAIM_SLOT.0);
+const _: () = assert!(CROSSING_DECLINE_SLOT.0 != ESCROW_RECORD_SLOT.0);
+const _: () = assert!(CROSSING_DECLINE_SLOT.0 != NULLIFIER_SLOT.0);
 const _: () = assert!(COMMITTED_TX_SLOT.0 != NULLIFIER_SLOT.0);
 const _: () = assert!(COMMITTED_TX_SLOT.0 != ESCROW_RECORD_SLOT.0);
 const _: () = assert!(COMMITTED_TX_SLOT.0 != CROSSING_CLAIM_SLOT.0);
+const _: () = assert!(COMMITTED_TX_SLOT.0 != CROSSING_DECLINE_SLOT.0);
 
 /// The canonical nullifier key for a signed intent under one of its
 /// accounts:
@@ -225,10 +246,41 @@ pub fn crossing_claim_key(
     local: u32,
     output: u32,
 ) -> SubstateKey {
+    answer_key(hasher, owner, CROSSING_CLAIM_SLOT, intent, local, output)
+}
+
+/// The canonical crossing decline key for one value edge, under the
+/// target of the node that refused it.
+///
+/// [`crossing_claim_key`] under the other role, on the same material and
+/// the same owner. Two keys rather than one cell with two meanings,
+/// because what a producer asks is whether a cell is *there* — a proof
+/// of presence carries a value hash and nothing a reader could compare
+/// against without pinning an encoding, so the key is what says which
+/// answer was given.
+#[must_use]
+pub fn crossing_decline_key(
+    hasher: &dyn Hasher,
+    owner: impl Into<Address>,
+    intent: IntentHash,
+    local: u32,
+    output: u32,
+) -> SubstateKey {
+    answer_key(hasher, owner, CROSSING_DECLINE_SLOT, intent, local, output)
+}
+
+fn answer_key(
+    hasher: &dyn Hasher,
+    owner: impl Into<Address>,
+    slot: SlotId,
+    intent: IntentHash,
+    local: u32,
+    output: u32,
+) -> SubstateKey {
     child_key(
         hasher,
         owner,
-        CROSSING_CLAIM_SLOT,
+        slot,
         &[
             intent.0.0.to_vec(),
             local.to_le_bytes().to_vec(),
@@ -488,26 +540,65 @@ impl Marker {
     }
 }
 
-/// What a crossing claim cell holds: which transaction took the
-/// crossing, which edge it was, and the record on the producer's chain
-/// it answers for.
+/// Which answer a consumer gave a crossing, and so which role its cell
+/// sits under.
+///
+/// The two are exclusive by construction rather than by agreement: a
+/// claim is written inside a session that took the value, a decline by
+/// the chain when nothing here can still take it, and a record holding
+/// both would license a retirement and a reclaim of one value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+pub enum Answered {
+    /// The consumer took the crossing. The value is where it ran, and
+    /// the producer's record is a retirement's.
+    Taken,
+    /// The consumer will not take the crossing. Nothing here ran or can
+    /// still run, and the value is the producer's to credit back.
+    ///
+    /// Only where the consumer's verdict is final — which is what
+    /// [`Terms`] says, and the reason a delivery may not write one: a
+    /// delivery that failed decides nothing, and the crossing behind it
+    /// stands for a later attempt.
+    Declined,
+}
+
+impl Answered {
+    /// The role a cell recording this answer sits under.
+    #[must_use]
+    pub const fn slot(self) -> SlotId {
+        match self {
+            Self::Taken => CROSSING_CLAIM_SLOT,
+            Self::Declined => CROSSING_DECLINE_SLOT,
+        }
+    }
+}
+
+/// What a crossing answer cell holds: which transaction answered the
+/// crossing, which edge it was, which way the answer went, and the
+/// record on the producer's chain it answers for.
 ///
 /// Self-describing on the record's terms rather than a marker's: the
-/// value re-derives the cell's own key under [`CROSSING_CLAIM_SLOT`], so
-/// a reader holding nothing but the leaf can tell it from any other cell.
-/// What it cannot re-derive is `record`, whose owner is the *producing*
-/// node's target and lives in the manifest rather than in either leaf —
-/// so it is carried, and carrying it is the whole reason this family
-/// exists. A consumer holding only the material would have the edge and
-/// not the shard.
+/// value re-derives the cell's own key under its answer's own role, so a
+/// reader holding nothing but the leaf can tell it from any other cell
+/// and tell which answer it is. What it cannot re-derive is `record`,
+/// whose owner is the *producing* node's target and lives in the
+/// manifest rather than in either leaf — so it is carried, and carrying
+/// it is the whole reason this family exists. A consumer holding only
+/// the material would have the edge and not the shard.
+///
+/// One type for both answers because they carry the same terms and are
+/// cleaned up against the same record; two roles because what a producer
+/// asks is which cell is *there*, and a key is what can answer that
+/// without a reader pinning an encoding.
 ///
 /// No expiry, because nothing sweeps it. A crossing is answered once, by
 /// a presence its producer reads at whatever anchor it reaches, and this
 /// cell is what refuses a second answer, so a clock that took it away
 /// would license the second.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
-pub struct CrossingClaim {
-    /// The transaction whose execution took the crossing.
+pub struct CrossingAnswer {
+    /// The transaction whose execution answered the crossing, or — for a
+    /// decline — the one whose members will never run it.
     pub tx: TxHash,
     /// The signed intent the producing node belongs to.
     pub intent: IntentHash,
@@ -515,17 +606,26 @@ pub struct CrossingClaim {
     pub local: u32,
     /// Which of its outputs the edge carried.
     pub output: u32,
-    /// The record cell this claim answers for, under the producing
+    /// The record cell this answer answers for, under the producing
     /// node's target.
     pub record: SubstateKey,
+    /// Which way the answer went.
+    pub answered: Answered,
 }
 
-impl CrossingClaim {
-    /// The cell this claim sits at under `owner`: the family's own key,
+impl CrossingAnswer {
+    /// The cell this answer sits at under `owner`: its own role's key,
     /// re-derived from what the value says.
     #[must_use]
     pub fn key(&self, hasher: &dyn Hasher, owner: impl Into<Address>) -> SubstateKey {
-        crossing_claim_key(hasher, owner, self.intent, self.local, self.output)
+        answer_key(
+            hasher,
+            owner,
+            self.answered.slot(),
+            self.intent,
+            self.local,
+            self.output,
+        )
     }
 
     /// The cell's committed bytes.
@@ -535,10 +635,10 @@ impl CrossingClaim {
     /// Never: the value is scalars and a key.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        to_vec(self).expect("a claim is scalars and a key")
+        to_vec(self).expect("an answer is scalars and a key")
     }
 
-    /// The claim a committed cell holds, or `None` where the bytes are
+    /// The answer a committed cell holds, or `None` where the bytes are
     /// not one.
     #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
@@ -720,12 +820,21 @@ impl CrossingSite {
     /// neither leaf.
     #[must_use]
     pub fn claimed_by(&self, tx: TxHash, record: SubstateKey) -> Vec<u8> {
-        CrossingClaim {
+        self.answered_by(tx, record, Answered::Taken)
+    }
+
+    /// The answer's committed bytes, for either verdict: which
+    /// transaction answered the crossing, on this edge, which way, and
+    /// the record it answers for.
+    #[must_use]
+    pub fn answered_by(&self, tx: TxHash, record: SubstateKey, answered: Answered) -> Vec<u8> {
+        CrossingAnswer {
             tx,
             intent: self.intent,
             local: self.local,
             output: self.output,
             record,
+            answered,
         }
         .to_bytes()
     }
