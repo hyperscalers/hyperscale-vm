@@ -318,7 +318,7 @@ fn answer_key(
 /// its owner is the consuming node's target, which lives in the manifest
 /// and not in the leaf — so a holder of the record and no body could not
 /// derive it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 pub struct CrossingCell {
     /// The resource that crossed.
     pub resource: ResourceAddr,
@@ -392,7 +392,7 @@ pub enum Kind {
 /// the manifest is the leaf, and the member that settles a record may
 /// hold nothing else — a split child, or a reshape successor whose store
 /// arrives as a prefix of leaves.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 pub enum Terms {
     /// Staged against a verdict that has not happened.
     Escrowed {
