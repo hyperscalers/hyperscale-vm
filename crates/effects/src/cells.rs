@@ -3,7 +3,7 @@
 //! the values they hold.
 //!
 //! Every family is self-describing: the value re-derives its own key,
-//! so a reader terms nothing but the leaf can tell which family it
+//! so a reader holding nothing but the leaf can tell which family it
 //! belongs to and when it stops being needed. The sweepable families
 //! lead their key with the expiry's bucket, so one owner's cells for
 //! one bucket are a contiguous range a sweep walks.
@@ -49,7 +49,7 @@ pub const ESCROW_CLAIM_SLOT: SlotId = SlotId(0xFFFE);
 /// What a shard writes at block commit for every transaction the block
 /// carries: the fact that it committed it, provable and refutable
 /// against the state root every header carries. No kernel writes one;
-/// the chain does, and a reader terms nothing but the leaf can tell
+/// the chain does, and a reader holding nothing but the leaf can tell
 /// it from any other cell and tell when it stops being needed.
 pub const COMMITTED_TX_SLOT: SlotId = SlotId(0xFFFC);
 
@@ -164,9 +164,12 @@ pub fn committed_tx_key(
 /// collide are then two whose material the grinder chose, and reaching
 /// somebody else's is a second preimage again.
 ///
-/// The expiry is in the identity twice over — hashed into the body and,
-/// coarsely, leading the local half — on [`nullifier_key`]'s terms and
-/// for its reasons.
+/// The expiry is not in the identity at all, which is what separates
+/// this family from the sweepable ones: they lead their local half with
+/// the bucket their expiry falls in, and a key carrying no bucket is one
+/// no sweep can walk to. The edge alone names the record, and the record
+/// states its own expiry in its value, where it is the anchor a presence
+/// is asked from rather than a life.
 #[must_use]
 pub fn escrow_record_key(
     hasher: &dyn Hasher,
@@ -242,14 +245,14 @@ fn escrow_key(
 /// left on, when it stops being claimable, and who issued it.
 ///
 /// Self-describing on [`Marker`]'s terms: the value re-derives the
-/// key, so a reader terms nothing but the leaf can tell what it is.
+/// key, so a reader holding nothing but the leaf can tell what it is.
 /// Unlike the sweepable families the key carries no bucket, so re-deriving
 /// it is all a reader gets — a record is not sweepable and no expiry in
 /// the key could make it so.
 ///
 /// The edge is named here as well as in the key because a reclaim reads
 /// this cell and nothing else — the producing shard credits the resource
-/// and the amount back from the leaf alone, terms no transaction body
+/// and the amount back from the leaf alone, holding no transaction body
 /// and no window of them. So is the cell the value left: a reclaim
 /// credits it, and no rule the kernel could hold says which of an owner's
 /// cells that is — an account's vault for a resource is the account
@@ -286,7 +289,7 @@ pub struct CrossingCell {
     /// The transaction whose execution issued the crossing.
     pub tx: TxHash,
     /// The claim cell the consumer writes when it takes the crossing,
-    /// under the consuming node's target. Retained by the shard terms
+    /// under the consuming node's target. Retained by the shard holding
     /// that prefix until this record's `expiry_ms`, which is where a
     /// reader's window to judge it absent closes.
     pub consumer_claim: SubstateKey,
@@ -348,7 +351,7 @@ impl CrossingCell {
 ///
 /// Three families share this one value, and each is self-describing on
 /// the same terms: the value re-derives the cell's own key under the
-/// family's role, so a reader terms nothing but the leaf can tell a
+/// family's role, so a reader holding nothing but the leaf can tell a
 /// marker from any other cell, tell which family it is, and tell whether
 /// it is still owed. The key leads with the expiry's bucket, so a shard's
 /// markers for one bucket are a contiguous range a sweep walks, and

@@ -907,7 +907,7 @@ fn a_delivered_crossing_names_nobody() {
 /// needs nothing but the leaf.
 ///
 /// The cell the bucket was debited from, not a cell inferred from the
-/// producing frame's shape: a frame terms a second cell in the same
+/// producing frame's shape: a frame holding a second cell in the same
 /// resource says nothing about where this crossing's value came from,
 /// and reading the shape rather than the source would name nobody for a
 /// crossing whose origin is not in doubt.

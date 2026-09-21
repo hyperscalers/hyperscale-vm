@@ -828,7 +828,7 @@ fn a_claim_leads_with_its_bucket_and_a_record_does_not() {
 
 /// A crossing cell says what left, on which edge, when it stops being
 /// claimable, which transaction issued it and which cell would say it
-/// was taken — so a reclaim reads the leaf and nothing else, terms no
+/// was taken — so a reclaim reads the leaf and nothing else, holding no
 /// transaction body and no window of them. A successor inherits the
 /// prefix and its cells and has all of it.
 #[test]

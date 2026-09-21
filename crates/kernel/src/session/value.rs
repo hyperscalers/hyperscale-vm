@@ -77,7 +77,7 @@ impl KernelSession {
         // Nothing is consumed until everything is judged. A refusal
         // aborts the whole transaction, so no state would escape either
         // way; what the ordering keeps true is that the kernel is never
-        // terms a credit it did not make, which is the property the
+        // holding a credit it did not make, which is the property the
         // bucket table exists to state.
         let held = self.acting(site, element, Op::Put)?;
         self.judge_credit(site, element, funds)?;
