@@ -12,13 +12,13 @@ use std::sync::Arc;
 use hyperscale_hbor::from_slice;
 use hyperscale_vm_effects::{
     CallArg, CrossingCell, CrossingSite, Declaration, EdgeContent, Hash32, Hasher, IntentHash,
-    Marker, NodeCall, PackageHash, SlotId, Terms, TestHasher, child_key,
+    Kind, Marker, NodeCall, PackageHash, SlotId, Terms, TestHasher, child_key,
 };
 use hyperscale_vm_embed::GuestArg;
 use hyperscale_vm_kernel::{
     Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, Departure, Disposal,
     Disposition, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
-    KernelSession, Kind, LegPlan, ManifestWalk, MemoryStore, Receipt, Substates, decode_amount,
+    KernelSession, LegPlan, ManifestWalk, MemoryStore, Receipt, Substates, decode_amount,
     execute_batch,
 };
 use hyperscale_vm_types::{
@@ -64,7 +64,15 @@ fn record_site() -> CrossingSite {
 }
 
 fn claim_site() -> CrossingSite {
-    CrossingSite::claim(&TestHasher, owner(PAYEE), intent(), 0, 0, EXPIRY_MS)
+    CrossingSite::claim(
+        &TestHasher,
+        owner(PAYEE),
+        intent(),
+        0,
+        0,
+        EXPIRY_MS,
+        Kind::Escrowed,
+    )
 }
 
 /// The edge as a producer files it: the record it writes, and the claim
@@ -390,7 +398,8 @@ fn receiving(crossed: Crossed) -> BatchTx {
 fn receiving_as(who: TxHash, crossed: Crossed) -> BatchTx {
     let mut legs = LegPlan::whole(2);
     legs.skip(0).unwrap();
-    legs.arrives(0, 0, crossed, claim_site()).unwrap();
+    legs.arrives(0, 0, crossed, claim_site(), record_site().key())
+        .unwrap();
     BatchTx::new(
         who,
         declared(&[
@@ -575,6 +584,7 @@ fn an_aborted_claim_leaves_the_crossing_claimable() {
             amount: 200,
         },
         claim_site(),
+        record_site().key(),
     )
     .unwrap();
     let entry = BatchTx::new(
@@ -716,6 +726,7 @@ fn an_undeclared_claim_cell_refuses_the_batch() {
             amount: 200,
         },
         claim_site(),
+        record_site().key(),
     )
     .unwrap();
     let entry = BatchTx::new(
@@ -1045,7 +1056,15 @@ fn a_reclaim_of_a_record_nobody_may_take_back_is_refused() {
 
 /// The reclaim's claim cell, under the producer's own target.
 fn reclaim_site() -> CrossingSite {
-    CrossingSite::claim(&TestHasher, owner(PAYER), intent(), 0, 0, EXPIRY_MS)
+    CrossingSite::claim(
+        &TestHasher,
+        owner(PAYER),
+        intent(),
+        0,
+        0,
+        EXPIRY_MS,
+        Kind::Escrowed,
+    )
 }
 
 /// The producing node taking its own record back: reads the record,

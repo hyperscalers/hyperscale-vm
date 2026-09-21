@@ -423,7 +423,7 @@ fn claimed_outputs(
         let Some(arrival) = legs.arrival(node, output) else {
             continue;
         };
-        match session.escrow_in(arrival.crossed, arrival.claim) {
+        match session.escrow_in(arrival.crossed, arrival.claim, arrival.record) {
             Ok(rep) => *taken = Some(rep),
             Err(trap) => {
                 return Err(fail(

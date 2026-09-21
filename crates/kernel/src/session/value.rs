@@ -12,13 +12,13 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    CrossingCell, CrossingSite, IssuanceGrant, ResourceKind, Terms, distinct_ids,
+    CrossingCell, CrossingSite, IssuanceGrant, Kind, ResourceKind, Terms, distinct_ids,
 };
 use hyperscale_vm_types::{ResourceAddr, SubstateKey};
 
 use super::buckets::Held;
 use super::{Capability, KernelSession, Op, SessionTrap, Settlement};
-use crate::escrow::{Crossed, Departure, Disposal, Disposition, Kind};
+use crate::escrow::{Crossed, Departure, Disposal, Disposition};
 use crate::ledger::AmountLedger;
 use crate::modes::{DeltaOp, decode_amount};
 use crate::store::WorkingStore;
@@ -340,7 +340,7 @@ impl KernelSession {
                 resource: record.resource,
                 amount: record.amount,
             };
-            let funds = self.escrow_in(crossed, disposal.claim)?;
+            let funds = self.escrow_in(crossed, disposal.claim, disposal.record)?;
             self.cell_put(site, 0, funds)?;
         }
         self.store.remove(disposal.record)?;
@@ -382,9 +382,10 @@ impl KernelSession {
         &mut self,
         crossed: Crossed,
         site: CrossingSite,
+        record: SubstateKey,
     ) -> Result<u32, SessionTrap> {
         self.escrow.claim(crossed)?;
-        self.record_crossing(site.key(), site.claimed_by(self.tx).to_bytes())?;
+        self.record_crossing(site.key(), site.claimed_by(self.tx, record))?;
         Ok(self.open_bucket(Held::Amount(crossed.amount), crossed.resource, None))
     }
 
@@ -451,12 +452,12 @@ impl KernelSession {
 mod tests {
     use std::collections::BTreeSet;
 
-    use hyperscale_vm_effects::{CrossingSite, Hash32, IntentHash, TestHasher};
+    use hyperscale_vm_effects::{CrossingSite, Hash32, IntentHash, Kind, TestHasher};
     use hyperscale_vm_types::{Address, AddressClass, LocalKey, ResourceAddr, SubstateKey};
 
     use super::super::fixtures::{declared, session_over};
     use super::Held;
-    use crate::escrow::{Crossed, Departure, Kind};
+    use crate::escrow::{Crossed, Departure};
     use crate::session::SessionTrap;
     use crate::store::MemoryStore;
 
@@ -493,6 +494,7 @@ mod tests {
                 0,
                 0,
                 1_000,
+                Kind::Escrowed,
             )
             .key(),
         }

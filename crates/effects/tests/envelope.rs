@@ -14,12 +14,13 @@ use hyperscale_vm_effects::{
     AdmissionError, Admitted, Binding, Bounds, ChainRecords, Claim, ClaimRef, Constraint,
     CrossingCell, CrossingSite, ESCROW_RECORD_SLOT, EdgeContent, EdgeRef, GiveRef, GraphArg,
     GraphNode, Hash32, Hasher, InstanceMeta, Intent, IntentHash, IntentHeader, IntentRecord,
-    IntentTree, JudgedLeaf, MAX_ACCOUNTS, MAX_SOCKETS, MAX_TREE_DEPTH, MAX_VALUE_DEPTH,
-    ManifestGraph, ManifestHash, Marked, Marker, Member, NULLIFIER_SLOT, NodeInput, PackageHash,
-    PrefixShardResolver, Records, ResourceKind, Rule, ShardResolver, SignedIntent, Socket,
-    TREE_WIRE_DEPTH, Terms, TestHasher, TreeDecodeError, Value, ValueRef, admit_tree,
-    bucketed_child_key, child_key, decode_tree, encode_tree, escrow_claim_key, escrow_record_key,
-    explain_admission_tree, nullifier_key, per_shard,
+    IntentTree, JudgedLeaf, Kind, MAX_ACCOUNTS, MAX_SOCKETS, MAX_TREE_DEPTH, MAX_VALUE_DEPTH,
+    ManifestGraph, ManifestHash, Marked, Marker, Member, NULLIFIER_SLOT, NodeInput,
+    OWED_CLAIM_CELL_BYTES, OwedClaim, PackageHash, PrefixShardResolver, Records, ResourceKind,
+    Rule, ShardResolver, SignedIntent, Socket, TREE_WIRE_DEPTH, Terms, TestHasher, TreeDecodeError,
+    Value, ValueRef, admit_tree, bucketed_child_key, child_key, decode_tree, encode_tree,
+    escrow_claim_key, escrow_record_key, explain_admission_tree, nullifier_key, owed_claim_key,
+    per_shard,
 };
 use hyperscale_vm_fixtures::lottery;
 use hyperscale_vm_stdlib::account;
@@ -839,7 +840,7 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
         .hash(&TestHasher);
     let tx = TxHash(Hash32([7; 32]));
     let site = CrossingSite::record(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS);
-    let consumer = CrossingSite::claim(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS);
+    let consumer = CrossingSite::claim(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS, Kind::Escrowed);
     let credit = child_key(&TestHasher, BOB, ESCROW_RECORD_SLOT, &[b"vault".to_vec()]);
     let cell = site.crossing(tx, RES_Y, 10, consumer.key(), Terms::Escrowed { credit });
 
@@ -858,7 +859,7 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
     assert!(!CrossingSite::record(&TestHasher, BOB, bob, 0, 0, EXPIRY_MS).names(&cell));
     assert_eq!(
         CrossingSite::claim_on(&TestHasher, BOB, &cell).key(),
-        CrossingSite::claim(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS).key()
+        CrossingSite::claim(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS, Kind::Escrowed).key()
     );
 
     // Round trip: the cell reads back as itself, and bytes that are not
@@ -866,8 +867,12 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
     assert_eq!(CrossingCell::from_bytes(&cell.to_bytes()), Some(cell));
     assert_eq!(CrossingCell::from_bytes(b"not a cell"), None);
 
-    // The claim's value: which transaction took it, on this edge.
-    let claimed = consumer.claimed_by(tx);
+    // The claim's value: which transaction took it, on this edge. An
+    // escrowed crossing's answer is a marker, which names no record —
+    // the window it is read in is what bounds it, and the producer that
+    // reads it holds the record already.
+    let claimed = Marker::from_bytes(&consumer.claimed_by(tx, site.key()))
+        .expect("an escrowed claim is a marker");
     assert_eq!(
         claimed,
         Marker {
@@ -882,6 +887,66 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
     );
     assert_eq!(claimed.key(&TestHasher, ALICE), consumer.key());
     assert_eq!(Marker::from_bytes(&claimed.to_bytes()), Some(claimed));
+}
+
+/// An owed crossing's answer is its own family: unbucketed, carrying the
+/// record it answers for, and reachable by no sweep.
+///
+/// The two halves of why. A delivery may be admitted for as long as the
+/// record stands, and this cell is the only thing refusing a second one,
+/// so a clock that swept it would license the second. And the consumer
+/// that wrote it has to be able to ask the producer about the record —
+/// which it could not derive, the record's owner being the producing
+/// node's target — so the cell states it.
+#[test]
+fn an_owed_claim_names_its_record_and_no_sweep_reaches_it() {
+    let bob = composed_tree(100).root.members[0]
+        .signed
+        .intent
+        .hash(&TestHasher);
+    let tx = TxHash(Hash32([9; 32]));
+    let record = CrossingSite::record(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS);
+    let owed = CrossingSite::claim(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS, Kind::Owed);
+    let escrowed = CrossingSite::claim(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS, Kind::Escrowed);
+    assert_ne!(
+        owed.key(),
+        escrowed.key(),
+        "the two answers are two families, so one cell can never stand for the other",
+    );
+
+    let claim = OwedClaim::from_bytes(&owed.claimed_by(tx, record.key()))
+        .expect("an owed claim is its own value");
+    assert_eq!(
+        claim,
+        OwedClaim {
+            tx,
+            intent: bob,
+            local: 1,
+            output: 0,
+            record: record.key(),
+        }
+    );
+    assert_eq!(claim.key(&TestHasher, ALICE), owed.key());
+    assert_eq!(OwedClaim::from_bytes(&claim.to_bytes()), Some(claim));
+    assert_eq!(OwedClaim::from_bytes(b"not a claim"), None);
+    assert!(
+        claim.to_bytes().len() <= OWED_CLAIM_CELL_BYTES as usize,
+        "an owed claim encodes under the width the declaration prices it at: {} bytes",
+        claim.to_bytes().len(),
+    );
+
+    // Its key carries no expiry bucket, which is what keeps every sweep
+    // off it — the record's own property, for the record's own reason.
+    assert_eq!(
+        owed.key(),
+        owed_claim_key(&TestHasher, ALICE, bob, 1, 0),
+        "unbucketed, so the expiry is not in the identity at all",
+    );
+    assert_eq!(
+        CrossingSite::claim(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS + 1, Kind::Owed).key(),
+        owed.key(),
+        "and so a different expiry names the same cell",
+    );
 }
 
 /// A cell's life is its family's, and a writer does not get to choose

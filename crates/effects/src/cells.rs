@@ -43,6 +43,17 @@ pub const ESCROW_RECORD_SLOT: SlotId = SlotId(0xFFFD);
 /// producer's reclaim happen.
 pub const ESCROW_CLAIM_SLOT: SlotId = SlotId(0xFFFE);
 
+/// The kernel-reserved role of owed-claim substates under the claiming
+/// node's target.
+///
+/// What the shard taking an *owed* crossing writes, where
+/// [`ESCROW_CLAIM_SLOT`] carries the escrowed one. Two roles because the
+/// two answers are held on different terms: an escrowed claim is a
+/// witness read inside a window and swept at its close, and an owed
+/// claim is the only thing that ever refuses a second delivery, so it
+/// outlives every clock and carries the record it answers for.
+pub const OWED_CLAIM_SLOT: SlotId = SlotId(0xFFFB);
+
 /// The reserved role of committed-transaction substates under a shard's
 /// own owner.
 ///
@@ -64,12 +75,21 @@ pub const MARKER_CELL_BYTES: u32 = 96;
 /// producing node's target, on [`MARKER_CELL_BYTES`]'s terms.
 pub const CROSSING_CELL_BYTES: u32 = 256;
 
+/// The most bytes an [`OwedClaim`] cell holds.
+///
+/// Wider than [`MARKER_CELL_BYTES`] because it carries a whole
+/// [`SubstateKey`] a marker does not: the record under the producing
+/// node's target, which a consumer holding only its own claim could
+/// never derive.
+pub const OWED_CLAIM_CELL_BYTES: u32 = 160;
+
 // Held at compile time rather than by a test: every side is a constant,
 // so a kernel cell colliding with a package's own — or with another
 // kernel family — is a thing the build can refuse outright.
 const _: () = assert!(NULLIFIER_SLOT.0 > PACKAGE_SLOT_BASE);
 const _: () = assert!(ESCROW_RECORD_SLOT.0 > PACKAGE_SLOT_BASE);
 const _: () = assert!(ESCROW_CLAIM_SLOT.0 > PACKAGE_SLOT_BASE);
+const _: () = assert!(OWED_CLAIM_SLOT.0 > PACKAGE_SLOT_BASE);
 const _: () = assert!(COMMITTED_TX_SLOT.0 > PACKAGE_SLOT_BASE);
 const _: () = assert!(NULLIFIER_SLOT.0 != ESCROW_RECORD_SLOT.0);
 const _: () = assert!(NULLIFIER_SLOT.0 != ESCROW_CLAIM_SLOT.0);
@@ -218,6 +238,34 @@ pub fn escrow_claim_key(
     )
 }
 
+/// The canonical owed-claim key for one value edge, under the target of
+/// the node that took it.
+///
+/// The same material as [`escrow_record_key`] under a different owner and
+/// a different role, and unbucketed for the same reason the record is:
+/// the expiry is not in the identity, because nothing sweeps the cell.
+/// What ends an owed claim is the producer disposing of the record it
+/// names, which is a fact about another chain rather than a clock.
+#[must_use]
+pub fn owed_claim_key(
+    hasher: &dyn Hasher,
+    owner: impl Into<Address>,
+    intent: IntentHash,
+    local: u32,
+    output: u32,
+) -> SubstateKey {
+    child_key(
+        hasher,
+        owner,
+        OWED_CLAIM_SLOT,
+        &[
+            intent.0.0.to_vec(),
+            local.to_le_bytes().to_vec(),
+            output.to_le_bytes().to_vec(),
+        ],
+    )
+}
+
 fn escrow_key(
     hasher: &dyn Hasher,
     owner: impl Into<Address>,
@@ -282,20 +330,52 @@ pub struct CrossingCell {
     pub local: u32,
     /// Which of its outputs the edge carried.
     pub output: u32,
-    /// When no chain can still be claiming the crossing: the producing
-    /// intent's own window end plus [`CROSSING_GRACE_MS`] — the intent's,
-    /// not the transaction's, so the composer chooses no part of it.
+    /// The producing intent's own window end plus [`CROSSING_GRACE_MS`] —
+    /// the intent's, not the transaction's, so the composer chooses no
+    /// part of it.
+    ///
+    /// What it names depends on the terms. For an escrowed crossing it is
+    /// when no chain can still be claiming: the sweep of the claim cell
+    /// the record is decided against, keyed by this same figure so the
+    /// two agree. For an owed one nothing sweeps, so what is left of it
+    /// is the deadline a reader recovers from it — the anchor a presence
+    /// is asked from, and not a life.
     pub expiry_ms: u64,
     /// The transaction whose execution issued the crossing.
     pub tx: TxHash,
     /// The claim cell the consumer writes when it takes the crossing,
-    /// under the consuming node's target. Retained by the shard holding
-    /// that prefix until this record's `expiry_ms`, which is where a
-    /// reader's window to judge it absent closes.
+    /// under the consuming node's target.
+    ///
+    /// Which family it sits in follows from [`Self::terms`]: an escrowed
+    /// crossing's answer is a witness swept at this record's `expiry_ms`,
+    /// which is where a reader's window to judge it absent closes; an
+    /// owed one's is swept by nothing, so its absence closes no window
+    /// and answers nothing at any clock.
     pub consumer_claim: SubstateKey,
     /// What kind of record this is, and the terms that kind carries.
     /// Resolved by the kernel at the issue.
     pub terms: Terms,
+}
+
+/// Which kind of crossing a departure writes, and so which family its
+/// consumer's answer sits in.
+///
+/// The parent reads it off the shape — a crossing an outbound leg
+/// consumes is owed, and every other one is escrowed — and the kernel
+/// turns it into the record's own [`Terms`] at the issue, where it knows
+/// what the value came off and so what an escrowed one credits back.
+/// Two types for one distinction because only the second half of it can
+/// carry that cell, and only the first half can key one: a claim's key
+/// is derived before any execution knows what a reclaim would credit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// Staged against a verdict that has not happened: the producer
+    /// keeps the cell the value left and takes the crossing back where
+    /// no consumer claims it.
+    Escrowed,
+    /// Owed to its consumer by a verdict that has: no cell is the
+    /// crossing's to return to, and nothing takes it back.
+    Owed,
 }
 
 /// What a crossing record is: value staged against a verdict that has
@@ -324,6 +404,20 @@ pub enum Terms {
     /// commits it, so no cell is the crossing's to return to and the
     /// record stands until the claim retires it.
     Owed,
+}
+
+impl Terms {
+    /// Which kind of crossing these terms are the terms of.
+    ///
+    /// The half a claim's key reads, where the whole is what a reclaim
+    /// credits.
+    #[must_use]
+    pub const fn kind(self) -> Kind {
+        match self {
+            Self::Escrowed { .. } => Kind::Escrowed,
+            Self::Owed => Kind::Owed,
+        }
+    }
 }
 
 impl CrossingCell {
@@ -463,6 +557,64 @@ impl Marker {
     }
 }
 
+/// What an owed claim cell holds: which transaction took the crossing,
+/// which edge it was, and the record on the producer's chain it answers
+/// for.
+///
+/// Self-describing on the record's terms rather than a marker's: the
+/// value re-derives the cell's own key under [`OWED_CLAIM_SLOT`], so a
+/// reader holding nothing but the leaf can tell it from any other cell.
+/// What it cannot re-derive is `record`, whose owner is the *producing*
+/// node's target and lives in the manifest rather than in either leaf —
+/// so it is carried, and carrying it is the whole reason this family
+/// exists. A consumer holding only the material would have the edge and
+/// not the shard.
+///
+/// No expiry, because nothing sweeps it. An owed crossing is its
+/// consumer's from the moment the core committed it, and this cell is
+/// the only thing refusing a second delivery of it, so a clock that took
+/// it away would license the second.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+pub struct OwedClaim {
+    /// The transaction whose delivery took the crossing.
+    pub tx: TxHash,
+    /// The signed intent the producing node belongs to.
+    pub intent: IntentHash,
+    /// That node's index within its own intent.
+    pub local: u32,
+    /// Which of its outputs the edge carried.
+    pub output: u32,
+    /// The record cell this claim answers for, under the producing
+    /// node's target.
+    pub record: SubstateKey,
+}
+
+impl OwedClaim {
+    /// The cell this claim sits at under `owner`: the family's own key,
+    /// re-derived from what the value says.
+    #[must_use]
+    pub fn key(&self, hasher: &dyn Hasher, owner: impl Into<Address>) -> SubstateKey {
+        owed_claim_key(hasher, owner, self.intent, self.local, self.output)
+    }
+
+    /// The cell's committed bytes.
+    ///
+    /// # Panics
+    ///
+    /// Never: the value is scalars and a key.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        to_vec(self).expect("an owed claim is scalars and a key")
+    }
+
+    /// The claim a committed cell holds, or `None` where the bytes are
+    /// not one.
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        from_slice(bytes).ok()
+    }
+}
+
 /// One escrow cell: where it sits, and what identifies it.
 ///
 /// The key and the fields that derive it, built together so the two
@@ -484,6 +636,7 @@ pub struct CrossingSite {
     local: u32,
     output: u32,
     expiry_ms: u64,
+    kind: Kind,
 }
 
 impl CrossingSite {
@@ -505,6 +658,10 @@ impl CrossingSite {
             local,
             output,
             expiry_ms,
+            // A record's key is one derivation whichever kind it holds,
+            // so the site's own kind says nothing here and is never
+            // read: what reads it is a claim.
+            kind: Kind::Escrowed,
         }
     }
 
@@ -531,6 +688,7 @@ impl CrossingSite {
         owner: impl Into<Address>,
         producer: &LegShape,
         output: u32,
+        kind: Kind,
     ) -> Self {
         Self::claim(
             hasher,
@@ -539,12 +697,17 @@ impl CrossingSite {
             producer.local,
             output,
             producer.expiry_ms,
+            kind,
         )
     }
 
     /// The claim cell for the edge `record` holds, under `owner`: the
     /// producer's own target for a settlement composed from the leaf,
     /// which holds no manifest to read the edge off.
+    ///
+    /// The kind is the record's own, which is what lets a settlement
+    /// composed from the leaf alone reach the right family: the leaf
+    /// states its terms, and the terms say which claim answers it.
     #[must_use]
     pub fn claim_on(hasher: &dyn Hasher, owner: impl Into<Address>, record: &CrossingCell) -> Self {
         Self::claim(
@@ -554,11 +717,18 @@ impl CrossingSite {
             record.local,
             record.output,
             record.expiry_ms,
+            record.terms.kind(),
         )
     }
 
     /// The claim cell for that edge, under the target of whatever takes
     /// it.
+    ///
+    /// Two families, on the kind alone. An escrowed claim is a witness
+    /// read inside a window, so it leads its local half with the bucket
+    /// its expiry falls in and a sweep walks to it. An owed claim is what
+    /// refuses a second delivery for as long as one could be admitted,
+    /// so it carries no bucket and no sweep reaches it.
     #[must_use]
     pub fn claim(
         hasher: &dyn Hasher,
@@ -567,14 +737,20 @@ impl CrossingSite {
         local: u32,
         output: u32,
         expiry_ms: u64,
+        kind: Kind,
     ) -> Self {
         let owner = owner.into();
+        let key = match kind {
+            Kind::Escrowed => escrow_claim_key(hasher, owner, intent, local, output, expiry_ms),
+            Kind::Owed => owed_claim_key(hasher, owner, intent, local, output),
+        };
         Self {
-            key: escrow_claim_key(hasher, owner, intent, local, output, expiry_ms),
+            key,
             intent,
             local,
             output,
             expiry_ms,
+            kind,
         }
     }
 
@@ -624,18 +800,34 @@ impl CrossingSite {
         record.intent == self.intent && record.local == self.local && record.output == self.output
     }
 
-    /// The claim's value: which transaction took the crossing, on this
-    /// edge.
+    /// The claim's committed bytes: which transaction took the crossing,
+    /// on this edge, in whichever family the kind puts it.
+    ///
+    /// An owed claim also names `record`, because the cell outlives
+    /// every structure that could tell a reader where the record sits.
+    /// Bytes rather than a value, because the two families do not share
+    /// a type — which is the point: nothing can read one as the other.
     #[must_use]
-    pub const fn claimed_by(&self, tx: TxHash) -> Marker {
-        Marker {
-            tx,
-            expiry_ms: self.expiry_ms,
-            marks: Marked::Claimed {
+    pub fn claimed_by(&self, tx: TxHash, record: SubstateKey) -> Vec<u8> {
+        match self.kind {
+            Kind::Escrowed => Marker {
+                tx,
+                expiry_ms: self.expiry_ms,
+                marks: Marked::Claimed {
+                    intent: self.intent,
+                    local: self.local,
+                    output: self.output,
+                },
+            }
+            .to_bytes(),
+            Kind::Owed => OwedClaim {
+                tx,
                 intent: self.intent,
                 local: self.local,
                 output: self.output,
-            },
+                record,
+            }
+            .to_bytes(),
         }
     }
 }

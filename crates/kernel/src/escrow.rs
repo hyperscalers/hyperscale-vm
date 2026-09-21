@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::CrossingSite;
+use hyperscale_vm_effects::{CrossingSite, Kind};
 use hyperscale_vm_types::{MAX_CROSSINGS_PER_TX, ResourceAddr, SubstateKey};
 
 use crate::modes::ModeError;
@@ -167,26 +167,6 @@ pub struct Departure {
     pub kind: Kind,
 }
 
-/// Which kind of crossing record a departure writes.
-///
-/// The parent reads it off the shape — a crossing an outbound leg
-/// consumes is owed, and every other one is escrowed — and the kernel
-/// turns it into the record's own
-/// [`Terms`](hyperscale_vm_effects::Terms) at the issue, where it knows
-/// what the value came off and so what an escrowed one credits back.
-/// Two types for one distinction because only the second half of it can
-/// carry that cell.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind {
-    /// Staged against a verdict that has not happened: the producer
-    /// keeps the cell the value left and takes the crossing back where
-    /// no consumer claims it.
-    Escrowed,
-    /// Owed to its consumer by a verdict that has: no cell is the
-    /// crossing's to return to, and nothing takes it back.
-    Owed,
-}
-
 /// One record this execution settles rather than runs a node for: a
 /// crossing the producing shard issued, either taken back or retired.
 ///
@@ -237,6 +217,13 @@ pub struct Arrival {
     pub crossed: Crossed,
     /// The claim cell the execution taking it writes.
     pub claim: CrossingSite,
+    /// The record cell on the producer's chain the claim answers for.
+    ///
+    /// Carried because an owed claim states it, and states it because
+    /// nothing else ever will: the record's owner is the producing
+    /// node's target, which lives in the manifest and not in either
+    /// leaf.
+    pub record: SubstateKey,
 }
 
 /// What this execution does with one of a manifest's nodes.
@@ -371,6 +358,7 @@ impl LegPlan {
         output: u32,
         crossed: Crossed,
         claim: CrossingSite,
+        record: SubstateKey,
     ) -> Result<(), PlanFault> {
         if self.action(node) == NodeAction::Run {
             return Err(PlanFault::ArrivesHere { node, output });
@@ -378,7 +366,11 @@ impl LegPlan {
         self.act(
             node,
             output,
-            EdgeAction::Arrives(Arrival { crossed, claim }),
+            EdgeAction::Arrives(Arrival {
+                crossed,
+                claim,
+                record,
+            }),
         )
     }
 
@@ -583,7 +575,8 @@ mod tests {
     fn a_divided_plan_names_what_it_does_not_run() {
         let mut plan = LegPlan::whole(3);
         plan.skip(1).expect("inside the manifest");
-        plan.arrives(1, 0, crossed(1, 50), cell(9)).expect("fits");
+        plan.arrives(1, 0, crossed(1, 50), cell(9), cell(9).key())
+            .expect("fits");
         plan.departs(2, 0, departing(8)).expect("fits");
 
         assert!(!plan.is_whole());
@@ -594,6 +587,7 @@ mod tests {
             Some(Arrival {
                 crossed: crossed(1, 50),
                 claim: cell(9),
+                record: cell(9).key(),
             }),
         );
         assert_eq!(plan.departure(2, 0), Some(departing(8)));
@@ -611,9 +605,10 @@ mod tests {
             Err(PlanFault::EdgeTwice { node: 0, output: 0 }),
         );
         plan.skip(1).expect("inside the manifest");
-        plan.arrives(1, 0, crossed(1, 5), cell(3)).expect("fits");
+        plan.arrives(1, 0, crossed(1, 5), cell(3), cell(3).key())
+            .expect("fits");
         assert_eq!(
-            plan.arrives(1, 0, crossed(1, 6), cell(4)),
+            plan.arrives(1, 0, crossed(1, 6), cell(4), cell(4).key()),
             Err(PlanFault::EdgeTwice { node: 1, output: 0 }),
         );
     }
@@ -624,7 +619,7 @@ mod tests {
     fn an_edge_agrees_with_the_node_it_hangs_off() {
         let mut plan = LegPlan::whole(2);
         assert_eq!(
-            plan.arrives(0, 0, crossed(1, 5), cell(9)),
+            plan.arrives(0, 0, crossed(1, 5), cell(9), cell(9).key()),
             Err(PlanFault::ArrivesHere { node: 0, output: 0 }),
         );
         plan.skip(1).expect("inside the manifest");
