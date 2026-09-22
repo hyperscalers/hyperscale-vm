@@ -663,6 +663,12 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
                         .try_for_each(|deletion| session.escrow_delete(deletion))
                 }));
             }
+            // The tombstones its grace has run out on, removed.
+            Job::Tombstones(keys) => {
+                return Ok(walk_cells(session, |session| {
+                    keys.iter().try_for_each(|key| session.escrow_sweep(*key))
+                }));
+            }
             // This shard's obligation ledger brought in line: notes
             // written for crossings it was handed, notes removed where
             // the answer they were waiting for stands.

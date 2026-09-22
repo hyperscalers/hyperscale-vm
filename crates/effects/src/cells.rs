@@ -459,18 +459,41 @@ pub enum Terms {
     /// commits it, so no cell is the crossing's to return to and the
     /// record stands until the claim retires it.
     Owed,
+    /// Disposed of, and standing only so its going can be dated.
+    ///
+    /// **A tombstone, and the one cell in this family whose life is a
+    /// life.** The value is gone — credited back or moved where the
+    /// consumer's claim ran — so nothing can be built from it and no
+    /// delivery can run off it. What the key is still doing there is
+    /// carrying a clock: a consumer deletes its answer once no bundle
+    /// for the record can still be admitted, and it reads the record
+    /// rather than remembering it, because a proof carries a value hash
+    /// and never a value. An absence is the one thing a proof can say
+    /// plainly, so the producer holds the key for
+    /// [`CROSSING_TOMBSTONE_GRACE_MS`] past the disposal and then takes
+    /// it away. The going of it is the date.
+    ///
+    /// [`CrossingCell::expiry_ms`] names that instant here, which is
+    /// the one term this variant changes: for the other two it is read
+    /// off the producing intent's window, and for this one off the
+    /// disposal, because the disposal is what it is a grace on.
+    Retired,
 }
 
 impl Terms {
-    /// Which kind of crossing these terms are the terms of.
+    /// Which kind of crossing these terms are the terms of, for terms
+    /// that are still a crossing's.
     ///
     /// The half a claim's key reads, where the whole is what a reclaim
-    /// credits.
+    /// credits. [`Self::Retired`] has no kind and answers `None`: the
+    /// crossing it was the terms of is over, and a caller reaching for
+    /// a kind is asking about a live edge.
     #[must_use]
-    pub const fn kind(self) -> Kind {
+    pub const fn kind(self) -> Option<Kind> {
         match self {
-            Self::Escrowed { .. } => Kind::Escrowed,
-            Self::Owed => Kind::Owed,
+            Self::Escrowed { .. } => Some(Kind::Escrowed),
+            Self::Owed => Some(Kind::Owed),
+            Self::Retired => None,
         }
     }
 }

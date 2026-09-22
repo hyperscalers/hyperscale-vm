@@ -15,7 +15,7 @@ use hyperscale_vm_effects::{
     CrossingAnswer, CrossingCell, CrossingObligation, CrossingSite, IssuanceGrant, Kind,
     ResourceKind, Terms, distinct_ids,
 };
-use hyperscale_vm_types::{ResourceAddr, SubstateKey};
+use hyperscale_vm_types::{CROSSING_TOMBSTONE_GRACE_MS, ResourceAddr, SubstateKey};
 
 use super::buckets::Held;
 use super::{Capability, KernelSession, Op, SessionTrap, Settlement};
@@ -326,6 +326,13 @@ impl KernelSession {
             .read(disposal.record)?
             .and_then(|bytes| CrossingCell::from_bytes(&bytes))
             .filter(|record| disposal.claim.names(record))
+            // A tombstone names its edge as readily as the record it
+            // was, so a second settlement would read one and push its
+            // removal later. Refused here rather than left to the
+            // clock: a disposal happens once, and a cell standing only
+            // to be dated is not a balance anything can be settled
+            // against.
+            .filter(|record| record.terms != Terms::Retired)
             .ok_or(SessionTrap::EscrowRecordUnreadable(disposal.record))?;
         if disposal.disposition == Disposition::Reclaim {
             let Terms::Escrowed { credit } = record.terms else {
@@ -344,7 +351,70 @@ impl KernelSession {
             let funds = self.escrow_in(crossed, disposal.claim, disposal.record)?;
             self.cell_put(site, 0, funds)?;
         }
-        self.store.remove(disposal.record)?;
+        // **An owed record stands on as a tombstone, and its going is a
+        // date.** The value is gone — moved where the consumer's claim
+        // ran — so nothing can be built from this cell and no delivery
+        // can run off it. What the key is still doing here is carrying
+        // a clock the consumer cannot otherwise read: a state proof
+        // says present or absent and never says a value, so a dated
+        // cell would tell it nothing and an absence tells it
+        // everything. The producer holds the key one tombstone grace
+        // past this disposal and then takes it away, and a consumer
+        // reading it gone knows the span has run without having
+        // remembered a thing.
+        //
+        // **Only an owed one, because only an owed one is permanent.**
+        // An escrowed crossing's claim cell sweeps itself, on the
+        // expiry the record is keyed by so the two agree — so its
+        // consumer needs no reading of this key to let go, and there is
+        // nothing here for a tombstone to date.
+        if record.terms != Terms::Owed {
+            self.store.remove(disposal.record)?;
+            return Ok(());
+        }
+        self.record_crossing(
+            disposal.record,
+            CrossingCell {
+                terms: Terms::Retired,
+                amount: 0,
+                expiry_ms: self
+                    .env
+                    .clock_ms
+                    .saturating_add(CROSSING_TOMBSTONE_GRACE_MS),
+                ..record
+            }
+            .to_bytes(),
+        )
+    }
+
+    /// Remove a retired record whose grace this execution's clock has
+    /// passed.
+    ///
+    /// The producer's side of a crossing's end, and the one member here
+    /// whose licence the kernel can check whole. A disposed record is
+    /// not removed where it is disposed of: it stands on as a tombstone
+    /// so its consumer can date the going of it by reading the key
+    /// absent, which is the one thing a state proof says plainly. What
+    /// says the span has run is the cell's own `expiry_ms` against the
+    /// clock — both of them here — so nothing is taken on the
+    /// composer's word, and a member naming a tombstone early traps
+    /// rather than shortening a consumer's defence.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionTrap::EscrowRecordUnreadable`] for a key that is
+    /// absent, does not decode, is not a tombstone, or is one whose
+    /// grace has not run.
+    pub(crate) fn escrow_sweep(&mut self, key: SubstateKey) -> Result<(), SessionTrap> {
+        let tomb: CrossingCell = self
+            .store
+            .read(key)?
+            .and_then(|bytes| CrossingCell::from_bytes(&bytes))
+            .filter(|cell| cell.terms == Terms::Retired)
+            .filter(|cell| cell.expiry_ms <= self.env.clock_ms)
+            .ok_or(SessionTrap::EscrowRecordUnreadable(key))?;
+        let _ = tomb;
+        self.store.remove(key)?;
         Ok(())
     }
 

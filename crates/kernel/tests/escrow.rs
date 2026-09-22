@@ -23,8 +23,9 @@ use hyperscale_vm_kernel::{
     Substates, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, MAX_CROSSINGS_PER_TX,
-    Mode, Moves, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
+    AbortReason, Address, AddressClass, CROSSING_TOMBSTONE_GRACE_MS, Effect, EffectSet,
+    EffectTarget, MAX_CROSSINGS_PER_TX, Mode, Moves, Outcome, ResourceAddr, SubstateKey, TxHash,
+    encode_amount,
 };
 
 const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
@@ -1386,7 +1387,8 @@ fn a_reclaim_restores_the_producing_vault_exactly() {
     assert_eq!(balance(&reclaimed, cell(PAYER)), 500);
     assert!(
         reclaimed.store.cell(record_site().key()).is_none(),
-        "the record goes with the value it held",
+        "the record goes with the value it held: an escrowed crossing's answer \
+         sweeps itself, so nothing here needs its going dated",
     );
     let claim: CrossingAnswer = from_slice(
         reclaimed
@@ -1451,6 +1453,73 @@ fn retiring(who: TxHash) -> BatchTx {
     ])
 }
 
+/// An owed record retires to a tombstone, whose going is what dates the
+/// disposal for its consumer.
+///
+/// **Why the key stands on, and only for an owed crossing.** A
+/// consumer's answer cell makes a replayed delivery abort, and a replay
+/// needs a bundle carrying the record to run at all — so the answer is
+/// needed only until no such bundle can still be admitted, which is one
+/// tombstone grace past this disposal. The consumer cannot read *when*
+/// the disposal was: a state proof says present or absent and never
+/// says a value. An absence it can read. So the producer holds the key
+/// for exactly that span and then takes it away.
+///
+/// An escrowed crossing needs none of it — its answer cell sweeps
+/// itself on the expiry the record is keyed by — which is why that half
+/// still goes outright.
+#[test]
+fn an_owed_record_retires_to_a_dated_tombstone() {
+    let mut store = MemoryStore::new();
+    store.write(cell(PAYER), encode_amount(500).to_vec());
+    let sent = execute(
+        Arc::new(store) as Arc<dyn Baseline>,
+        &[sending_on(200, delivered_departure())],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    let owed = CrossingCell::from_bytes(&sent.store.cell(record_site().key()).unwrap()).unwrap();
+    assert_eq!(owed.terms, Terms::Owed, "the fixture's edge delivers");
+
+    let retired = execute(
+        Arc::new(sent.store) as Arc<dyn Baseline>,
+        &[retiring(tx(13))],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    assert!(
+        matches!(retired.receipts[&tx(13)].outcome, Outcome::Completed { .. }),
+        "{:?}",
+        retired.receipts[&tx(13)],
+    );
+    let tomb = retired
+        .store
+        .cell(record_site().key())
+        .and_then(|bytes| CrossingCell::from_bytes(&bytes))
+        .expect("an owed record stands on as a tombstone");
+    assert_eq!(tomb.terms, Terms::Retired, "retired rather than removed");
+    assert_eq!(tomb.amount, 0, "carrying no value to build a bundle from");
+    assert_eq!(
+        tomb.expiry_ms,
+        1_000 + CROSSING_TOMBSTONE_GRACE_MS,
+        "and removed one grace past this disposal, which is the date its \
+         consumer reads off the key going",
+    );
+
+    // A second settlement reads a tombstone that names the same edge,
+    // and is refused rather than pushing the removal later.
+    let again = execute(
+        Arc::new(retired.store) as Arc<dyn Baseline>,
+        &[retiring(tx(14))],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    assert!(
+        !matches!(again.receipts[&tx(14)].outcome, Outcome::Completed { .. }),
+        "a tombstone is not a balance anything can be settled against",
+    );
+}
+
 /// A settlement that does not declare the record it deletes refuses the
 /// batch, rather than running and surfacing as an undeclared access.
 ///
@@ -1513,7 +1582,9 @@ fn a_retire_deletes_the_record_and_moves_nothing() {
     assert_eq!(
         receipt.delta.cells.get(&record_site().key()),
         Some(&None),
-        "the receipt deletes the record"
+        "an escrowed crossing's record goes outright: its answer cell sweeps \
+         itself on the expiry the record is keyed by, so nothing needs its \
+         going dated"
     );
     assert!(retired.store.cell(record_site().key()).is_none());
     assert_eq!(
