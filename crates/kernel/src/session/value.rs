@@ -468,11 +468,12 @@ impl KernelSession {
     /// value and states no verdict: it takes away a cell whose question
     /// has been asked for the last time.
     ///
-    /// What licenses it is a pair of readings of the record, absent, at
-    /// producer anchors far enough apart that nothing the producer once
-    /// promised can still be served — and every one of those is the
-    /// composing chain's, carried in the block that deletes. What is
-    /// checked here is the narrower thing the parent could get wrong:
+    /// What licenses it is a reading of the record, absent, at the
+    /// producer's newest anchor — and that reading is the composing
+    /// chain's, carried in the block that deletes. One is enough
+    /// because a record's key stands until its producer sweeps the
+    /// tombstone, so the going of it is the date. What is checked here
+    /// is the narrower thing the parent could get wrong:
     /// that the cell is there and answers for the record the licence
     /// was established against. Named the same way
     /// [`escrow_settle`](Self::escrow_settle) holds a record to naming

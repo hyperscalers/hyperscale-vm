@@ -255,8 +255,8 @@ impl Refusal {
 /// disposal — which happens against this very cell read present. So an
 /// answer whose record is gone answers a question nobody can ask again.
 ///
-/// What licenses the deletion is a pair of readings the deleting block
-/// carries, and none of it reaches here: the kernel holds the member to
+/// What licenses the deletion is a reading the deleting block carries,
+/// and none of it reaches here: the kernel holds the member to
 /// naming a cell that is there and answers for the record claimed, the
 /// way [`Disposal`] is held to a record naming its edge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -268,7 +268,7 @@ pub struct Deletion {
     /// The record on the producer's chain that answer answers for.
     ///
     /// Carried so the cell and the licence cannot come apart: the
-    /// readings that license the deletion are of this record, and the
+    /// reading that licenses the deletion is of this record, and the
     /// cell is deleted only where it says the same.
     pub record: SubstateKey,
 }
