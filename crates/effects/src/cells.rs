@@ -65,6 +65,22 @@ pub const CROSSING_CLAIM_SLOT: SlotId = SlotId(0xFFFB);
 /// which is what re-derives this key.
 pub const CROSSING_DECLINE_SLOT: SlotId = SlotId(0xFFFA);
 
+/// The reserved role of crossing obligation substates under the
+/// consuming node's target.
+///
+/// What a shard writes down when a bundle hands it an escrowed crossing
+/// it has not answered: the record's own terms, kept where this shard's
+/// state keeps them rather than where a bundle's retention does. A
+/// bundle is an execution input and expires; the obligation it created
+/// does not, so the fact has to leave the bundle and become a leaf.
+///
+/// A third key rather than a third state of the answer cell, because a
+/// producer asks which answer it got by asking two keys and reading a
+/// **presence** — an obligation sitting at the decline key would be read
+/// as a decline by every prober. Nobody outside this shard asks about
+/// this one.
+pub const CROSSING_OBLIGATION_SLOT: SlotId = SlotId(0xFFF9);
+
 /// The reserved role of committed-transaction substates under a shard's
 /// own owner.
 ///
@@ -94,6 +110,14 @@ pub const CROSSING_CELL_BYTES: u32 = 256;
 /// never derive.
 pub const CROSSING_ANSWER_CELL_BYTES: u32 = 160;
 
+/// The most bytes a [`CrossingObligation`] cell holds.
+///
+/// A whole [`CrossingCell`] plus the key it sits at on the producer's
+/// chain, because the obligation is the arrival written down and a
+/// refusal composed off it has to reconstruct exactly what a bundle
+/// handed this shard.
+pub const CROSSING_OBLIGATION_CELL_BYTES: u32 = CROSSING_CELL_BYTES + 64;
+
 // Held at compile time rather than by a test: every side is a constant,
 // so a kernel cell colliding with a package's own — or with another
 // kernel family — is a thing the build can refuse outright.
@@ -112,6 +136,12 @@ const _: () = assert!(COMMITTED_TX_SLOT.0 != NULLIFIER_SLOT.0);
 const _: () = assert!(COMMITTED_TX_SLOT.0 != ESCROW_RECORD_SLOT.0);
 const _: () = assert!(COMMITTED_TX_SLOT.0 != CROSSING_CLAIM_SLOT.0);
 const _: () = assert!(COMMITTED_TX_SLOT.0 != CROSSING_DECLINE_SLOT.0);
+const _: () = assert!(CROSSING_OBLIGATION_SLOT.0 > PACKAGE_SLOT_BASE);
+const _: () = assert!(CROSSING_OBLIGATION_SLOT.0 != NULLIFIER_SLOT.0);
+const _: () = assert!(CROSSING_OBLIGATION_SLOT.0 != ESCROW_RECORD_SLOT.0);
+const _: () = assert!(CROSSING_OBLIGATION_SLOT.0 != CROSSING_CLAIM_SLOT.0);
+const _: () = assert!(CROSSING_OBLIGATION_SLOT.0 != CROSSING_DECLINE_SLOT.0);
+const _: () = assert!(CROSSING_OBLIGATION_SLOT.0 != COMMITTED_TX_SLOT.0);
 
 /// The canonical nullifier key for a signed intent under one of its
 /// accounts:
@@ -267,6 +297,31 @@ pub fn crossing_decline_key(
     output: u32,
 ) -> SubstateKey {
     answer_key(hasher, owner, CROSSING_DECLINE_SLOT, intent, local, output)
+}
+
+/// The canonical crossing obligation key for one value edge, under the
+/// target of the node that was handed it.
+///
+/// [`crossing_decline_key`]'s neighbour, on the same material and the
+/// same owner: a shard that owes an answer and the shard that gives one
+/// are the same shard, so the obligation and the answer that retires it
+/// name one edge under one owner.
+#[must_use]
+pub fn crossing_obligation_key(
+    hasher: &dyn Hasher,
+    owner: impl Into<Address>,
+    intent: IntentHash,
+    local: u32,
+    output: u32,
+) -> SubstateKey {
+    answer_key(
+        hasher,
+        owner,
+        CROSSING_OBLIGATION_SLOT,
+        intent,
+        local,
+        output,
+    )
 }
 
 fn answer_key(
@@ -640,6 +695,70 @@ impl CrossingAnswer {
 
     /// The answer a committed cell holds, or `None` where the bytes are
     /// not one.
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        from_slice(bytes).ok()
+    }
+}
+
+/// What an obligation cell holds: a crossing a bundle handed this shard
+/// and that it has not answered, with the record's own terms as its
+/// producer committed them.
+///
+/// **The arrival, written down.** A bundle proves its cells against the
+/// producer's committed state root under a header that producer's own
+/// committee certified, and then expires; the obligation it created does
+/// not. So a shard takes the record's bytes while the bundle is in hand
+/// and commits them to its own state, where a seat reads them back and a
+/// restart does not lose them. What is read later is this shard's own
+/// committed content, admitted by its own consensus off a bundle every
+/// replica held — which is a witness a node-local arrival map was never
+/// able to be.
+///
+/// Self-describing on the answer families' terms: the cell it carries
+/// re-derives this key under the obligation's own role. Nothing sweeps
+/// it, because what ends it is an answer rather than a clock — and a
+/// clock that took it away would leave the shard unable to answer at
+/// all, which is the whole defect this family exists to close.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+pub struct CrossingObligation {
+    /// The record cell on the producer's chain this shard owes an
+    /// answer for.
+    ///
+    /// Carried for the reason [`CrossingAnswer::record`] is: its owner
+    /// is the producing node's target, which lives in the manifest and
+    /// in neither leaf.
+    pub record: SubstateKey,
+    /// That record, as its producer committed it.
+    pub cell: CrossingCell,
+}
+
+impl CrossingObligation {
+    /// The cell this obligation sits at under `owner`, re-derived from
+    /// the record it carries.
+    #[must_use]
+    pub fn key(&self, hasher: &dyn Hasher, owner: impl Into<Address>) -> SubstateKey {
+        crossing_obligation_key(
+            hasher,
+            owner,
+            self.cell.intent,
+            self.cell.local,
+            self.cell.output,
+        )
+    }
+
+    /// The cell's committed bytes.
+    ///
+    /// # Panics
+    ///
+    /// Never: the value is a record and a key.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        to_vec(self).expect("an obligation is a record and a key")
+    }
+
+    /// The obligation a committed cell holds, or `None` where the bytes
+    /// are not one.
     #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         from_slice(bytes).ok()

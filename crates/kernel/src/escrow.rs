@@ -216,6 +216,13 @@ pub struct Refusal {
     /// hashing seam here takes bytes and not a domain, so it could not
     /// derive a child key if it wanted to.
     pub site: SubstateKey,
+    /// The obligation cell this shard wrote for the crossing, under the
+    /// same owner and for the same edge.
+    ///
+    /// Retired by whichever answer reaches it: the decline removes it
+    /// beside the cell it writes, so one member answers the crossing and
+    /// closes the note it was answering from.
+    pub obligation: SubstateKey,
 }
 
 impl Refusal {
@@ -264,6 +271,29 @@ pub struct Deletion {
     /// readings that license the deletion are of this record, and the
     /// cell is deleted only where it says the same.
     pub record: SubstateKey,
+}
+
+/// A shard's obligation ledger brought in line with what it holds and
+/// what it has answered.
+///
+/// One job with two halves, because they are read off one pass over one
+/// set: an obligation is written when a bundle hands this shard a
+/// crossing it has not answered, and removed when the answer it was
+/// waiting for stands. Two lists rather than one list of two shapes —
+/// the halves carry nothing in common, and no edge is ever in both,
+/// since a composer reads the answer that separates them once.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Obligations {
+    /// Crossings to write down, from the bundles that carried them, so
+    /// the refusals they may owe need no bundle ever again.
+    pub owe: Vec<Refusal>,
+    /// Obligations to remove: notes whose crossing this shard has
+    /// answered.
+    ///
+    /// Keys alone. What licenses each removal is the answer cell
+    /// standing beside it, which the composer read off this shard's own
+    /// state, and nothing in a note has terms of its own to check.
+    pub disown: Vec<SubstateKey>,
 }
 
 /// What a settlement does with a record.

@@ -39,7 +39,9 @@ use hyperscale_vm_types::{
     MAX_EVENT_BYTES_PER_TX, Mode, ModeKind, Moves, Outcome, SubstateKey, TxHash, UnmetCondition,
 };
 
-use crate::escrow::{Deletion, Departure, Disposal, Disposition, EscrowDelta, LegPlan, Refusal};
+use crate::escrow::{
+    Deletion, Departure, Disposal, Disposition, EscrowDelta, LegPlan, Obligations, Refusal,
+};
 use crate::ledger::AmountLedger;
 use crate::locality::OwnerSet;
 use crate::overlay::OverlayStore;
@@ -195,7 +197,9 @@ impl BatchTx {
     pub fn with_legs(mut self, legs: LegPlan) -> Self {
         let calls = match self.job {
             Job::Manifest { calls, .. } => calls,
-            Job::Records(_) | Job::Refusals(_) | Job::Deletions(_) => Vec::new(),
+            Job::Records(_) | Job::Refusals(_) | Job::Deletions(_) | Job::Obligations(_) => {
+                Vec::new()
+            }
         };
         self.job = Job::Manifest { calls, legs };
         self
@@ -222,6 +226,14 @@ impl BatchTx {
     #[must_use]
     pub fn with_deletions(mut self, deletions: Vec<Deletion>) -> Self {
         self.job = Job::Deletions(deletions);
+        self
+    }
+
+    /// Bind the obligation-ledger work this execution does instead of
+    /// walking a manifest.
+    #[must_use]
+    pub fn with_obligations(mut self, obligations: Obligations) -> Self {
+        self.job = Job::Obligations(obligations);
         self
     }
 
@@ -269,7 +281,9 @@ impl BatchTx {
     pub fn with_calls(mut self, calls: Vec<NodeCall>) -> Self {
         let legs = match self.job {
             Job::Manifest { legs, .. } => legs,
-            Job::Records(_) | Job::Refusals(_) | Job::Deletions(_) => LegPlan::whole(0),
+            Job::Records(_) | Job::Refusals(_) | Job::Deletions(_) | Job::Obligations(_) => {
+                LegPlan::whole(0)
+            }
         };
         self.job = Job::Manifest { calls, legs };
         self
@@ -280,7 +294,7 @@ impl BatchTx {
     pub fn calls(&self) -> &[NodeCall] {
         match &self.job {
             Job::Manifest { calls, .. } => calls,
-            Job::Records(_) | Job::Refusals(_) | Job::Deletions(_) => &[],
+            Job::Records(_) | Job::Refusals(_) | Job::Deletions(_) | Job::Obligations(_) => &[],
         }
     }
 
@@ -291,7 +305,9 @@ impl BatchTx {
     pub(crate) fn record_cells(&self) -> Vec<SubstateKey> {
         match &self.job {
             Job::Manifest { legs, .. } => legs.records().collect(),
-            Job::Records(_) | Job::Refusals(_) | Job::Deletions(_) => Vec::new(),
+            Job::Records(_) | Job::Refusals(_) | Job::Deletions(_) | Job::Obligations(_) => {
+                Vec::new()
+            }
         }
     }
 
@@ -301,7 +317,9 @@ impl BatchTx {
     #[must_use]
     pub(crate) fn disposed_records(&self) -> Vec<SubstateKey> {
         match &self.job {
-            Job::Manifest { .. } | Job::Refusals(_) | Job::Deletions(_) => Vec::new(),
+            Job::Manifest { .. } | Job::Refusals(_) | Job::Deletions(_) | Job::Obligations(_) => {
+                Vec::new()
+            }
             Job::Records(disposals) => disposals.iter().map(|disposal| disposal.record).collect(),
         }
     }
@@ -313,7 +331,9 @@ impl BatchTx {
     #[must_use]
     pub(crate) fn disposed_answers(&self) -> Vec<SubstateKey> {
         match &self.job {
-            Job::Manifest { .. } | Job::Records(_) | Job::Refusals(_) => Vec::new(),
+            Job::Manifest { .. } | Job::Records(_) | Job::Refusals(_) | Job::Obligations(_) => {
+                Vec::new()
+            }
             Job::Deletions(deletions) => deletions.iter().map(|deletion| deletion.answer).collect(),
         }
     }
@@ -330,7 +350,29 @@ impl BatchTx {
                 .map(|disposal| disposal.claim.key())
                 .collect(),
             Job::Refusals(refusals) => refusals.iter().map(|refusal| refusal.site).collect(),
-            Job::Deletions(_) => Vec::new(),
+            Job::Deletions(_) | Job::Obligations(_) => Vec::new(),
+        }
+    }
+
+    /// Every obligation cell this execution writes or removes: what the
+    /// ledger job touches, and the note a refusal retires beside the
+    /// decline it writes.
+    ///
+    /// Held to an exclusive declaration like every other kernel cell,
+    /// and deliberately outside [`created_cells`]: an obligation already
+    /// there is a note this shard has already made, so writing it again
+    /// is a no-op rather than an outcome.
+    #[must_use]
+    pub(crate) fn obligation_cells(&self) -> Vec<SubstateKey> {
+        match &self.job {
+            Job::Manifest { .. } | Job::Records(_) | Job::Deletions(_) => Vec::new(),
+            Job::Refusals(refusals) => refusals.iter().map(|refusal| refusal.obligation).collect(),
+            Job::Obligations(work) => work
+                .owe
+                .iter()
+                .map(|refusal| refusal.obligation)
+                .chain(work.disown.iter().copied())
+                .collect(),
         }
     }
 
@@ -404,6 +446,14 @@ pub enum Job {
     /// record its producer has since disposed of. It reads no record —
     /// there is none here to read — and moves nothing.
     Deletions(Vec<Deletion>),
+    /// No manifest either: this shard's obligation ledger brought in
+    /// line with the crossings it holds and the answers it has given.
+    ///
+    /// Housekeeping on cells that are nobody else's to read. What it
+    /// writes is what a bundle handed this shard, so a refusal composed
+    /// later needs no bundle; what it removes is a note whose answer
+    /// already stands.
+    Obligations(Obligations),
 }
 
 impl Job {
@@ -413,7 +463,9 @@ impl Job {
     pub fn departure(&self, node: u32, output: u32) -> Option<Departure> {
         match self {
             Self::Manifest { legs, .. } => legs.departure(node, output),
-            Self::Records(_) | Self::Refusals(_) | Self::Deletions(_) => None,
+            Self::Records(_) | Self::Refusals(_) | Self::Deletions(_) | Self::Obligations(_) => {
+                None
+            }
         }
     }
 }
@@ -965,6 +1017,12 @@ fn marker_writes(entry: &BatchTx) -> Vec<(SubstateKey, Outcome)> {
                 .disposed_answers()
                 .into_iter()
                 .map(|key| (key, Outcome::EscrowAlreadyClaimed { key })),
+        )
+        .chain(
+            entry
+                .obligation_cells()
+                .into_iter()
+                .map(|key| (key, Outcome::EscrowAlreadyIssued { key })),
         )
         .collect()
 }

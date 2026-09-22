@@ -11,16 +11,16 @@ use std::sync::Arc;
 
 use hyperscale_hbor::from_slice;
 use hyperscale_vm_effects::{
-    CallArg, CrossingAnswer, CrossingCell, CrossingSite, Declaration, EdgeContent, Hash32, Hasher,
-    IntentHash, Kind, NodeCall, PackageHash, SlotId, Terms, TestHasher, child_key,
-    crossing_decline_key,
+    CallArg, CrossingAnswer, CrossingCell, CrossingObligation, CrossingSite, Declaration,
+    EdgeContent, Hash32, Hasher, IntentHash, Kind, NodeCall, PackageHash, SlotId, Terms,
+    TestHasher, child_key, crossing_decline_key, crossing_obligation_key,
 };
 use hyperscale_vm_embed::GuestArg;
 use hyperscale_vm_kernel::{
     Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, Deletion, Departure,
     Disposal, Disposition, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult,
-    Invoked, KernelSession, LegPlan, ManifestWalk, MemoryStore, Receipt, Refusal, Substates,
-    decode_amount, execute_batch,
+    Invoked, KernelSession, LegPlan, ManifestWalk, MemoryStore, Obligations, Receipt, Refusal,
+    Substates, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, MAX_CROSSINGS_PER_TX,
@@ -1053,6 +1053,12 @@ fn decline_key() -> SubstateKey {
     crossing_decline_key(&TestHasher, owner(PAYEE), intent(), 0, 0)
 }
 
+/// The note the consumer wrote itself about the crossing, which its
+/// answer retires.
+fn obligation_key() -> SubstateKey {
+    crossing_obligation_key(&TestHasher, owner(PAYEE), intent(), 0, 0)
+}
+
 /// The escrowed terms this fixture's edge carries: a cell of the
 /// producer's to credit the value back to.
 fn escrowed_terms() -> Terms {
@@ -1081,6 +1087,10 @@ fn refusing(who: TxHash, terms: Terms) -> BatchTx {
                 target: EffectTarget::Point(claim_site().key()),
                 mode: Mode::Read,
             },
+            Effect {
+                target: EffectTarget::Point(obligation_key()),
+                mode: Mode::Write { moves: Moves::Both },
+            },
         ]),
         env(),
     )
@@ -1088,7 +1098,30 @@ fn refusing(who: TxHash, terms: Terms) -> BatchTx {
         record: record_site().key(),
         cell: refused_cell(terms),
         site: decline_key(),
+        obligation: obligation_key(),
     }])
+}
+
+/// The consumer writing down what a bundle handed it: one cell, no
+/// value, nothing read but the note's own key.
+fn owing(who: TxHash, terms: Terms) -> BatchTx {
+    BatchTx::new(
+        who,
+        declared(&[Effect {
+            target: EffectTarget::Point(obligation_key()),
+            mode: Mode::Write { moves: Moves::Both },
+        }]),
+        env(),
+    )
+    .with_obligations(Obligations {
+        owe: vec![Refusal {
+            record: record_site().key(),
+            cell: refused_cell(terms),
+            site: decline_key(),
+            obligation: obligation_key(),
+        }],
+        disown: Vec::new(),
+    })
 }
 
 /// A refusal writes one cell and moves nothing.
@@ -1117,6 +1150,103 @@ fn a_refusal_writes_the_decline_and_moves_nothing() {
         "and nothing moved: the producer keeps what it already has",
     );
     assert_eq!(receipt.fuel, 0, "no node ran");
+}
+
+/// The consumer writing down what it was handed: one note, at the
+/// obligation's own key, carrying the record's own terms.
+///
+/// What phase 3's refusal is composed from once no bundle is in hand.
+#[test]
+fn an_obligation_writes_the_note_a_refusal_is_composed_from() {
+    let outcome = execute(
+        Arc::new(MemoryStore::new()) as Arc<dyn Baseline>,
+        &[owing(tx(0x44), escrowed_terms())],
+        ExecutionMode::Serial,
+    )
+    .expect("an obligation is a batch");
+    let receipt = &outcome.receipts[&tx(0x44)];
+
+    assert!(
+        matches!(receipt.outcome, Outcome::Completed { .. }),
+        "an obligation completes; outcome {:?}",
+        receipt.outcome,
+    );
+    let note = outcome
+        .store
+        .cell(obligation_key())
+        .and_then(|bytes| CrossingObligation::from_bytes(&bytes))
+        .expect("the note is there and decodes");
+    assert_eq!(note.record, record_site().key());
+    assert_eq!(note.cell, refused_cell(escrowed_terms()));
+    assert!(
+        receipt.delta.movements.is_empty(),
+        "and nothing moved: a note about value is not value",
+    );
+}
+
+/// A note this shard has already made is the same note.
+///
+/// Unlike every other cell a session writes, so it is asserted rather
+/// than assumed: two answers at one key are two edges the chain cannot
+/// tell apart, where two identical notes are one note. A composer that
+/// raced itself must not trap the member the second one rides in.
+#[test]
+fn an_obligation_written_twice_is_written_once() {
+    let mut held = MemoryStore::new();
+    held.write(
+        obligation_key(),
+        CrossingObligation {
+            record: record_site().key(),
+            cell: refused_cell(escrowed_terms()),
+        }
+        .to_bytes(),
+    );
+    let outcome = execute(
+        Arc::new(held) as Arc<dyn Baseline>,
+        &[owing(tx(0x45), escrowed_terms())],
+        ExecutionMode::Serial,
+    )
+    .expect("an obligation is a batch");
+
+    assert!(
+        matches!(
+            outcome.receipts[&tx(0x45)].outcome,
+            Outcome::Completed { .. }
+        ),
+        "a repeated note completes rather than trapping; outcome {:?}",
+        outcome.receipts[&tx(0x45)].outcome,
+    );
+    assert!(outcome.store.cell(obligation_key()).is_some());
+}
+
+/// And the answer retires the note it was answered from, in the member
+/// that gives it.
+#[test]
+fn a_refusal_retires_the_note_it_answers_from() {
+    let mut held = MemoryStore::new();
+    held.write(
+        obligation_key(),
+        CrossingObligation {
+            record: record_site().key(),
+            cell: refused_cell(escrowed_terms()),
+        }
+        .to_bytes(),
+    );
+    let outcome = execute(
+        Arc::new(held) as Arc<dyn Baseline>,
+        &[refusing(tx(0x46), escrowed_terms())],
+        ExecutionMode::Serial,
+    )
+    .expect("a refusal is a batch");
+
+    assert!(
+        outcome.store.cell(decline_key()).is_some(),
+        "the answer is written",
+    );
+    assert!(
+        outcome.store.cell(obligation_key()).is_none(),
+        "and the note it answered from is gone",
+    );
 }
 
 /// A crossing this shard has already claimed cannot be refused.
