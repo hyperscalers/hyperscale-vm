@@ -470,8 +470,9 @@ pub enum Terms {
     /// rather than remembering it, because a proof carries a value hash
     /// and never a value. An absence is the one thing a proof can say
     /// plainly, so the producer holds the key for
-    /// [`CROSSING_TOMBSTONE_GRACE_MS`] past the disposal and then takes
-    /// it away. The going of it is the date.
+    /// [`CROSSING_TOMBSTONE_GRACE_MS`](hyperscale_vm_types::CROSSING_TOMBSTONE_GRACE_MS)
+    /// past the disposal and then takes it away. The going of it is the
+    /// date.
     ///
     /// [`CrossingCell::expiry_ms`] names that instant here, which is
     /// the one term this variant changes: for the other two it is read
@@ -996,7 +997,7 @@ pub const fn nullifier_expiry_ms(header: &IntentHeader) -> u64 {
 }
 
 /// When the escrow cells of every node an intent holds stop being owed:
-/// the window its signer signed, plus the grace [`Marked::Claimed`]
+/// the window its signer signed, plus the grace [`CROSSING_GRACE_MS`]
 /// takes.
 ///
 /// The intent's own window, on [`nullifier_expiry_ms`]'s terms and for

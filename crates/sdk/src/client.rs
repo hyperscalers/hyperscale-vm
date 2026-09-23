@@ -101,7 +101,7 @@ pub fn issued_at(
 ///
 /// Only a *component* can have one. A principal's address derives from a
 /// key and folds in no package hash, so the account that answers every
-/// principal is reached through [`principal-address`] itself — there is
+/// principal is reached through `principal-address` itself — there is
 /// nothing a newtype over one could check.
 pub trait Component: Copy {
     /// What the instance was created under, named as the package spells

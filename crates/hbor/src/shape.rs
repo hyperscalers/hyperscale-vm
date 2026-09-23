@@ -6,7 +6,7 @@
 //! no more. It says how to decode, never how to render.
 //!
 //! Shapes compose the way the codec composes. [`HborShape`] is derived
-//! beside [`HborEncode`](crate::HborEncode) and states a struct's node
+//! beside [`HborEncode`] and states a struct's node
 //! from its fields' own, so the two cannot describe different bytes.
 //! Nothing on the codec path reads one.
 //!
