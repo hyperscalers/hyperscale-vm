@@ -117,9 +117,18 @@ fn a_protocol_cell_in_the_wrong_shape_does_not_publish() {
 
 #[test]
 fn a_slot_no_cell_is_assigned_does_not_publish() {
-    // The kernel's own cells sit under a publisher's and a signer's
-    // prefix, and no signature reaches them.
-    for slot in [NULLIFIER_SLOT, SlotId(0xFFFE)] {
+    // The kernel's own cells sit under a publisher's, a signer's, a
+    // node's target's and a shard's own prefix, and no signature reaches
+    // them.
+    for slot in [
+        NULLIFIER_SLOT,
+        SlotId(0xFFFE),
+        SlotId(0xFFFD),
+        SlotId(0xFFFC),
+        SlotId(0xFFFB),
+        SlotId(0xFFFA),
+        SlotId(0xFFF9),
+    ] {
         let refused = verdict(&writing(slot, vec![]))
             .expect_err("the kernel's own band is not a signature's to name");
         assert!(refused.contains("no cell is assigned"), "{refused}");

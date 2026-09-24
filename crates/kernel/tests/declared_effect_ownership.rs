@@ -20,10 +20,12 @@ use std::sync::Arc;
 
 use hyperscale_hbor::{Capped, Name};
 use hyperscale_vm_effects::{
-    AdmissionError, Admitted, ChainRecords, Clause, Declaration, Expr, GraphArg, GraphNode, Hash32,
-    Hasher, InstanceMeta, Intent, IntentHeader, IntentTree, ManifestGraph, MethodSignature,
-    ModeExpr, PackageHash, PackageMetadata, ParamType, Records, SlotId, SlotRef, TargetExpr,
-    TestHasher, Totality, Value, admit_tree, child_key,
+    AdmissionError, Admitted, COMMITTED_TX_SLOT, CROSSING_CLAIM_SLOT, CROSSING_DECLINE_SLOT,
+    CROSSING_OBLIGATION_SLOT, ChainRecords, Clause, Declaration, DeclarationError,
+    ESCROW_RECORD_SLOT, EvalError, Expr, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, Intent,
+    IntentHeader, IntentTree, ManifestGraph, MethodSignature, ModeExpr, PackageHash,
+    PackageMetadata, ParamType, Records, SlotId, SlotRef, TargetExpr, TestHasher, Totality, Value,
+    admit_tree, check_declarations, child_key,
 };
 use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_types::{
@@ -217,4 +219,127 @@ fn a_capability_on_a_strangers_vault_cannot_spend_it() {
         spent.is_err(),
         "a stranger's vault was debited through a declared delta"
     );
+}
+
+/// A signature writing `slot` under the package's own prefix.
+fn writing(slot: SlotId) -> MethodSignature {
+    MethodSignature {
+        totality: Totality::Fallible,
+        effects: vec![Clause::Effect {
+            reach: None,
+            guard: None,
+            target: TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(Expr::SelfAddr),
+                slot: SlotRef::Fixed(slot),
+                material: vec![],
+            }),
+            mode: ModeExpr::Read,
+            denomination: None,
+        }],
+        ..MethodSignature::default()
+    }
+}
+
+/// A package whose one method reaches whatever slot its caller names
+/// under the package's own prefix.
+fn reaching() -> PackageMetadata {
+    let mut methods = PackageMetadata::default();
+    methods.methods.insert(
+        Name::declared("reach"),
+        MethodSignature {
+            totality: Totality::Fallible,
+            params: vec![ParamType::U64],
+            effects: vec![Clause::Effect {
+                reach: None,
+                guard: None,
+                target: TargetExpr::Point(Expr::ChildKey {
+                    owner: Box::new(Expr::SelfAddr),
+                    slot: SlotRef::Reached(Box::new(Expr::Arg(0))),
+                    material: vec![],
+                }),
+                mode: ModeExpr::Read,
+                denomination: None,
+            }],
+            ..MethodSignature::default()
+        },
+    );
+    methods
+}
+
+/// A protocol slot under a package's own prefix is nobody's to name:
+/// refused at publish, where a signature fixes it, and when reached,
+/// where an argument names it.
+///
+/// The five crossing and committed slots sit under a producing node's
+/// target, a consuming node's target and a shard's own owner, and a
+/// package's instances hold those cells under the same address as their
+/// own. What keeps a package from writing one is the kernel band
+/// covering the slot, and nothing else: the key material a declaration
+/// derives is framed differently from what the kernel hashes, so a
+/// collision needs grinding, but the band is what refuses the slot at
+/// all.
+fn a_marker_slot_is_refused(slot: SlotId) {
+    assert_eq!(
+        check_declarations(&writing(slot)),
+        Err(DeclarationError::ReservedSlot {
+            clause: 0,
+            slot: slot.0,
+        }),
+        "{slot:?} is accepted at publish",
+    );
+
+    let mut chain = Records::new();
+    chain.packages.publish_unchecked(package(), reaching());
+    let instance = chain.instances.create(
+        &TestHasher,
+        InstanceMeta {
+            package: package(),
+            config: Capped::empty(),
+            salt: Hash32([7; 32]),
+        },
+    );
+    let graph = ManifestGraph {
+        nodes: Capped::from_array([GraphNode::new(
+            instance,
+            "reach",
+            vec![GraphArg::Literal(Value::U64(u64::from(slot.0)))],
+        )]),
+    };
+    let refused = admit_leaf(&graph, ATTACKER, &chain, &TestHasher)
+        .expect_err("a reached marker slot is admitted");
+    assert!(
+        matches!(
+            refused,
+            AdmissionError::Eval {
+                source: EvalError::UnreachableSlot(named),
+                ..
+            } if named == u64::from(slot.0)
+        ),
+        "{slot:?} reached is refused for another reason: {refused:?}",
+    );
+}
+
+#[test]
+fn the_record_slot_is_refused_under_a_packages_prefix() {
+    a_marker_slot_is_refused(ESCROW_RECORD_SLOT);
+}
+
+#[test]
+fn the_committed_tx_slot_is_refused_under_a_packages_prefix() {
+    a_marker_slot_is_refused(COMMITTED_TX_SLOT);
+}
+
+#[test]
+fn the_claim_slot_is_refused_under_a_packages_prefix() {
+    a_marker_slot_is_refused(CROSSING_CLAIM_SLOT);
+}
+
+#[test]
+fn the_decline_slot_is_refused_under_a_packages_prefix() {
+    a_marker_slot_is_refused(CROSSING_DECLINE_SLOT);
+}
+
+#[test]
+fn the_obligation_slot_is_refused_under_a_packages_prefix() {
+    a_marker_slot_is_refused(CROSSING_OBLIGATION_SLOT);
 }

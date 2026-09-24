@@ -14,7 +14,7 @@ use hyperscale_vm_types::{
     ResourceAddr, SubstateKey, SweepBucket, TxHash,
 };
 
-use crate::PACKAGE_SLOT_BASE;
+use crate::KERNEL_SLOT_BASE;
 use crate::hash::Hasher;
 use crate::intent::IntentHeader;
 use crate::types::{SlotId, bucketed_child_key, child_key};
@@ -24,6 +24,8 @@ use crate::types::{SlotId, bucketed_child_key, child_key};
 ///
 /// The top of the role space is the kernel's, as the bottom is the
 /// protocol vocabulary's and the middle is where packages number from.
+/// Every slot in this file sits in the kernel band, at or above
+/// [`KERNEL_SLOT_BASE`], whatever owner it is keyed under.
 pub const NULLIFIER_SLOT: SlotId = SlotId(0xFFFF);
 
 /// The kernel-reserved role of escrow record substates under the
@@ -31,11 +33,13 @@ pub const NULLIFIER_SLOT: SlotId = SlotId(0xFFFF);
 ///
 /// What the shard issuing a crossing writes: the resource and the amount
 /// that left it. The record is the memo a reclaim reads, which is why
-/// nothing has to remember a diff.
+/// nothing has to remember a diff. In the kernel band, though it sits
+/// under a node's target: a package's instances hold it under the same
+/// address as their own slots.
 pub const ESCROW_RECORD_SLOT: SlotId = SlotId(0xFFFD);
 
 /// The kernel-reserved role of crossing claim substates under the
-/// claiming node's target.
+/// claiming node's target, in the kernel band.
 ///
 /// What the shard *taking* a crossing writes, on whatever terms the
 /// record carries. The record says value was issued and never that it is
@@ -50,7 +54,7 @@ pub const ESCROW_RECORD_SLOT: SlotId = SlotId(0xFFFD);
 pub const CROSSING_CLAIM_SLOT: SlotId = SlotId(0xFFFB);
 
 /// The reserved role of crossing decline substates under the consuming
-/// node's target.
+/// node's target, in the kernel band.
 ///
 /// What the shard *refusing* a crossing writes: the other half of the
 /// obligation a crossing puts on its consumer, and the licence its
@@ -66,7 +70,7 @@ pub const CROSSING_CLAIM_SLOT: SlotId = SlotId(0xFFFB);
 pub const CROSSING_DECLINE_SLOT: SlotId = SlotId(0xFFFA);
 
 /// The reserved role of crossing obligation substates under the
-/// consuming node's target.
+/// consuming node's target, in the kernel band at its base.
 ///
 /// What a shard writes down when a bundle hands it an escrowed crossing
 /// it has not answered: the record's own terms, kept where this shard's
@@ -82,7 +86,7 @@ pub const CROSSING_DECLINE_SLOT: SlotId = SlotId(0xFFFA);
 pub const CROSSING_OBLIGATION_SLOT: SlotId = SlotId(0xFFF9);
 
 /// The reserved role of committed-transaction substates under a shard's
-/// own owner.
+/// own owner, in the kernel band.
 ///
 /// What a shard writes at block commit for every transaction the block
 /// carries: the fact that it committed it, provable and refutable
@@ -119,13 +123,15 @@ pub const CROSSING_ANSWER_CELL_BYTES: u32 = 160;
 pub const CROSSING_OBLIGATION_CELL_BYTES: u32 = CROSSING_CELL_BYTES + 64;
 
 // Held at compile time rather than by a test: every side is a constant,
-// so a kernel cell colliding with a package's own — or with another
-// kernel family — is a thing the build can refuse outright.
-const _: () = assert!(NULLIFIER_SLOT.0 > PACKAGE_SLOT_BASE);
-const _: () = assert!(ESCROW_RECORD_SLOT.0 > PACKAGE_SLOT_BASE);
-const _: () = assert!(CROSSING_CLAIM_SLOT.0 > PACKAGE_SLOT_BASE);
-const _: () = assert!(CROSSING_DECLINE_SLOT.0 > PACKAGE_SLOT_BASE);
-const _: () = assert!(COMMITTED_TX_SLOT.0 > PACKAGE_SLOT_BASE);
+// so a kernel cell outside the kernel band — where a package could name
+// it — or colliding with another kernel family is a thing the build can
+// refuse outright. The nullifier is the top of the space, which no base
+// can lie above.
+const _: () = assert!(NULLIFIER_SLOT.0 == u16::MAX);
+const _: () = assert!(ESCROW_RECORD_SLOT.0 >= KERNEL_SLOT_BASE);
+const _: () = assert!(CROSSING_CLAIM_SLOT.0 >= KERNEL_SLOT_BASE);
+const _: () = assert!(CROSSING_DECLINE_SLOT.0 >= KERNEL_SLOT_BASE);
+const _: () = assert!(COMMITTED_TX_SLOT.0 >= KERNEL_SLOT_BASE);
 const _: () = assert!(NULLIFIER_SLOT.0 != ESCROW_RECORD_SLOT.0);
 const _: () = assert!(NULLIFIER_SLOT.0 != CROSSING_CLAIM_SLOT.0);
 const _: () = assert!(ESCROW_RECORD_SLOT.0 != CROSSING_CLAIM_SLOT.0);
@@ -136,7 +142,7 @@ const _: () = assert!(COMMITTED_TX_SLOT.0 != NULLIFIER_SLOT.0);
 const _: () = assert!(COMMITTED_TX_SLOT.0 != ESCROW_RECORD_SLOT.0);
 const _: () = assert!(COMMITTED_TX_SLOT.0 != CROSSING_CLAIM_SLOT.0);
 const _: () = assert!(COMMITTED_TX_SLOT.0 != CROSSING_DECLINE_SLOT.0);
-const _: () = assert!(CROSSING_OBLIGATION_SLOT.0 > PACKAGE_SLOT_BASE);
+const _: () = assert!(CROSSING_OBLIGATION_SLOT.0 >= KERNEL_SLOT_BASE);
 const _: () = assert!(CROSSING_OBLIGATION_SLOT.0 != NULLIFIER_SLOT.0);
 const _: () = assert!(CROSSING_OBLIGATION_SLOT.0 != ESCROW_RECORD_SLOT.0);
 const _: () = assert!(CROSSING_OBLIGATION_SLOT.0 != CROSSING_CLAIM_SLOT.0);
@@ -189,13 +195,15 @@ pub fn nullifier_key(
 ///
 /// The material here is chosen by a composer and not by the owner,
 /// which [`bucketed_child_key`] warns against on its 48-bit birthday
-/// bound. It is admissible for this family and for this family alone,
-/// because a collision can only make the cell present, never absent: a
-/// second transaction landing on the key overwrites a value with one
-/// that still derives the key, both share the bucket the sweep retires
-/// together, and presence is never what the cell is asked to prove.
-/// What it proves is absence, and nothing a composer can grind produces
-/// a missing leaf.
+/// bound. It is admissible for this family because a live committed
+/// cell always names the transaction that created it: a block carries
+/// no transaction whose committed key is present in its parent state or
+/// named by another transaction in the same block, refused at
+/// validation and deferred by the proposer, so a retraction keyed by an
+/// attested outcome deletes that transaction's cell and no other, and a
+/// leaf read absent was never written for the transaction asked about.
+/// A composer who grinds a collision defers only his own second
+/// transaction.
 #[must_use]
 pub fn committed_tx_key(
     hasher: &dyn Hasher,

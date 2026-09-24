@@ -48,8 +48,11 @@ pub struct ShardId(pub u64);
 /// the address it sits under, not by this space. What the space
 /// partitions is the three populations that *do* share an owner:
 ///
-/// - the kernel's own, at the top ([`NULLIFIER_SLOT`], [`PACKAGE_SLOT`]),
-///   reached by the kernel and the publish path and by nothing else;
+/// - the kernel's own, at the top, from [`KERNEL_SLOT_BASE`] up: the
+///   nullifier, the package, the crossing record, claim, decline and
+///   obligation, and the committed-transaction marker. Written by the
+///   kernel, the publish path and the commit path, and declared by no
+///   signature;
 /// - the protocol vocabulary, counting up from one — the cells an engine
 ///   derives keys for without consulting any metadata, so their values
 ///   are protocol facts rather than one package's business;
@@ -60,8 +63,6 @@ pub struct ShardId(pub u64);
 /// address as their own, which is the whole reason the third band has to
 /// clear the second. It never has to clear another package's.
 ///
-/// [`NULLIFIER_SLOT`]: crate::NULLIFIER_SLOT
-/// [`PACKAGE_SLOT`]: crate::PACKAGE_SLOT
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 #[hbor(transparent)]
 pub struct SlotId(pub u16);
@@ -76,11 +77,19 @@ pub const PACKAGE_SLOT_BASE: u16 = 16;
 /// The first slot the kernel keeps for itself.
 ///
 /// The top of the space, as the bottom is the protocol vocabulary's and
-/// the middle is where packages number from. The cells here are reached
-/// by the publish path and by the envelope, under a publisher's and a
-/// signer's prefix, and no signature declares one — which is what makes
-/// the band a refusal rather than a shape.
-pub const KERNEL_SLOT_BASE: u16 = 0xFFFE;
+/// the middle is where packages number from. Every protocol slot lies in
+/// this band, whatever owner it sits under: the cells here are written
+/// by the kernel, the publish path and the commit path, under a
+/// publisher's, a signer's, a node's target's and a shard's own prefix,
+/// and no signature declares one — which is what makes the band a
+/// refusal rather than a shape. A package's instances hold these cells
+/// under the same address as their own, so a slot outside the band is
+/// one a package could name.
+///
+/// The base is the lowest protocol slot there is. A change that adds a
+/// protocol slot lowers the base to cover it, and a retired slot stays
+/// in the band and is never reused, so the base never rises.
+pub const KERNEL_SLOT_BASE: u16 = 0xFFF9;
 
 // The three bands in order, held at compile time: all three are
 // constants, so a base that swallowed the band below it is a thing the

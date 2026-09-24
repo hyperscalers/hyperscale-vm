@@ -2610,6 +2610,10 @@ mod tests {
         NF_VAULT, PACKAGE_SLOT_BASE, SlotRef, SlotWidths, TargetExpr, VAULT, evaluate_declaration,
         evaluate_effects, evaluate_expr, fresh_id, fresh_local,
     };
+    use crate::cells::{
+        COMMITTED_TX_SLOT, CROSSING_CLAIM_SLOT, CROSSING_DECLINE_SLOT, CROSSING_OBLIGATION_SLOT,
+        ESCROW_RECORD_SLOT,
+    };
     use crate::hash::{Hash32, TestHasher};
     use crate::instance::InstanceMeta;
     use crate::manifest::ManifestHash;
@@ -2843,7 +2847,16 @@ mod tests {
                 );
             }
         }
-        for slot in [u64::from(KERNEL_SLOT_BASE), u64::from(u16::MAX), 1 << 20] {
+        for slot in [
+            u64::from(KERNEL_SLOT_BASE),
+            u64::from(CROSSING_OBLIGATION_SLOT.0),
+            u64::from(CROSSING_DECLINE_SLOT.0),
+            u64::from(CROSSING_CLAIM_SLOT.0),
+            u64::from(COMMITTED_TX_SLOT.0),
+            u64::from(ESCROW_RECORD_SLOT.0),
+            u64::from(u16::MAX),
+            1 << 20,
+        ] {
             assert_eq!(reaching(slot, true), Err(EvalError::UnreachableSlot(slot)));
         }
     }

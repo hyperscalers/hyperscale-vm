@@ -158,7 +158,9 @@ fn a_recall_by_somebody_the_entry_does_not_name_is_refused(chain: &mut Chain) {
 fn a_slot_that_keeps_no_value_is_refused_where_the_argument_is_read(chain: &mut Chain) {
     let (issuer, deed) = deeds(chain);
 
-    for slot in [0u64, 2, 3, 4, 6, 7, 0xFFFE] {
+    for slot in [
+        0u64, 2, 3, 4, 6, 7, 0xFFF9, 0xFFFA, 0xFFFB, 0xFFFC, 0xFFFD, 0xFFFE,
+    ] {
         let refused = chain.try_transact(WARDEN, |b| {
             let taken = issuer.recall(b, HOLDER.address(), slot, &[1])?;
             account::deposit_nf(b, WARDEN, taken)
