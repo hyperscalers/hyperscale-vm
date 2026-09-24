@@ -7,6 +7,7 @@
 //! reconciles them is the record cell and the attested amount, so those
 //! are what these tests compare.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use hyperscale_hbor::from_slice;
@@ -1309,20 +1310,13 @@ fn an_owed_crossing_cannot_be_refused() {
     );
 }
 
-/// The reclaim's claim cell, under the producer's own target.
-fn reclaim_site() -> CrossingSite {
-    CrossingSite::claim(&TestHasher, owner(PAYER), intent(), 0, 0, EXPIRY_MS)
-}
-
 /// The producing node taking its own record back: reads the record,
-/// claims it under its own target, credits the cell the value left. No
-/// node runs.
+/// credits the cell the value left, removes the record. No node runs.
 fn reclaiming(who: TxHash) -> BatchTx {
     BatchTx::new(
         who,
         declared(&[
             crossing_cell(record_site()),
-            crossing_cell(reclaim_site()),
             Effect {
                 target: EffectTarget::Point(cell(PAYER)),
                 mode: Mode::Delta { moves: Moves::Both },
@@ -1332,7 +1326,6 @@ fn reclaiming(who: TxHash) -> BatchTx {
     )
     .with_disposals(vec![Disposal {
         record: record_site().key(),
-        claim: reclaim_site(),
         disposition: Disposition::Reclaim,
     }])
 }
@@ -1342,13 +1335,14 @@ fn balance(outcome: &BatchOutcome, key: SubstateKey) -> u128 {
 }
 
 /// Issue, then reclaim: the producing vault is back at its pre-escrow
-/// balance exactly, read off the vault rather than inferred; the claim is
-/// a loss and the credit a gain, so the fold balances with no term of
-/// its own; and the record goes, since the value it held is back.
+/// balance exactly, read off the vault rather than inferred; the loss
+/// and the credit balance the fold with no term of its own; the record
+/// goes, since the value it held is back; and nothing else is written.
 #[test]
 fn a_reclaim_restores_the_producing_vault_exactly() {
     let mut store = MemoryStore::new();
     store.write(cell(PAYER), encode_amount(500).to_vec());
+    let seed = store.clone();
 
     let sent = execute(
         Arc::new(store) as Arc<dyn Baseline>,
@@ -1361,6 +1355,7 @@ fn a_reclaim_restores_the_producing_vault_exactly() {
         300,
         "the escrow debited the vault"
     );
+    let before = sent.store.collapse_onto(seed);
 
     let reclaimed = execute(
         Arc::new(sent.store) as Arc<dyn Baseline>,
@@ -1387,27 +1382,33 @@ fn a_reclaim_restores_the_producing_vault_exactly() {
     assert_eq!(balance(&reclaimed, cell(PAYER)), 500);
     assert!(
         reclaimed.store.cell(record_site().key()).is_none(),
-        "the record goes with the value it held: an escrowed crossing's answer \
-         sweeps itself, so nothing here needs its going dated",
+        "the record goes with the value it held",
     );
-    let claim: CrossingAnswer = from_slice(
+    assert!(
         reclaimed
             .store
-            .cell(reclaim_site().key())
-            .as_deref()
-            .expect("the claim committed"),
-    )
-    .unwrap();
-    assert_eq!(claim.tx, tx(9));
+            .cell(CrossingSite::claim(&TestHasher, owner(PAYER), intent(), 0, 0, EXPIRY_MS).key())
+            .is_none(),
+        "a reclaim writes no claim under the producer's own target",
+    );
+
+    // The whole of the write set: the record's removal and the credit.
+    let after = reclaimed.store.collapse_onto(before.clone());
+    let changed: BTreeSet<SubstateKey> = before
+        .cells()
+        .chain(after.cells())
+        .map(|(key, _)| key)
+        .filter(|key| before.cell(*key) != after.cell(*key))
+        .collect();
     assert_eq!(
-        claim.record,
-        record_site().key(),
-        "and it names the record it answers for, as every claim does",
+        changed,
+        BTreeSet::from([record_site().key(), cell(PAYER)]),
+        "a reclaim's write set is the record and the credit, and nothing else",
     );
 }
 
-/// A second reclaim of one crossing finds the first's claim and moves
-/// nothing — on the machinery that refuses a second claim.
+/// A second reclaim of one crossing reads the record gone and moves
+/// nothing: the record's removal is the once-only guard.
 #[test]
 fn a_second_reclaim_is_refused_and_moves_nothing() {
     let mut store = MemoryStore::new();
@@ -1433,12 +1434,63 @@ fn a_second_reclaim_is_refused_and_moves_nothing() {
     let receipt = &twice.receipts[&tx(10)];
     assert_eq!(
         receipt.outcome,
-        Outcome::EscrowAlreadyClaimed {
-            key: reclaim_site().key(),
+        Outcome::ProtocolError {
+            reason: AbortReason::EscrowRecordUnreadable,
         },
     );
     assert!(receipt.delta.movements.is_empty());
     assert_eq!(balance(&twice, cell(PAYER)), 500);
+}
+
+/// Two reclaims of one record in one batch credit once. Both declare
+/// the record exclusively, so they share a conflict group and run in
+/// canonical order, and the second reads the record the first removed.
+#[test]
+fn two_reclaims_of_one_record_in_one_batch_credit_once() {
+    let mut store = MemoryStore::new();
+    store.write(cell(PAYER), encode_amount(500).to_vec());
+    let sent = execute(
+        Arc::new(store) as Arc<dyn Baseline>,
+        &[sending(200)],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    let both = execute(
+        Arc::new(sent.store) as Arc<dyn Baseline>,
+        &[reclaiming(tx(9)), reclaiming(tx(10))],
+        ExecutionMode::Parallel,
+    )
+    .unwrap();
+    let outcomes: Vec<&Outcome> = [tx(9), tx(10)]
+        .iter()
+        .map(|who| &both.receipts[who].outcome)
+        .collect();
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, Outcome::Completed { .. }))
+            .count(),
+        1,
+        "exactly one reclaim completes; {outcomes:?}",
+    );
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| matches!(
+                outcome,
+                Outcome::ProtocolError {
+                    reason: AbortReason::EscrowRecordUnreadable,
+                }
+            ))
+            .count(),
+        1,
+        "and the other reads the record gone; {outcomes:?}",
+    );
+    assert_eq!(
+        balance(&both, cell(PAYER)),
+        500,
+        "the value comes back once, not twice"
+    );
 }
 
 /// The producing node retiring a record whose claim committed: reads
@@ -1447,7 +1499,6 @@ fn retiring(who: TxHash) -> BatchTx {
     BatchTx::new(who, declared(&[crossing_cell(record_site())]), env()).with_disposals(vec![
         Disposal {
             record: record_site().key(),
-            claim: reclaim_site(),
             disposition: Disposition::Retire,
         },
     ])
@@ -1532,7 +1583,6 @@ fn an_owed_record_retires_to_a_dated_tombstone() {
 fn a_settlement_that_hides_the_record_it_deletes_refuses_the_batch() {
     let undeclared = BatchTx::new(tx(31), declared(&[]), env()).with_disposals(vec![Disposal {
         record: record_site().key(),
-        claim: reclaim_site(),
         disposition: Disposition::Retire,
     }]);
 
@@ -1753,7 +1803,10 @@ fn a_deletion_removes_the_answer_and_moves_nothing() {
 fn an_answer_is_not_deleted_against_another_record() {
     let outcome = execute(
         Arc::new(answered_store()) as Arc<dyn Baseline>,
-        &[deleting(tx(0x51), reclaim_site().key())],
+        &[deleting(
+            tx(0x51),
+            CrossingSite::claim(&TestHasher, owner(PAYER), intent(), 0, 1, EXPIRY_MS).key(),
+        )],
         ExecutionMode::Serial,
     )
     .expect("a deletion is a batch");

@@ -678,8 +678,8 @@ pub enum Outcome {
     ///
     /// The claim cell under the consuming node's own target is committed
     /// state, so it says the crossing is spent whoever spent it — an
-    /// earlier replay of this transaction, or the producing shard
-    /// reclaiming it. Priced with [`Outcome::Infeasible`]: no composer
+    /// earlier replay of this transaction, or another take of the same
+    /// crossing. Priced with [`Outcome::Infeasible`]: no composer
     /// could have read the cell at signing time, so this is a lost race
     /// rather than a defect in what was signed.
     #[hbor(discriminant = 11)]

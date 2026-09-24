@@ -39,9 +39,7 @@ use hyperscale_vm_types::{
     MAX_EVENT_BYTES_PER_TX, Mode, ModeKind, Moves, Outcome, SubstateKey, TxHash, UnmetCondition,
 };
 
-use crate::escrow::{
-    Deletion, Departure, Disposal, Disposition, EscrowDelta, LegPlan, Obligations, Refusal,
-};
+use crate::escrow::{Deletion, Departure, Disposal, EscrowDelta, LegPlan, Obligations, Refusal};
 use crate::ledger::AmountLedger;
 use crate::locality::OwnerSet;
 use crate::overlay::OverlayStore;
@@ -351,19 +349,15 @@ impl BatchTx {
         }
     }
 
-    /// Every claim cell this execution creates: the arrivals it takes,
-    /// and the crossings a settlement takes back.
+    /// Every claim cell this execution creates: the arrivals it takes.
     #[must_use]
     pub(crate) fn claim_cells(&self) -> Vec<SubstateKey> {
         match &self.job {
             Job::Manifest { legs, .. } => legs.claims().collect(),
-            Job::Records(disposals) => disposals
-                .iter()
-                .filter(|disposal| disposal.disposition == Disposition::Reclaim)
-                .map(|disposal| disposal.claim.key())
-                .collect(),
             Job::Refusals(refusals) => refusals.iter().map(|refusal| refusal.site).collect(),
-            Job::Deletions(_) | Job::Tombstones(_) | Job::Obligations(_) => Vec::new(),
+            Job::Records(_) | Job::Deletions(_) | Job::Tombstones(_) | Job::Obligations(_) => {
+                Vec::new()
+            }
         }
     }
 

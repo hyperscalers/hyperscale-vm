@@ -854,15 +854,6 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
     assert_eq!(cell.consumer_claim, consumer.key());
     assert_eq!(cell.terms, Terms::Escrowed { credit });
 
-    // The value re-derives the key, and a site built for another edge
-    // does not take it.
-    assert!(site.names(&cell));
-    assert!(!CrossingSite::record(&TestHasher, BOB, bob, 0, 0, EXPIRY_MS).names(&cell));
-    assert_eq!(
-        CrossingSite::claim_on(&TestHasher, BOB, &cell).key(),
-        CrossingSite::claim(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS).key()
-    );
-
     // Round trip: the cell reads back as itself, and bytes that are not
     // one read back as nothing.
     assert_eq!(CrossingCell::from_bytes(&cell.to_bytes()), Some(cell));

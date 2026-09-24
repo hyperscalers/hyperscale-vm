@@ -363,7 +363,7 @@ fn answer_key(
 ///
 /// The expiry, the issuing transaction and the consumer's claim are
 /// terms of the reclaim rather than the record's identity, which stays
-/// the edge ([`CrossingSite::names`]). The transaction is what a
+/// the edge the key is derived from. The transaction is what a
 /// successor's reclaim is admitted under, the tick and its receipt being
 /// keyed by transaction and a record naming none being unadmittable. The
 /// consumer's claim is the cell that decides between the two housekeeping
@@ -849,8 +849,7 @@ impl CrossingSite {
     }
 
     /// The claim cell for the edge `producer` leaves on `output`, under
-    /// `owner`: the consuming node's target for a consumer's claim, the
-    /// producer's own for a reclaim's.
+    /// `owner`, the consuming node's target.
     #[must_use]
     pub fn claim_of(
         hasher: &dyn Hasher,
@@ -865,21 +864,6 @@ impl CrossingSite {
             producer.local,
             output,
             producer.expiry_ms,
-        )
-    }
-
-    /// The claim cell for the edge `record` holds, under `owner`: the
-    /// producer's own target for a settlement composed from the leaf,
-    /// which holds no manifest to read the edge off.
-    #[must_use]
-    pub fn claim_on(hasher: &dyn Hasher, owner: impl Into<Address>, record: &CrossingCell) -> Self {
-        Self::claim(
-            hasher,
-            owner,
-            record.intent,
-            record.local,
-            record.output,
-            record.expiry_ms,
         )
     }
 
@@ -942,16 +926,6 @@ impl CrossingSite {
             consumer_claim,
             terms,
         }
-    }
-
-    /// Whether a record names the edge this site does.
-    ///
-    /// What a reclaim checks before crediting from a cell: the record's
-    /// value re-derives its key, and a claim site built for one edge must
-    /// not take a record written for another.
-    #[must_use]
-    pub fn names(&self, record: &CrossingCell) -> bool {
-        record.intent == self.intent && record.local == self.local && record.output == self.output
     }
 
     /// The claim's committed bytes: which transaction took the crossing,

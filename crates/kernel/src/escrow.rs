@@ -171,24 +171,19 @@ pub struct Departure {
 /// crossing the producing shard issued, either taken back or retired.
 ///
 /// The record is read and deleted either way. Taken back, its resource
-/// and amount are credited to the cell the value left and a claim is
-/// written under the producer's own target, on the machinery a consumer
-/// claims with; retired, nothing moves, since the consumer's committed
+/// and amount are credited to the cell the value left, and nothing else
+/// is written; retired, nothing moves, since the consumer's committed
 /// claim moved the value where it ran. Every term is the leaf's, so a
 /// replica holding the prefix and nothing else — a split child —
 /// composes a settlement from the record alone.
 ///
 /// Evidence for either is the parent's to establish. What the kernel
-/// checks is that the record is there and names the edge the claim site
-/// names.
+/// checks is that the record is there to read, and its removal is what
+/// refuses a second settlement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Disposal {
     /// The record cell to read.
     pub record: SubstateKey,
-    /// The claim cell for the record's edge, under the producer's own
-    /// target: written by a reclaim, and the site that says which edge a
-    /// retirement holds the record to.
-    pub claim: CrossingSite,
     /// What the settlement does with the record.
     pub disposition: Disposition,
 }
@@ -257,8 +252,7 @@ impl Refusal {
 ///
 /// What licenses the deletion is a reading the deleting block carries,
 /// and none of it reaches here: the kernel holds the member to
-/// naming a cell that is there and answers for the record claimed, the
-/// way [`Disposal`] is held to a record naming its edge.
+/// naming a cell that is there and answers for the record claimed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Deletion {
     /// The answer cell to read and remove, under the consuming node's
@@ -299,8 +293,8 @@ pub struct Obligations {
 /// What a settlement does with a record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Disposition {
-    /// No consumer claimed: credit the value back and claim the edge
-    /// under the producer's own target.
+    /// No consumer claimed: credit the value back to the cell it left
+    /// and remove the record.
     ///
     /// Only a crossing naming a cell to credit is disposed of this way.
     /// One an outbound leg consumes names none and nothing takes it

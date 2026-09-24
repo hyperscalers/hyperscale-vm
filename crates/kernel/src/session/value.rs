@@ -294,38 +294,31 @@ impl KernelSession {
     /// Settle one record this execution issued: take the crossing back,
     /// or retire the record once its claim committed.
     ///
-    /// Taking it back is the producing node claiming its own record
-    /// through the path a consumer claims it: the claim is a loss and
-    /// the credit a gain, so the fold balances with no term of its own,
-    /// and the claim cell under the producer's own target is what
-    /// refuses a second reclaim, on the machinery that refuses a second
-    /// claim. The resource, the amount and the cell credited are all
-    /// the record's. Retiring moves nothing and enters no fold term: the
-    /// consumer's claim moved the value where it ran, and what is left
-    /// is a cell saying so.
+    /// Taking it back counts the crossing as a loss and credits it to
+    /// the cell the value left, so the fold balances with no term of its
+    /// own, and writes nothing else. The resource, the amount and the
+    /// cell credited are all the record's. Retiring moves nothing and
+    /// enters no fold term: the consumer's claim moved the value where
+    /// it ran, and what is left is a cell saying so.
     ///
     /// Either way the record goes: it is a balance held for a claim, and
-    /// the claim has happened or never will.
-    ///
-    /// The record has to be there and name the edge — one that is not
-    /// was settled already, and a second settlement is the batch's
-    /// defect rather than a lost race.
+    /// the claim has happened or never will. Its going is what refuses a
+    /// second settlement — one finds nothing to read, and a second
+    /// settlement is the batch's defect rather than a lost race.
     ///
     /// # Errors
     ///
     /// [`SessionTrap::EscrowRecordUnreadable`] for a record that is
-    /// absent, does not decode, names another edge, or — for a reclaim
-    /// — leaves the crossing nobody's to take back;
+    /// absent, does not decode, is a tombstone, or — for a reclaim —
+    /// leaves the crossing nobody's to take back;
     /// [`SessionTrap::EscrowCreditUndeclared`] where the declaration
     /// carries no movement handle on the cell the record says to credit;
-    /// and any [`SessionTrap`] the claim, the credit or the store
-    /// raises.
+    /// and any [`SessionTrap`] the loss, the credit or the store raises.
     pub(crate) fn escrow_settle(&mut self, disposal: &Disposal) -> Result<(), SessionTrap> {
         let record: CrossingCell = self
             .store
             .read(disposal.record)?
             .and_then(|bytes| CrossingCell::from_bytes(&bytes))
-            .filter(|record| disposal.claim.names(record))
             // A tombstone names its edge as readily as the record it
             // was, so a second settlement would read one and push its
             // removal later. Refused here rather than left to the
@@ -348,7 +341,8 @@ impl KernelSession {
                 resource: record.resource,
                 amount: record.amount,
             };
-            let funds = self.escrow_in(crossed, disposal.claim, disposal.record)?;
+            self.escrow.claim(crossed)?;
+            let funds = self.open_bucket(Held::Amount(crossed.amount), crossed.resource, None);
             self.cell_put(site, 0, funds)?;
         }
         // **An owed record stands on as a tombstone, and its going is a
