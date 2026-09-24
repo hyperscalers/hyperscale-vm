@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::{Answered, CrossingAnswer, CrossingCell, CrossingSite, Kind};
+use hyperscale_vm_effects::{CrossingSite, Kind};
 use hyperscale_vm_types::{MAX_CROSSINGS_PER_TX, ResourceAddr, SubstateKey};
 
 use crate::modes::ModeError;
@@ -188,59 +188,6 @@ pub struct Disposal {
     pub disposition: Disposition,
 }
 
-/// One crossing a member refuses: the record cell as its producer
-/// committed it, and the key it sits at on the producing chain.
-///
-/// The cell travels with the member because the refusing shard holds no
-/// leaf for a crossing it has not answered — that is the whole asymmetry
-/// of this direction. What makes carrying it safe is where it came from:
-/// a bundle, whose every cell is proven against the producer's committed
-/// state root under a header its own committee certified. So these are
-/// the producer's bytes wherever they are read, and the kernel holds
-/// them to naming the record they are carried for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Refusal {
-    /// The record cell on the producer's chain the refusal answers for.
-    pub record: SubstateKey,
-    /// What that cell holds, as the producer committed it.
-    pub cell: CrossingCell,
-    /// Where the refusal's own cell sits, under the consuming node's
-    /// target.
-    ///
-    /// Derived by the parent, as every key this kernel is handed is: the
-    /// hashing seam here takes bytes and not a domain, so it could not
-    /// derive a child key if it wanted to.
-    pub site: SubstateKey,
-    /// The obligation cell this shard wrote for the crossing, under the
-    /// same owner and for the same edge.
-    ///
-    /// Retired by whichever answer reaches it: the decline removes it
-    /// beside the cell it writes, so one member answers the crossing and
-    /// closes the note it was answering from.
-    pub obligation: SubstateKey,
-}
-
-impl Refusal {
-    /// The answer this refusal writes, under the consuming node's own
-    /// target.
-    ///
-    /// Derived rather than carried, so the cell a refusal writes and the
-    /// crossing it names cannot come apart: the owner is the one the
-    /// record's own `consumer_claim` sits under, and the edge is the
-    /// record's.
-    #[must_use]
-    pub const fn answer(&self) -> CrossingAnswer {
-        CrossingAnswer {
-            tx: self.cell.tx,
-            intent: self.cell.intent,
-            local: self.cell.local,
-            output: self.cell.output,
-            record: self.record,
-            answered: Answered::Declined,
-        }
-    }
-}
-
 /// One answer cell a member deletes: the cell, and the record it has to
 /// name.
 ///
@@ -265,29 +212,6 @@ pub struct Deletion {
     /// reading that licenses the deletion is of this record, and the
     /// cell is deleted only where it says the same.
     pub record: SubstateKey,
-}
-
-/// A shard's obligation ledger brought in line with what it holds and
-/// what it has answered.
-///
-/// One job with two halves, because they are read off one pass over one
-/// set: an obligation is written when a bundle hands this shard a
-/// crossing it has not answered, and removed when the answer it was
-/// waiting for stands. Two lists rather than one list of two shapes —
-/// the halves carry nothing in common, and no edge is ever in both,
-/// since a composer reads the answer that separates them once.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Obligations {
-    /// Crossings to write down, from the bundles that carried them, so
-    /// the refusals they may owe need no bundle ever again.
-    pub owe: Vec<Refusal>,
-    /// Obligations to remove: notes whose crossing this shard has
-    /// answered.
-    ///
-    /// Keys alone. What licenses each removal is the answer cell
-    /// standing beside it, which the composer read off this shard's own
-    /// state, and nothing in a note has terms of its own to check.
-    pub disown: Vec<SubstateKey>,
 }
 
 /// What a settlement does with a record.
@@ -321,6 +245,13 @@ pub struct Arrival {
     /// node's target, which lives in the manifest and not in either
     /// leaf.
     pub record: SubstateKey,
+    /// The decline cell the consumer's refusal writes for this edge,
+    /// where the crossing is refusable; `None` for one owed to its
+    /// consumer, which nothing takes back.
+    ///
+    /// Filed so the take screen covers it: a `Never` standing at it is
+    /// the crossing already answered, and the member must not run.
+    pub never: Option<SubstateKey>,
 }
 
 /// What this execution does with one of a manifest's nodes.
@@ -431,6 +362,15 @@ impl LegPlan {
         })
     }
 
+    /// Every decline cell this execution's refusal would write, in edge
+    /// order: the refusable arrivals it takes.
+    pub fn nevers(&self) -> impl Iterator<Item = SubstateKey> + '_ {
+        self.edges.values().filter_map(|action| match action {
+            EdgeAction::Arrives(arrival) => arrival.never,
+            EdgeAction::Departs(_) => None,
+        })
+    }
+
     /// Mark a node as one another shard runs.
     ///
     /// # Errors
@@ -441,8 +381,9 @@ impl LegPlan {
         Ok(())
     }
 
-    /// File what arrives for one edge, and the claim cell taking it
-    /// writes.
+    /// File what arrives for one edge, the claim cell taking it writes,
+    /// and the decline cell its refusal would write where the crossing
+    /// is refusable.
     ///
     /// # Errors
     ///
@@ -456,6 +397,7 @@ impl LegPlan {
         crossed: Crossed,
         claim: CrossingSite,
         record: SubstateKey,
+        never: Option<SubstateKey>,
     ) -> Result<(), PlanFault> {
         if self.action(node) == NodeAction::Run {
             return Err(PlanFault::ArrivesHere { node, output });
@@ -467,6 +409,7 @@ impl LegPlan {
                 crossed,
                 claim,
                 record,
+                never,
             }),
         )
     }
@@ -672,7 +615,7 @@ mod tests {
     fn a_divided_plan_names_what_it_does_not_run() {
         let mut plan = LegPlan::whole(3);
         plan.skip(1).expect("inside the manifest");
-        plan.arrives(1, 0, crossed(1, 50), cell(9), cell(9).key())
+        plan.arrives(1, 0, crossed(1, 50), cell(9), cell(9).key(), None)
             .expect("fits");
         plan.departs(2, 0, departing(8)).expect("fits");
 
@@ -685,6 +628,7 @@ mod tests {
                 crossed: crossed(1, 50),
                 claim: cell(9),
                 record: cell(9).key(),
+                never: None,
             }),
         );
         assert_eq!(plan.departure(2, 0), Some(departing(8)));
@@ -702,10 +646,10 @@ mod tests {
             Err(PlanFault::EdgeTwice { node: 0, output: 0 }),
         );
         plan.skip(1).expect("inside the manifest");
-        plan.arrives(1, 0, crossed(1, 5), cell(3), cell(3).key())
+        plan.arrives(1, 0, crossed(1, 5), cell(3), cell(3).key(), None)
             .expect("fits");
         assert_eq!(
-            plan.arrives(1, 0, crossed(1, 6), cell(4), cell(4).key()),
+            plan.arrives(1, 0, crossed(1, 6), cell(4), cell(4).key(), None),
             Err(PlanFault::EdgeTwice { node: 1, output: 0 }),
         );
     }
@@ -716,7 +660,7 @@ mod tests {
     fn an_edge_agrees_with_the_node_it_hangs_off() {
         let mut plan = LegPlan::whole(2);
         assert_eq!(
-            plan.arrives(0, 0, crossed(1, 5), cell(9), cell(9).key()),
+            plan.arrives(0, 0, crossed(1, 5), cell(9), cell(9).key(), None),
             Err(PlanFault::ArrivesHere { node: 0, output: 0 }),
         );
         plan.skip(1).expect("inside the manifest");

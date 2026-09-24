@@ -12,14 +12,14 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    CrossingAnswer, CrossingCell, CrossingObligation, CrossingSite, IssuanceGrant, Kind,
-    ResourceKind, Terms, distinct_ids,
+    CrossingAnswer, CrossingCell, CrossingSite, IssuanceGrant, Kind, ResourceKind, Terms,
+    distinct_ids,
 };
 use hyperscale_vm_types::{CROSSING_TOMBSTONE_GRACE_MS, ResourceAddr, SubstateKey};
 
 use super::buckets::Held;
 use super::{Capability, KernelSession, Op, SessionTrap, Settlement};
-use crate::escrow::{Crossed, Deletion, Departure, Disposal, Disposition, Refusal};
+use crate::escrow::{Crossed, Deletion, Departure, Disposal, Disposition};
 use crate::ledger::AmountLedger;
 use crate::modes::{DeltaOp, decode_amount};
 use crate::store::WorkingStore;
@@ -412,45 +412,6 @@ impl KernelSession {
         Ok(())
     }
 
-    /// Refuse a crossing this shard was handed: write the decline cell
-    /// and move nothing.
-    ///
-    /// The other half of [`escrow_settle`](Self::escrow_settle), and the
-    /// shorter one, because a refusal decides value on a chain this one
-    /// cannot touch. What the producer does with it is credit the value
-    /// back to the cell its own record names; what happens here is one
-    /// cell written saying the crossing will never be taken.
-    ///
-    /// Two things are checked, and they are the two that would move
-    /// value if they were wrong. A crossing owed to its consumer is not
-    /// refusable at all — nothing takes one back, so a decline of one
-    /// would credit a cell nobody named — and a crossing this shard has
-    /// already claimed is answered, so a second answer beside the first
-    /// would license a retirement and a reclaim of one value. The claim
-    /// is read against the committed baseline, which is what makes the
-    /// two answers exclusive by construction rather than by two
-    /// composers agreeing.
-    ///
-    /// # Errors
-    ///
-    /// [`SessionTrap::CrossingUnrefusable`] for a crossing whose terms
-    /// leave no verdict to give, or one this shard has already claimed.
-    pub(crate) fn escrow_refuse(&mut self, refusal: &Refusal) -> Result<(), SessionTrap> {
-        if !matches!(refusal.cell.terms, Terms::Escrowed { .. }) {
-            return Err(SessionTrap::CrossingUnrefusable(refusal.record));
-        }
-        if self.store.read(refusal.cell.consumer_claim)?.is_some() {
-            return Err(SessionTrap::CrossingUnrefusable(refusal.record));
-        }
-        // The note this shard wrote itself about the crossing, retired
-        // beside the answer that ends it. One member answers and closes
-        // what it answered from; a removal of a key nothing wrote is a
-        // no-op, which is the case of a crossing refused before the
-        // ledger ever caught up with it.
-        self.store.remove(refusal.obligation)?;
-        self.record_crossing(refusal.site, refusal.answer().to_bytes())
-    }
-
     /// Delete an answer cell this shard wrote, once the crossing it
     /// answered for is over.
     ///
@@ -485,47 +446,6 @@ impl KernelSession {
             .filter(|answer| answer.record == deletion.record)
             .ok_or(SessionTrap::CrossingAnswerUnreadable(deletion.answer))?;
         self.store.remove(deletion.answer)?;
-        Ok(())
-    }
-
-    /// Write down a crossing a bundle handed this shard, so the answer
-    /// it may owe never needs that bundle again.
-    ///
-    /// Through the same seam every crossing cell is written by, which
-    /// refuses two of them at one key inside one member — a composer
-    /// naming one edge twice is the defect that guards against, exactly
-    /// as it is for an answer. What it does not refuse is the same note
-    /// written again in a later block, and it must not: the value
-    /// re-derives its own key off the same edge, so a repeat is
-    /// byte-identical, and a composer that raced its own guard would
-    /// otherwise trap a member carrying other crossings beside this one.
-    ///
-    /// # Errors
-    ///
-    /// [`SessionTrap::CrossingKeyRepeated`] where this member already
-    /// wrote a crossing cell at the note's key.
-    pub(crate) fn escrow_owe(&mut self, refusal: &Refusal) -> Result<(), SessionTrap> {
-        self.record_crossing(
-            refusal.obligation,
-            CrossingObligation {
-                record: refusal.record,
-                cell: refusal.cell,
-            }
-            .to_bytes(),
-        )
-    }
-
-    /// Remove an obligation whose crossing this shard has answered.
-    ///
-    /// What licenses it is the answer cell standing beside it, read by
-    /// the composer off this shard's own state; there is nothing in the
-    /// note itself to check, and a key that holds none removes nothing.
-    ///
-    /// # Errors
-    ///
-    /// Any [`SessionTrap`] the store raises.
-    pub(crate) fn escrow_disown(&mut self, obligation: SubstateKey) -> Result<(), SessionTrap> {
-        self.store.remove(obligation)?;
         Ok(())
     }
 

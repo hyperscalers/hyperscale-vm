@@ -39,7 +39,7 @@ use hyperscale_vm_types::{
     MAX_EVENT_BYTES_PER_TX, Mode, ModeKind, Moves, Outcome, SubstateKey, TxHash, UnmetCondition,
 };
 
-use crate::escrow::{Deletion, Departure, Disposal, EscrowDelta, LegPlan, Obligations, Refusal};
+use crate::escrow::{Deletion, Departure, Disposal, EscrowDelta, LegPlan};
 use crate::ledger::AmountLedger;
 use crate::locality::OwnerSet;
 use crate::overlay::OverlayStore;
@@ -195,11 +195,7 @@ impl BatchTx {
     pub fn with_legs(mut self, legs: LegPlan) -> Self {
         let calls = match self.job {
             Job::Manifest { calls, .. } => calls,
-            Job::Records(_)
-            | Job::Refusals(_)
-            | Job::Deletions(_)
-            | Job::Tombstones(_)
-            | Job::Obligations(_) => Vec::new(),
+            Job::Records(_) | Job::Deletions(_) | Job::Tombstones(_) => Vec::new(),
         };
         self.job = Job::Manifest { calls, legs };
         self
@@ -213,27 +209,11 @@ impl BatchTx {
         self
     }
 
-    /// Bind the crossings this execution refuses instead of walking a
-    /// manifest.
-    #[must_use]
-    pub fn with_refusals(mut self, refusals: Vec<Refusal>) -> Self {
-        self.job = Job::Refusals(refusals);
-        self
-    }
-
     /// Bind the answer cells this execution deletes instead of walking a
     /// manifest.
     #[must_use]
     pub fn with_deletions(mut self, deletions: Vec<Deletion>) -> Self {
         self.job = Job::Deletions(deletions);
-        self
-    }
-
-    /// Bind the obligation-ledger work this execution does instead of
-    /// walking a manifest.
-    #[must_use]
-    pub fn with_obligations(mut self, obligations: Obligations) -> Self {
-        self.job = Job::Obligations(obligations);
         self
     }
 
@@ -281,11 +261,7 @@ impl BatchTx {
     pub fn with_calls(mut self, calls: Vec<NodeCall>) -> Self {
         let legs = match self.job {
             Job::Manifest { legs, .. } => legs,
-            Job::Records(_)
-            | Job::Refusals(_)
-            | Job::Deletions(_)
-            | Job::Tombstones(_)
-            | Job::Obligations(_) => LegPlan::whole(0),
+            Job::Records(_) | Job::Deletions(_) | Job::Tombstones(_) => LegPlan::whole(0),
         };
         self.job = Job::Manifest { calls, legs };
         self
@@ -296,11 +272,7 @@ impl BatchTx {
     pub fn calls(&self) -> &[NodeCall] {
         match &self.job {
             Job::Manifest { calls, .. } => calls,
-            Job::Records(_)
-            | Job::Refusals(_)
-            | Job::Deletions(_)
-            | Job::Tombstones(_)
-            | Job::Obligations(_) => &[],
+            Job::Records(_) | Job::Deletions(_) | Job::Tombstones(_) => &[],
         }
     }
 
@@ -311,11 +283,7 @@ impl BatchTx {
     pub(crate) fn record_cells(&self) -> Vec<SubstateKey> {
         match &self.job {
             Job::Manifest { legs, .. } => legs.records().collect(),
-            Job::Records(_)
-            | Job::Refusals(_)
-            | Job::Deletions(_)
-            | Job::Tombstones(_)
-            | Job::Obligations(_) => Vec::new(),
+            Job::Records(_) | Job::Deletions(_) | Job::Tombstones(_) => Vec::new(),
         }
     }
 
@@ -325,25 +293,19 @@ impl BatchTx {
     #[must_use]
     pub(crate) fn disposed_records(&self) -> Vec<SubstateKey> {
         match &self.job {
-            Job::Manifest { .. }
-            | Job::Refusals(_)
-            | Job::Deletions(_)
-            | Job::Tombstones(_)
-            | Job::Obligations(_) => Vec::new(),
+            Job::Manifest { .. } | Job::Deletions(_) | Job::Tombstones(_) => Vec::new(),
             Job::Records(disposals) => disposals.iter().map(|disposal| disposal.record).collect(),
         }
     }
 
     /// Every answer cell this execution deletes: what a deletion
     /// removes once the record it answered for is gone. Every other job
-    /// deletes none — a manifest writes answers, a settlement reads
-    /// them on the far side of a crossing, and a refusal creates one.
+    /// deletes none — a manifest writes answers, and a settlement reads
+    /// them on the far side of a crossing.
     #[must_use]
     pub(crate) fn disposed_answers(&self) -> Vec<SubstateKey> {
         match &self.job {
-            Job::Manifest { .. } | Job::Records(_) | Job::Refusals(_) | Job::Obligations(_) => {
-                Vec::new()
-            }
+            Job::Manifest { .. } | Job::Records(_) => Vec::new(),
             Job::Deletions(deletions) => deletions.iter().map(|deletion| deletion.answer).collect(),
             Job::Tombstones(keys) => keys.clone(),
         }
@@ -354,34 +316,25 @@ impl BatchTx {
     pub(crate) fn claim_cells(&self) -> Vec<SubstateKey> {
         match &self.job {
             Job::Manifest { legs, .. } => legs.claims().collect(),
-            Job::Refusals(refusals) => refusals.iter().map(|refusal| refusal.site).collect(),
-            Job::Records(_) | Job::Deletions(_) | Job::Tombstones(_) | Job::Obligations(_) => {
-                Vec::new()
-            }
+            Job::Records(_) | Job::Deletions(_) | Job::Tombstones(_) => Vec::new(),
         }
     }
 
-    /// Every obligation cell this execution writes or removes: what the
-    /// ledger job touches, and the note a refusal retires beside the
-    /// decline it writes.
+    /// Every decline cell the refusal of this execution's member would
+    /// write: one per refusable arrival a manifest takes, none for any
+    /// other job.
     ///
-    /// Held to an exclusive declaration like every other kernel cell,
-    /// and deliberately outside [`created_cells`]: an obligation already
-    /// there is a note this shard has already made, so writing it again
-    /// is a no-op rather than an outcome.
+    /// The member's refusal receipt writes the cell, so the declaration
+    /// naming it is honest; held to an exclusive declaration like the
+    /// claim beside it, so every writer of the key sits in one conflict
+    /// group. Outside [`created_cells`], because the cell is not this
+    /// execution's to create: a `Never` standing at it is the crossing
+    /// already answered, which is what refuses the member's take.
     #[must_use]
-    pub(crate) fn obligation_cells(&self) -> Vec<SubstateKey> {
+    pub(crate) fn never_cells(&self) -> Vec<SubstateKey> {
         match &self.job {
-            Job::Manifest { .. } | Job::Records(_) | Job::Deletions(_) | Job::Tombstones(_) => {
-                Vec::new()
-            }
-            Job::Refusals(refusals) => refusals.iter().map(|refusal| refusal.obligation).collect(),
-            Job::Obligations(work) => work
-                .owe
-                .iter()
-                .map(|refusal| refusal.obligation)
-                .chain(work.disown.iter().copied())
-                .collect(),
+            Job::Manifest { legs, .. } => legs.nevers().collect(),
+            Job::Records(_) | Job::Deletions(_) | Job::Tombstones(_) => Vec::new(),
         }
     }
 
@@ -438,31 +391,14 @@ pub enum Job {
     },
     /// Settle the records named, in order, invoking nothing.
     Records(Vec<Disposal>),
-    /// Refuse the crossings named, in order, invoking nothing.
-    ///
-    /// The other side of [`Self::Records`]: that one disposes of records
-    /// this shard holds, this one answers records another shard holds,
-    /// and neither walks a manifest. A refusal writes one cell and moves
-    /// no value — the producer keeps what it already has, and the cell
-    /// is the licence to keep it.
-    Refusals(Vec<Refusal>),
     /// Delete the answer cells named, in order, invoking nothing.
     ///
     /// The consumer's housekeeping once a crossing is over. Where
     /// [`Self::Records`] disposes of a record on evidence of what its
-    /// consumer did, and [`Self::Refusals`] answers a record another
-    /// shard holds, this one removes an answer this shard wrote whose
+    /// consumer did, this one removes an answer this shard wrote whose
     /// record its producer has since disposed of. It reads no record —
     /// there is none here to read — and moves nothing.
     Deletions(Vec<Deletion>),
-    /// No manifest either: this shard's obligation ledger brought in
-    /// line with the crossings it holds and the answers it has given.
-    ///
-    /// Housekeeping on cells that are nobody else's to read. What it
-    /// writes is what a bundle handed this shard, so a refusal composed
-    /// later needs no bundle; what it removes is a note whose answer
-    /// already stands.
-    Obligations(Obligations),
     /// No manifest: the retired records this shard holds whose grace
     /// its own clock has passed, taken away.
     ///
@@ -483,11 +419,7 @@ impl Job {
     pub fn departure(&self, node: u32, output: u32) -> Option<Departure> {
         match self {
             Self::Manifest { legs, .. } => legs.departure(node, output),
-            Self::Records(_)
-            | Self::Refusals(_)
-            | Self::Deletions(_)
-            | Self::Tombstones(_)
-            | Self::Obligations(_) => None,
+            Self::Records(_) | Self::Deletions(_) | Self::Tombstones(_) => None,
         }
     }
 }
@@ -1016,15 +948,16 @@ fn created_cells(entry: &BatchTx) -> Vec<(SubstateKey, Outcome)> {
 /// Every marker cell this execution *writes*, which is what the batch
 /// screen holds to an exclusive declaration.
 ///
-/// Wider than [`created_cells`] by exactly the cells a job deletes: the
-/// records a settlement disposes of, and the answers a deletion
-/// removes. Neither is created — each is read and taken away — and a
-/// removal is a write on the same cell, belonging in the same conflict
-/// group and wanting the same exclusive declaration. Screening
-/// creations alone let a settlement whose declaration omitted a record
-/// it deletes through, to surface later as an undeclared access: a
-/// kernel defect, and a halt, where a batch that cannot be run should
-/// simply refuse.
+/// Wider than [`created_cells`] by the cells a job deletes — the
+/// records a settlement disposes of, and the answers a deletion removes
+/// — and by the decline cells a member's refusal writes. None is
+/// created here: a removal is a write on the same cell, and a `Never`
+/// is written by the host under the member's name, so each belongs in
+/// the same conflict group and wants the same exclusive declaration.
+/// Screening creations alone let a settlement whose declaration omitted
+/// a record it deletes through, to surface later as an undeclared
+/// access: a kernel defect, and a halt, where a batch that cannot be
+/// run should simply refuse.
 fn marker_writes(entry: &BatchTx) -> Vec<(SubstateKey, Outcome)> {
     created_cells(entry)
         .into_iter()
@@ -1038,13 +971,8 @@ fn marker_writes(entry: &BatchTx) -> Vec<(SubstateKey, Outcome)> {
             entry
                 .disposed_answers()
                 .into_iter()
+                .chain(entry.never_cells())
                 .map(|key| (key, Outcome::EscrowAlreadyClaimed { key })),
-        )
-        .chain(
-            entry
-                .obligation_cells()
-                .into_iter()
-                .map(|key| (key, Outcome::EscrowAlreadyIssued { key })),
         )
         .collect()
 }
@@ -1083,8 +1011,20 @@ fn run_group<R: GuestRunner>(
         // absent would only matter where one did arrive — a chain whose
         // committed clock lags far enough to admit a lapsed intent —
         // and there the cell is the last thing refusing the replay.
+        //
+        // A decline cell standing at an arrival's edge is the crossing
+        // already answered the other way: the member must not run and
+        // take what its own refusal said it never would, so the screen
+        // reads the `Never` beside the claim, as the one "already
+        // answered" outcome.
         let marked = created_cells(entry)
             .into_iter()
+            .chain(
+                entry
+                    .never_cells()
+                    .into_iter()
+                    .map(|key| (key, Outcome::EscrowAlreadyClaimed { key })),
+            )
             .find(|(key, _)| entry.applies.covers(key.owner) && store.cell(*key).is_some());
         if let Some((_, outcome)) = marked {
             receipts.push((entry.tx, abort_receipt(outcome, Vec::new())));

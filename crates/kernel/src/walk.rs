@@ -645,15 +645,6 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
                         .try_for_each(|disposal| session.escrow_settle(disposal))
                 }));
             }
-            // The crossings it refuses: one cell each, saying a value
-            // handed here will never be taken.
-            Job::Refusals(refusals) => {
-                return Ok(walk_cells(session, |session| {
-                    refusals
-                        .iter()
-                        .try_for_each(|refusal| session.escrow_refuse(refusal))
-                }));
-            }
             // The answer cells it deletes: crossings this shard answered
             // whose records their producers have since disposed of.
             Job::Deletions(deletions) => {
@@ -667,19 +658,6 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
             Job::Tombstones(keys) => {
                 return Ok(walk_cells(session, |session| {
                     keys.iter().try_for_each(|key| session.escrow_sweep(*key))
-                }));
-            }
-            // This shard's obligation ledger brought in line: notes
-            // written for crossings it was handed, notes removed where
-            // the answer they were waiting for stands.
-            Job::Obligations(work) => {
-                return Ok(walk_cells(session, |session| {
-                    work.owe
-                        .iter()
-                        .try_for_each(|refusal| session.escrow_owe(refusal))?;
-                    work.disown
-                        .iter()
-                        .try_for_each(|key| session.escrow_disown(*key))
                 }));
             }
             Job::Manifest { calls, legs } => (calls, legs),

@@ -505,18 +505,7 @@ pub enum AbortReason {
     /// dead end.
     #[hbor(discriminant = 76)]
     CrossingWithoutRecourse,
-    /// A crossing refused where no refusal is the answer: one owed to
-    /// its consumer, which nothing takes back, or one this shard has
-    /// already claimed.
-    ///
-    /// A consumer may decline exactly where its verdict is final, and
-    /// exactly once. Both arms lose value if they are wrong — a decline
-    /// of an owed crossing credits a cell nobody named, and one beside
-    /// a claim licenses a retirement and a reclaim of the same value —
-    /// so both are refused here, against committed state, rather than
-    /// left to whoever composed the batch.
-    #[hbor(discriminant = 77)]
-    CrossingUnrefusable,
+    // Discriminant 77 is retired and never reused.
     /// A deletion named an answer cell that is absent, does not decode,
     /// or answers for a record other than the one it deletes against.
     ///
@@ -885,7 +874,6 @@ mod tests {
             (74, AbortReason::MissingCeiling),
             (75, AbortReason::EventBytesExceeded),
             (76, AbortReason::CrossingWithoutRecourse),
-            (77, AbortReason::CrossingUnrefusable),
             (78, AbortReason::CrossingAnswerUnreadable),
         ];
         for (byte, reason) in classes {

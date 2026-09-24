@@ -21,11 +21,11 @@ use std::sync::Arc;
 use hyperscale_hbor::{Capped, Name};
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, COMMITTED_TX_SLOT, CROSSING_CLAIM_SLOT, CROSSING_DECLINE_SLOT,
-    CROSSING_OBLIGATION_SLOT, ChainRecords, Clause, Declaration, DeclarationError,
-    ESCROW_RECORD_SLOT, EvalError, Expr, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, Intent,
-    IntentHeader, IntentTree, ManifestGraph, MethodSignature, ModeExpr, PackageHash,
-    PackageMetadata, ParamType, Records, SlotId, SlotRef, TargetExpr, TestHasher, Totality, Value,
-    admit_tree, check_declarations, child_key,
+    ChainRecords, Clause, Declaration, DeclarationError, ESCROW_RECORD_SLOT, EvalError, Expr,
+    GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, Intent, IntentHeader, IntentTree,
+    ManifestGraph, MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType, Records,
+    SlotId, SlotRef, TargetExpr, TestHasher, Totality, Value, admit_tree, check_declarations,
+    child_key,
 };
 use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_types::{
@@ -270,7 +270,7 @@ fn reaching() -> PackageMetadata {
 /// refused at publish, where a signature fixes it, and when reached,
 /// where an argument names it.
 ///
-/// The five crossing and committed slots sit under a producing node's
+/// The crossing and committed slots sit under a producing node's
 /// target, a consuming node's target and a shard's own owner, and a
 /// package's instances hold those cells under the same address as their
 /// own. What keeps a package from writing one is the kernel band
@@ -339,7 +339,9 @@ fn the_decline_slot_is_refused_under_a_packages_prefix() {
     a_marker_slot_is_refused(CROSSING_DECLINE_SLOT);
 }
 
+/// The retired slot below the decline's stays in the band: retired,
+/// never reused, and never a package's to name.
 #[test]
-fn the_obligation_slot_is_refused_under_a_packages_prefix() {
-    a_marker_slot_is_refused(CROSSING_OBLIGATION_SLOT);
+fn the_retired_slot_is_refused_under_a_packages_prefix() {
+    a_marker_slot_is_refused(SlotId(0xFFF9));
 }

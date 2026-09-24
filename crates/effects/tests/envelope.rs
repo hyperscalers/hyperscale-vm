@@ -961,15 +961,14 @@ fn a_decline_is_the_claims_other_half_at_its_own_key() {
     let record = CrossingSite::record(&TestHasher, BOB, bob, 1, 0, EXPIRY_MS);
     let site = CrossingSite::claim(&TestHasher, ALICE, bob, 1, 0, EXPIRY_MS);
 
-    let declined =
-        CrossingAnswer::from_bytes(&site.answered_by(tx, record.key(), Answered::Declined))
-            .expect("a decline is its own value");
+    let declined = CrossingAnswer::from_bytes(&site.answered_by(tx, record.key(), Answered::Never))
+        .expect("a decline is its own value");
     let taken = CrossingAnswer::from_bytes(&site.claimed_by(tx, record.key()))
         .expect("a claim is its own value");
     assert_eq!(
         declined,
         CrossingAnswer {
-            answered: Answered::Declined,
+            answered: Answered::Never,
             ..taken
         },
         "the two answers differ in what they say and in nothing else",
@@ -997,7 +996,7 @@ fn a_decline_is_the_claims_other_half_at_its_own_key() {
     assert_eq!(site.key(), later.key());
     assert_eq!(
         claim_key,
-        CrossingAnswer::from_bytes(&later.answered_by(tx, record.key(), Answered::Declined))
+        CrossingAnswer::from_bytes(&later.answered_by(tx, record.key(), Answered::Never))
             .expect("a decline is its own value")
             .key(&TestHasher, ALICE),
         "so a decline of one edge is one cell whatever expiry the site was built with",

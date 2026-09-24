@@ -1414,8 +1414,8 @@ mod tests {
     use super::super::fixtures::{a_resource, one_clause, own_interval, own_point};
     use super::*;
     use crate::cells::{
-        COMMITTED_TX_SLOT, CROSSING_CLAIM_SLOT, CROSSING_DECLINE_SLOT, CROSSING_OBLIGATION_SLOT,
-        ESCROW_RECORD_SLOT, NULLIFIER_SLOT,
+        COMMITTED_TX_SLOT, CROSSING_CLAIM_SLOT, CROSSING_DECLINE_SLOT, ESCROW_RECORD_SLOT,
+        NULLIFIER_SLOT,
     };
     use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
     use crate::metadata::PACKAGE_SLOT;
@@ -3049,9 +3049,9 @@ mod tests {
             );
         }
         // The kernel's own band: the publish path's cell, the envelope's,
-        // the crossing cells under a node's target and the committed
-        // marker under a shard's own owner, none of which any signature
-        // declares.
+        // the crossing cells under a node's target, the committed marker
+        // under a shard's own owner and the retired slot at the base,
+        // none of which any signature declares.
         for slot in [
             PACKAGE_SLOT,
             NULLIFIER_SLOT,
@@ -3059,7 +3059,7 @@ mod tests {
             COMMITTED_TX_SLOT,
             CROSSING_CLAIM_SLOT,
             CROSSING_DECLINE_SLOT,
-            CROSSING_OBLIGATION_SLOT,
+            SlotId(KERNEL_SLOT_BASE),
         ] {
             assert_eq!(
                 check_declarations(&declaring(slot)),

@@ -55,11 +55,10 @@ pub use artifact::{
 pub use auth::{Authority, PrincipalRule, RuleBytes, auth_cell_admits};
 pub use cells::{
     Answered, COMMITTED_TX_SLOT, CROSSING_ANSWER_CELL_BYTES, CROSSING_CELL_BYTES,
-    CROSSING_CLAIM_SLOT, CROSSING_DECLINE_SLOT, CROSSING_OBLIGATION_CELL_BYTES,
-    CROSSING_OBLIGATION_SLOT, CrossingAnswer, CrossingCell, CrossingObligation, CrossingSite,
+    CROSSING_CLAIM_SLOT, CROSSING_DECLINE_SLOT, CrossingAnswer, CrossingCell, CrossingSite,
     ESCROW_RECORD_SLOT, Kind, MARKER_CELL_BYTES, Marked, Marker, NULLIFIER_SLOT, Terms,
     committed_tx_key, crossing_claim_key, crossing_decline_key, crossing_expiry_ms,
-    crossing_obligation_key, escrow_record_key, nullifier_expiry_ms, nullifier_key,
+    escrow_record_key, nullifier_expiry_ms, nullifier_key,
 };
 pub use claim::Claim;
 pub use dsl::{
