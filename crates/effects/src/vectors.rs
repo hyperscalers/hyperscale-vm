@@ -9,8 +9,11 @@
 
 use std::fmt::Write as _;
 
-use hyperscale_vm_types::{Address, AddressClass, SchemeId};
+use hyperscale_vm_types::{
+    Address, AddressClass, IntentHash, LegRole, LegShape, SchemeId, SubstateKey,
+};
 
+use crate::cells::{Answered, CrossingId};
 use crate::hash::{Hash32, Hasher};
 use crate::metadata::PackageHash;
 use crate::resource::{ResourceKind, protocol_resource};
@@ -103,4 +106,68 @@ pub fn expected_classes() -> Vec<(&'static str, AddressClass)> {
         ("native/genesis-publisher", AddressClass::Native),
         ("resource/protocol", AddressClass::Resource),
     ]
+}
+
+/// Every crossing key derivation under `hasher`, named: the record, the
+/// claim and the decline of two fixed crossings.
+///
+/// The keys are consensus content twice over — the producer writes the
+/// record where every consumer reads it, and each consumer writes its
+/// answer where the producer reads it — so the derivations are pinned
+/// as the addresses are. Two crossings that differ in every field a
+/// key reads, so a derivation that dropped one would move a row.
+#[must_use]
+pub fn crossing_key_vectors(hasher: &dyn Hasher) -> Vec<(&'static str, SubstateKey)> {
+    let producer = |seed: u8| LegShape {
+        target: Address::new([seed; 31], AddressClass::Component),
+        role: LegRole::Inbound,
+        edges: Vec::new(),
+        presents: Vec::new(),
+        declares: Vec::new(),
+        intent: IntentHash(Hash32([seed ^ 0xFF; 32])),
+        local: u32::from(seed) % 3,
+        expiry_ms: 1_000,
+    };
+    let consumer = |seed: u8| Address::new([seed; 31], AddressClass::Principal);
+    let first = CrossingId::of_edge(&producer(0x11), consumer(0x22), 0);
+    let second = CrossingId::of_edge(&producer(0xC3), consumer(0xD4), 7);
+    vec![
+        ("crossing/a/record", first.record_key(hasher)),
+        (
+            "crossing/a/claim",
+            first.answer_key(hasher, Answered::Taken),
+        ),
+        (
+            "crossing/a/decline",
+            first.answer_key(hasher, Answered::Never),
+        ),
+        ("crossing/b/record", second.record_key(hasher)),
+        (
+            "crossing/b/claim",
+            second.answer_key(hasher, Answered::Taken),
+        ),
+        (
+            "crossing/b/decline",
+            second.answer_key(hasher, Answered::Never),
+        ),
+    ]
+}
+
+/// The crossing key vectors as `name = hex` lines, for pinning against a
+/// literal table.
+#[must_use]
+pub fn crossing_key_vector_lines(hasher: &dyn Hasher) -> Vec<String> {
+    crossing_key_vectors(hasher)
+        .into_iter()
+        .map(|(name, key)| {
+            let hex = key
+                .to_bytes()
+                .iter()
+                .fold(String::with_capacity(96), |mut hex, byte| {
+                    let _ = write!(hex, "{byte:02x}");
+                    hex
+                });
+            format!("{name} = {hex}")
+        })
+        .collect()
 }

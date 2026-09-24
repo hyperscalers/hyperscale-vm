@@ -94,10 +94,9 @@ pub const CROSSING_CELL_BYTES: u32 = 256;
 
 /// The most bytes a [`CrossingAnswer`] cell holds, in either family.
 ///
-/// Wider than [`MARKER_CELL_BYTES`] because it carries a whole
-/// [`SubstateKey`] a marker does not: the record under the producing
-/// node's target, which a consumer holding only its own answer could
-/// never derive.
+/// Wider than [`MARKER_CELL_BYTES`] because it carries an [`Address`] a
+/// marker does not: the producing node's target, which a consumer
+/// holding only its own answer could never derive.
 pub const CROSSING_ANSWER_CELL_BYTES: u32 = 160;
 
 // Held at compile time rather than by a test: every side is a constant,
@@ -215,8 +214,7 @@ pub fn committed_tx_key(
 /// no sweep can walk to. The edge alone names the record, and the record
 /// states its own expiry in its value, where it is the anchor a presence
 /// is asked from rather than a life.
-#[must_use]
-pub fn escrow_record_key(
+fn escrow_record_key(
     hasher: &dyn Hasher,
     owner: impl Into<Address>,
     intent: IntentHash,
@@ -235,50 +233,17 @@ pub fn escrow_record_key(
     )
 }
 
-/// The canonical crossing claim key for one value edge, under the target
-/// of the node that took it.
+/// The canonical answer key for one value edge under `slot`'s role, under
+/// the target of the node that answered it.
 ///
 /// The same material as [`escrow_record_key`] under a different owner
 /// and a different role, which is what lets one crossing be named by
 /// both shards without either consulting placement. The owner is what
 /// distinguishes two consumers of one output; the role is what keeps a
-/// claim from ever aliasing the record it claims.
-///
-/// Unbucketed for the same reason the record is: the expiry is not in
-/// the identity, because nothing sweeps the cell. What ends a claim is
-/// the producer disposing of the record it names, which is a fact about
-/// another chain rather than a clock.
-#[must_use]
-pub fn crossing_claim_key(
-    hasher: &dyn Hasher,
-    owner: impl Into<Address>,
-    intent: IntentHash,
-    local: u32,
-    output: u32,
-) -> SubstateKey {
-    answer_key(hasher, owner, CROSSING_CLAIM_SLOT, intent, local, output)
-}
-
-/// The canonical crossing decline key for one value edge, under the
-/// target of the node that refused it.
-///
-/// [`crossing_claim_key`] under the other role, on the same material and
-/// the same owner. Two keys rather than one cell with two meanings,
-/// because what a producer asks is whether a cell is *there* — a proof
-/// of presence carries a value hash and nothing a reader could compare
-/// against without pinning an encoding, so the key is what says which
-/// answer was given.
-#[must_use]
-pub fn crossing_decline_key(
-    hasher: &dyn Hasher,
-    owner: impl Into<Address>,
-    intent: IntentHash,
-    local: u32,
-    output: u32,
-) -> SubstateKey {
-    answer_key(hasher, owner, CROSSING_DECLINE_SLOT, intent, local, output)
-}
-
+/// claim from ever aliasing the record it claims, and the two answers
+/// from each other. Unbucketed for the same reason the record is: what
+/// ends an answer is the producer disposing of the record it names,
+/// which is a fact about another chain rather than a clock.
 fn answer_key(
     hasher: &dyn Hasher,
     owner: impl Into<Address>,
@@ -316,18 +281,18 @@ fn answer_key(
 /// cells that is — an account's vault for a resource is the account
 /// package's own layout, and a component's is another.
 ///
-/// The expiry, the issuing transaction and the consumer's claim are
+/// The expiry, the issuing transaction and the consumer's target are
 /// terms of the reclaim rather than the record's identity, which stays
 /// the edge the key is derived from. The transaction is what a
 /// successor's reclaim is admitted under, the tick and its receipt being
 /// keyed by transaction and a record naming none being unadmittable. The
-/// consumer's claim is the cell that decides between the two housekeeping
-/// members a record ends in: present says the crossing was taken and the
-/// record is the retirement's, absent past the lapse says it was not and
-/// the value is the producer's to credit back. Nothing else names it —
-/// its owner is the consuming node's target, which lives in the manifest
-/// and not in the leaf — so a holder of the record and no body could not
-/// derive it.
+/// consumer's target is what the consumer's answer cells are keyed
+/// under — the claim that says the crossing was taken and the record is
+/// the retirement's, the `Never` that says it was refused and the value
+/// is the producer's to credit back — and nothing else names it: it is
+/// the consuming node's target, which lives in the manifest and not in
+/// the leaf, so a holder of the record and no body could not derive it.
+/// With it the leaf rebuilds the whole [`CrossingId`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 pub struct CrossingCell {
     /// The resource that crossed.
@@ -353,15 +318,9 @@ pub struct CrossingCell {
     pub expiry_ms: u64,
     /// The transaction whose execution issued the crossing.
     pub tx: TxHash,
-    /// The claim cell the consumer writes when it takes the crossing,
-    /// under the consuming node's target.
-    ///
-    /// Which family it sits in follows from [`Self::terms`]: an escrowed
-    /// crossing's answer is a witness swept at this record's `expiry_ms`,
-    /// which is where a reader's window to judge it absent closes; an
-    /// owed one's is swept by nothing, so its absence closes no window
-    /// and answers nothing at any clock.
-    pub consumer_claim: SubstateKey,
+    /// The consuming node's target, which the consumer's answer cells
+    /// sit under.
+    pub consumer: Address,
     /// What kind of record this is, and the terms that kind carries.
     /// Resolved by the kernel at the issue.
     pub terms: Terms,
@@ -377,7 +336,7 @@ pub struct CrossingCell {
 /// Two types for one distinction because only the second half of it can
 /// carry that cell, and only the first half can key one: a claim's key
 /// is derived before any execution knows what a reclaim would credit.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Kind {
     /// Staged against a verdict that has not happened: the producer
     /// keeps the cell the value left and takes the crossing back where
@@ -443,7 +402,8 @@ impl Terms {
     /// The half a claim's key reads, where the whole is what a reclaim
     /// credits. [`Self::Retired`] has no kind and answers `None`: the
     /// crossing it was the terms of is over, and a caller reaching for
-    /// a kind is asking about a live edge.
+    /// a kind is asking about a live edge. [`CrossingLeaf::read`] reads
+    /// it to tell a record from a tombstone.
     #[must_use]
     pub const fn kind(self) -> Option<Kind> {
         match self {
@@ -613,16 +573,17 @@ impl Answered {
 
 /// What a crossing answer cell holds: which transaction answered the
 /// crossing, which edge it was, which way the answer went, and the
-/// record on the producer's chain it answers for.
+/// producing node's target, under which the record it answers for
+/// sits.
 ///
 /// Self-describing on the record's terms rather than a marker's: the
 /// value re-derives the cell's own key under its answer's own role, so a
 /// reader holding nothing but the leaf can tell it from any other cell
-/// and tell which answer it is. What it cannot re-derive is `record`,
-/// whose owner is the *producing* node's target and lives in the
-/// manifest rather than in either leaf — so it is carried, and carrying
-/// it is the whole reason this family exists. A consumer holding only
-/// the material would have the edge and not the shard.
+/// and tell which answer it is. What it cannot re-derive is `producer`,
+/// which lives in the manifest rather than in either leaf — so it is
+/// carried, and carrying it is the whole reason this family exists. A
+/// consumer holding only the material would have the edge and not the
+/// shard. With it the leaf rebuilds the whole [`CrossingId`].
 ///
 /// One type for both answers because they carry the same terms and are
 /// cleaned up against the same record; two roles because what a producer
@@ -644,33 +605,19 @@ pub struct CrossingAnswer {
     pub local: u32,
     /// Which of its outputs the edge carried.
     pub output: u32,
-    /// The record cell this answer answers for, under the producing
-    /// node's target.
-    pub record: SubstateKey,
+    /// The producing node's target, which the record this answer
+    /// answers for sits under.
+    pub producer: Address,
     /// Which way the answer went.
     pub answered: Answered,
 }
 
 impl CrossingAnswer {
-    /// The cell this answer sits at under `owner`: its own role's key,
-    /// re-derived from what the value says.
-    #[must_use]
-    pub fn key(&self, hasher: &dyn Hasher, owner: impl Into<Address>) -> SubstateKey {
-        answer_key(
-            hasher,
-            owner,
-            self.answered.slot(),
-            self.intent,
-            self.local,
-            self.output,
-        )
-    }
-
     /// The cell's committed bytes.
     ///
     /// # Panics
     ///
-    /// Never: the value is scalars and a key.
+    /// Never: the value is scalars and an address.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         to_vec(self).expect("an answer is scalars and a key")
@@ -683,130 +630,126 @@ impl CrossingAnswer {
         from_slice(bytes).ok()
     }
 }
-/// One escrow cell: where it sits, and what identifies it.
+/// One crossing: the value edge, named by both ends.
 ///
-/// The key and the fields that derive it, built together so the two
-/// cannot disagree. That matters because a sweepable cell answers *when
-/// do I stop being needed* from its own value — the sweep re-derives the
-/// key from what the leaf holds — so a cell whose value does not
-/// reproduce its key is one no sweep ever reaches, which is a leak
-/// nothing announces.
+/// The producing node's target and the consuming node's, the signed
+/// intent the producing node belongs to, that node's index within it,
+/// and which of its outputs the edge carried. Every key a crossing
+/// touches is a function of these five, so this is the one home of the
+/// derivations: the record under the producer, and the claim and the
+/// decline under the consumer. A caller outside this module can only
+/// ask a `CrossingId` for a key.
 ///
-/// The kernel is handed these rather than deriving them. Its hashing
-/// seam takes bytes and not a domain, so it could not derive a child key
-/// if it wanted to; and deriving one is the parent's job anyway, since
-/// two shards divide one manifest separately and have to reach the same
-/// cell without consulting each other.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CrossingSite {
-    key: SubstateKey,
-    intent: IntentHash,
-    local: u32,
-    output: u32,
-    expiry_ms: u64,
+/// The kernel is handed keys derived from these rather than deriving
+/// them. Its hashing seam takes bytes and not a domain, so it could not
+/// derive a child key if it wanted to; and deriving one is the parent's
+/// job anyway, since two shards divide one manifest separately and have
+/// to reach the same cell without consulting each other.
+///
+/// No expiry, because none of the keys carries one: the record and the
+/// answers are unbucketed, so nothing sweeps them, and the record states
+/// its own expiry in its value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CrossingId {
+    /// The producing node's target, which the record sits under.
+    pub producer: Address,
+    /// The consuming node's target, which the answers sit under.
+    pub consumer: Address,
+    /// The signed intent the producing node belongs to.
+    pub intent: IntentHash,
+    /// That node's index within its own intent.
+    pub local: u32,
+    /// Which of its outputs the edge carried.
+    pub output: u32,
 }
 
-impl CrossingSite {
-    /// The record cell of the edge `local` produces, under the producing
-    /// node's target.
+impl CrossingId {
+    /// The crossing the edge `producer` leaves on `output` into the node
+    /// whose target is `consumer`, keyed by what the producer's own
+    /// signer signed.
     #[must_use]
-    pub fn record(
-        hasher: &dyn Hasher,
-        owner: impl Into<Address>,
-        intent: IntentHash,
-        local: u32,
-        output: u32,
-        expiry_ms: u64,
-    ) -> Self {
-        let owner = owner.into();
+    pub const fn of_edge(producer: &LegShape, consumer: Address, output: u32) -> Self {
         Self {
-            key: escrow_record_key(hasher, owner, intent, local, output),
-            intent,
-            local,
+            producer: producer.target,
+            consumer,
+            intent: producer.intent,
+            local: producer.local,
             output,
-            expiry_ms,
         }
     }
 
-    /// The record cell of the edge `producer` leaves on `output`: under
-    /// its target, keyed by what its own signer signed.
+    /// The crossing a record at a key under `owner` names: a record sits
+    /// under its producer, so `owner` is the producer.
     #[must_use]
-    pub fn record_of(hasher: &dyn Hasher, producer: &LegShape, output: u32) -> Self {
-        Self::record(
-            hasher,
-            producer.target,
-            producer.intent,
-            producer.local,
-            output,
-            producer.expiry_ms,
-        )
+    pub const fn of_record(owner: Address, cell: &CrossingCell) -> Self {
+        Self {
+            producer: owner,
+            consumer: cell.consumer,
+            intent: cell.intent,
+            local: cell.local,
+            output: cell.output,
+        }
     }
 
-    /// The claim cell for the edge `producer` leaves on `output`, under
-    /// `owner`, the consuming node's target.
+    /// The crossing an answer at a key under `owner` names: an answer
+    /// sits under its consumer, so `owner` is the consumer.
     #[must_use]
-    pub fn claim_of(
-        hasher: &dyn Hasher,
-        owner: impl Into<Address>,
-        producer: &LegShape,
-        output: u32,
-    ) -> Self {
-        Self::claim(
-            hasher,
-            owner,
-            producer.intent,
-            producer.local,
-            output,
-            producer.expiry_ms,
-        )
+    pub const fn of_answer(owner: Address, answer: &CrossingAnswer) -> Self {
+        Self {
+            producer: answer.producer,
+            consumer: owner,
+            intent: answer.intent,
+            local: answer.local,
+            output: answer.output,
+        }
     }
 
-    /// The claim cell for that edge, under the target of whatever takes
-    /// it.
+    /// The record cell, under the producing node's target.
     ///
-    /// One family whatever the record's terms, because both kinds of
-    /// answer are held on one term: a claim stands while the record it
-    /// answers for does. So it carries no bucket and no sweep reaches it.
+    /// Unbucketed: the expiry is not in the identity, because nothing
+    /// sweeps the cell. The edge alone names the record, and the record
+    /// states its own expiry in its value, where it is the anchor a
+    /// presence is asked from rather than a life.
     #[must_use]
-    pub fn claim(
-        hasher: &dyn Hasher,
-        owner: impl Into<Address>,
-        intent: IntentHash,
-        local: u32,
-        output: u32,
-        expiry_ms: u64,
-    ) -> Self {
-        let owner = owner.into();
-        Self {
-            key: crossing_claim_key(hasher, owner, intent, local, output),
-            intent,
-            local,
-            output,
-            expiry_ms,
-        }
+    pub fn record_key(&self, hasher: &dyn Hasher) -> SubstateKey {
+        escrow_record_key(hasher, self.producer, self.intent, self.local, self.output)
     }
 
-    /// Where the cell sits.
+    /// The cell this crossing is answered at in `answered`'s role, under
+    /// the consuming node's target: the claim for a take, the decline for
+    /// a `Never`.
+    ///
+    /// The same material as the record under a different owner and a
+    /// different role, which is what lets one crossing be named by both
+    /// shards without either consulting placement. Two keys rather than
+    /// one cell with two meanings, because what a producer asks is
+    /// whether a cell is *there* — a proof of presence carries a value
+    /// hash and nothing a reader could compare against without pinning
+    /// an encoding, so the key is what says which answer was given. The
+    /// one derivation of either answer key, so the member's refusal
+    /// receipt, the abandonment and every reader name one cell.
     #[must_use]
-    pub const fn key(&self) -> SubstateKey {
-        self.key
+    pub fn answer_key(&self, hasher: &dyn Hasher, answered: Answered) -> SubstateKey {
+        answer_key(
+            hasher,
+            self.consumer,
+            answered.slot(),
+            self.intent,
+            self.local,
+            self.output,
+        )
     }
 
-    /// When it stops being owed.
+    /// The record's value, once the execution knows what crossed, which
+    /// transaction issued it, when it stops being claimable and on what
+    /// terms.
     #[must_use]
-    pub const fn expiry_ms(&self) -> u64 {
-        self.expiry_ms
-    }
-
-    /// The record's value, once the execution knows what crossed and
-    /// which transaction issued it.
-    #[must_use]
-    pub const fn crossing(
-        &self,
+    pub const fn cell(
+        self,
         tx: TxHash,
         resource: ResourceAddr,
         amount: u128,
-        consumer_claim: SubstateKey,
+        expiry_ms: u64,
         terms: Terms,
     ) -> CrossingCell {
         CrossingCell {
@@ -815,56 +758,109 @@ impl CrossingSite {
             intent: self.intent,
             local: self.local,
             output: self.output,
-            expiry_ms: self.expiry_ms,
+            expiry_ms,
             tx,
-            consumer_claim,
+            consumer: self.consumer,
             terms,
         }
     }
 
-    /// The claim's committed bytes: which transaction took the crossing,
-    /// on this edge, and the record it answers for.
-    ///
-    /// The record is named because the cell outlives every structure
-    /// that could tell a reader where it sits — its owner is the
-    /// *producing* node's target, which lives in the manifest and in
-    /// neither leaf.
+    /// The answer's value, for either verdict: which transaction
+    /// answered the crossing, on this edge, which way, and the producer
+    /// whose record it answers for.
     #[must_use]
-    pub fn claimed_by(&self, tx: TxHash, record: SubstateKey) -> Vec<u8> {
-        self.answered_by(tx, record, Answered::Taken)
-    }
-
-    /// The answer's committed bytes, for either verdict: which
-    /// transaction answered the crossing, on this edge, which way, and
-    /// the record it answers for.
-    #[must_use]
-    pub fn answered_by(&self, tx: TxHash, record: SubstateKey, answered: Answered) -> Vec<u8> {
+    pub const fn answer(self, tx: TxHash, answered: Answered) -> CrossingAnswer {
         CrossingAnswer {
             tx,
             intent: self.intent,
             local: self.local,
             output: self.output,
-            record,
+            producer: self.producer,
             answered,
         }
-        .to_bytes()
     }
+}
 
-    /// The cell this claim site's edge is answered at in `answered`'s
-    /// role, under the site's owner: the site's own key for a take, and
-    /// the decline key on the same material for a `Never`.
-    ///
-    /// The one derivation of the decline key from an edge, so the
-    /// member's refusal receipt, the abandonment and every reader name
-    /// one cell.
+/// A crossing with its kind: what the classification says of an edge,
+/// or what a live record's [`Terms`] say of it.
+///
+/// Only those two yield one. An answer or a tombstone yields only a
+/// [`CrossingId`], since neither leaf carries a kind. The kind is read
+/// off the signed leg role — a crossing an outbound leg consumes is
+/// owed, every other one is escrowed — so both shards derive one kind
+/// from the tree, and a reader of the edge's kind on either shard reads
+/// the kind the proven record's terms carry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Crossing {
+    /// The edge.
+    pub id: CrossingId,
+    /// Which kind of record its departure writes.
+    pub kind: Kind,
+}
+
+/// What a leaf in the crossing families is, read off its key and its
+/// value alone.
+///
+/// The one classifier. Each arm decodes its own type, rebuilds the
+/// [`CrossingId`] from the key's owner, re-derives its family key under
+/// its own role and holds it to the key it was read at. A value
+/// therefore matches at most one arm, and the order the arms are tried
+/// in decides nothing. A pure function of the leaf, so every replica
+/// classifies alike whatever it has installed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CrossingLeaf {
+    /// A live record: value the producer holds for a crossing its
+    /// consumer has not yet answered, on the terms its kind carries.
+    Record {
+        /// The crossing, with the kind its terms say.
+        crossing: Crossing,
+        /// The record.
+        cell: CrossingCell,
+    },
+    /// A disposed record, standing only so its going can be dated. Only
+    /// an owed record tombstones — an escrowed crossing's answers need
+    /// no dating — which is why this arm carries no kind.
+    Tombstone {
+        /// The crossing it was the record of.
+        id: CrossingId,
+        /// The tombstone, with `Terms::Retired`.
+        cell: CrossingCell,
+    },
+    /// A consumer's answer, either way.
+    Answer {
+        /// The crossing it answers for.
+        id: CrossingId,
+        /// The answer.
+        answer: CrossingAnswer,
+    },
+}
+
+impl CrossingLeaf {
+    /// Read the leaf at `key` holding `value`, or `None` where it is no
+    /// crossing leaf: bytes of neither family, or a family's bytes at a
+    /// key its own derivation does not reach.
     #[must_use]
-    pub fn answer_key(&self, hasher: &dyn Hasher, answered: Answered) -> SubstateKey {
-        match answered {
-            Answered::Taken => self.key,
-            Answered::Never => {
-                crossing_decline_key(hasher, self.key.owner, self.intent, self.local, self.output)
+    pub fn read(hasher: &dyn Hasher, key: SubstateKey, value: &[u8]) -> Option<Self> {
+        if let Some(cell) = CrossingCell::from_bytes(value) {
+            let id = CrossingId::of_record(key.owner, &cell);
+            if id.record_key(hasher) == key {
+                return Some(
+                    cell.terms
+                        .kind()
+                        .map_or(Self::Tombstone { id, cell }, |kind| Self::Record {
+                            crossing: Crossing { id, kind },
+                            cell,
+                        }),
+                );
             }
         }
+        if let Some(answer) = CrossingAnswer::from_bytes(value) {
+            let id = CrossingId::of_answer(key.owner, &answer);
+            if id.answer_key(hasher, answer.answered) == key {
+                return Some(Self::Answer { id, answer });
+            }
+        }
+        None
     }
 }
 

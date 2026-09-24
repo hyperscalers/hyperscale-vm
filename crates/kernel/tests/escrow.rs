@@ -12,8 +12,9 @@ use std::sync::Arc;
 
 use hyperscale_hbor::from_slice;
 use hyperscale_vm_effects::{
-    Answered, CallArg, CrossingAnswer, CrossingCell, CrossingSite, Declaration, EdgeContent,
-    Hash32, Hasher, IntentHash, Kind, NodeCall, PackageHash, SlotId, Terms, TestHasher, child_key,
+    Answered, CallArg, Crossing, CrossingAnswer, CrossingCell, CrossingId, Declaration,
+    EdgeContent, Hash32, Hasher, IntentHash, Kind, NodeCall, PackageHash, SlotId, Terms,
+    TestHasher, child_key,
 };
 use hyperscale_vm_embed::GuestArg;
 use hyperscale_vm_kernel::{
@@ -61,36 +62,54 @@ const fn intent() -> IntentHash {
     IntentHash(Hash32([0x5A; 32]))
 }
 
-fn record_site() -> CrossingSite {
-    CrossingSite::record(&TestHasher, owner(PAYER), intent(), 0, 0, EXPIRY_MS)
+/// The fixture's one crossing: produced under the payer's target and
+/// consumed under the payee's.
+const fn crossing() -> CrossingId {
+    CrossingId {
+        producer: owner(PAYER),
+        consumer: owner(PAYEE),
+        intent: intent(),
+        local: 0,
+        output: 0,
+    }
 }
 
-fn claim_site() -> CrossingSite {
-    CrossingSite::claim(&TestHasher, owner(PAYEE), intent(), 0, 0, EXPIRY_MS)
+fn record_key() -> SubstateKey {
+    crossing().record_key(&TestHasher)
 }
 
-/// The edge as a producer files it: the record it writes, and the claim
-/// its consumer would write for the same edge.
+fn claim_key() -> SubstateKey {
+    crossing().answer_key(&TestHasher, Answered::Taken)
+}
+
+/// The edge as a producer files it: the record it writes, the crossing
+/// it writes there, and when the record stops being claimable.
 fn record_departure() -> Departure {
     Departure {
-        kind: Kind::Escrowed,
-        site: record_site(),
-        consumer_claim: claim_site().key(),
+        record: record_key(),
+        crossing: Crossing {
+            id: crossing(),
+            kind: Kind::Escrowed,
+        },
+        expiry_ms: EXPIRY_MS,
     }
 }
 
 /// The same edge, where the consumer is an outbound leg.
 fn delivered_departure() -> Departure {
     Departure {
-        kind: Kind::Owed,
+        crossing: Crossing {
+            kind: Kind::Owed,
+            ..record_departure().crossing
+        },
         ..record_departure()
     }
 }
 
 /// A crossing's cell, as the declaration has to name it.
-const fn crossing_cell(site: CrossingSite) -> Effect {
+const fn crossing_cell(key: SubstateKey) -> Effect {
     Effect {
-        target: EffectTarget::Point(site.key()),
+        target: EffectTarget::Point(key),
         mode: Mode::Write { moves: Moves::Both },
     }
 }
@@ -320,7 +339,7 @@ fn sending_on(amount: u128, departure: Departure) -> BatchTx {
             // what puts racing writers of one crossing in a single
             // conflict group — and what keeps this write out of the
             // undeclared-access sweep that halts a shard.
-            crossing_cell(record_site()),
+            crossing_cell(record_key()),
         ]),
         env(),
     )
@@ -344,7 +363,7 @@ fn sending_from_both(each: u128) -> BatchTx {
                 target: EffectTarget::Point(cell(OTHER)),
                 mode: Mode::Reserve { amount: each },
             },
-            crossing_cell(record_site()),
+            crossing_cell(record_key()),
         ]),
         env(),
     )
@@ -375,7 +394,7 @@ fn sending_twice(amount: u128) -> BatchTx {
                 target: EffectTarget::Point(cell(OTHER)),
                 mode: Mode::Reserve { amount },
             },
-            crossing_cell(record_site()),
+            crossing_cell(record_key()),
         ]),
         env(),
     )
@@ -392,7 +411,7 @@ fn receiving(crossed: Crossed) -> BatchTx {
 fn receiving_as(who: TxHash, crossed: Crossed) -> BatchTx {
     let mut legs = LegPlan::whole(2);
     legs.skip(0).unwrap();
-    legs.arrives(0, 0, crossed, claim_site(), record_site().key(), None)
+    legs.arrives(0, 0, crossed, claim_key(), crossing(), None)
         .unwrap();
     BatchTx::new(
         who,
@@ -401,7 +420,7 @@ fn receiving_as(who: TxHash, crossed: Crossed) -> BatchTx {
                 target: EffectTarget::Point(cell(PAYEE)),
                 mode: Mode::Delta { moves: Moves::Both },
             },
-            crossing_cell(claim_site()),
+            crossing_cell(claim_key()),
         ]),
         env(),
     )
@@ -437,7 +456,7 @@ fn the_two_halves_of_one_crossing_reconcile() {
     // The payer's cell moved by exactly what left, and the record cell
     // says what that was.
     let record: CrossingCell = from_slice(
-        sent.delta.cells[&record_site().key()]
+        sent.delta.cells[&record_key()]
             .as_deref()
             .expect("the record committed"),
     )
@@ -463,13 +482,13 @@ fn the_two_halves_of_one_crossing_reconcile() {
     assert_eq!(taken.escrow.claimed(RESOURCE), sent.escrow.issued(RESOURCE));
 
     let claim: CrossingAnswer = from_slice(
-        taken.delta.cells[&claim_site().key()]
+        taken.delta.cells[&claim_key()]
             .as_deref()
             .expect("the claim committed"),
     )
     .expect("a claim cell decodes");
     assert_eq!(claim.tx, tx(2));
-    assert_eq!(claim.record, record_site().key());
+    assert_eq!(claim.producer, owner(PAYER));
 }
 
 /// Each half conserves where it runs, which is what lets a divided
@@ -524,7 +543,7 @@ fn a_zero_amount_edge_still_crosses() {
     assert!(!sent.escrow.is_empty(), "the edge crossed");
     assert_eq!(sent.escrow.issued(RESOURCE), 0, "and the totals skip it");
     assert_eq!(sent.escrow.issues().count(), 1);
-    assert!(sent.delta.cells.contains_key(&record_site().key()));
+    assert!(sent.delta.cells.contains_key(&record_key()));
 }
 
 /// A consumer reaching for a slot nothing crossed on meets the ordinary
@@ -578,8 +597,8 @@ fn an_aborted_claim_leaves_the_crossing_claimable() {
             resource: RESOURCE,
             amount: 200,
         },
-        claim_site(),
-        record_site().key(),
+        claim_key(),
+        crossing(),
         None,
     )
     .unwrap();
@@ -590,7 +609,7 @@ fn an_aborted_claim_leaves_the_crossing_claimable() {
                 target: EffectTarget::Point(cell(PAYEE)),
                 mode: Mode::Delta { moves: Moves::Both },
             },
-            crossing_cell(claim_site()),
+            crossing_cell(claim_key()),
         ]),
         env(),
     )
@@ -607,7 +626,7 @@ fn an_aborted_claim_leaves_the_crossing_claimable() {
         },
     );
     assert!(
-        !receipt.delta.cells.contains_key(&claim_site().key()),
+        !receipt.delta.cells.contains_key(&claim_key()),
         "an abort writes no claim",
     );
 }
@@ -701,7 +720,7 @@ fn an_undeclared_record_cell_refuses_the_batch() {
         .err(),
         Some(BatchError::UndeclaredCrossingCell {
             tx: tx(6),
-            key: record_site().key(),
+            key: record_key(),
         }),
     );
 }
@@ -721,8 +740,8 @@ fn an_undeclared_claim_cell_refuses_the_batch() {
             resource: RESOURCE,
             amount: 200,
         },
-        claim_site(),
-        record_site().key(),
+        claim_key(),
+        crossing(),
         None,
     )
     .unwrap();
@@ -746,7 +765,7 @@ fn an_undeclared_claim_cell_refuses_the_batch() {
         .err(),
         Some(BatchError::UndeclaredCrossingCell {
             tx: tx(7),
-            key: claim_site().key(),
+            key: claim_key(),
         }),
     );
 }
@@ -763,9 +782,7 @@ fn a_replayed_issue_finds_its_own_record() {
     let replayed = then(&store, sending(200), sending(200));
     assert_eq!(
         replayed.outcome,
-        Outcome::EscrowAlreadyIssued {
-            key: record_site().key(),
-        },
+        Outcome::EscrowAlreadyIssued { key: record_key() },
     );
     assert_eq!(replayed.fuel, 0, "the node never ran");
     assert!(replayed.delta.cells.is_empty() && replayed.delta.movements.is_empty());
@@ -790,9 +807,7 @@ fn a_replayed_claim_finds_the_crossing_taken() {
     );
     assert_eq!(
         replayed.outcome,
-        Outcome::EscrowAlreadyClaimed {
-            key: claim_site().key(),
-        },
+        Outcome::EscrowAlreadyClaimed { key: claim_key() },
     );
     assert_eq!(replayed.fuel, 0, "the node never ran");
     assert!(replayed.delta.movements.is_empty(), "and credited nothing");
@@ -837,9 +852,7 @@ fn one_crossing_is_claimed_once_across_two_claimers() {
     );
     assert_eq!(
         outcome.receipts[&tx(0x22)].outcome,
-        Outcome::EscrowAlreadyClaimed {
-            key: claim_site().key(),
-        },
+        Outcome::EscrowAlreadyClaimed { key: claim_key() },
     );
     assert_eq!(outcome.receipts[&tx(0x22)].escrow.claimed(RESOURCE), 0);
 }
@@ -903,7 +916,7 @@ fn a_delivered_crossing_names_nobody() {
         ExecutionMode::Serial,
     )
     .unwrap();
-    let record = CrossingCell::from_bytes(&sent.store.cell(record_site().key()).unwrap()).unwrap();
+    let record = CrossingCell::from_bytes(&sent.store.cell(record_key()).unwrap()).unwrap();
     assert_eq!(
         record.terms,
         Terms::Owed,
@@ -929,7 +942,7 @@ fn a_record_names_the_cell_its_value_left() {
         ExecutionMode::Serial,
     )
     .unwrap();
-    let record = CrossingCell::from_bytes(&sent.store.cell(record_site().key()).unwrap()).unwrap();
+    let record = CrossingCell::from_bytes(&sent.store.cell(record_key()).unwrap()).unwrap();
     assert_eq!(
         record.terms,
         Terms::Escrowed {
@@ -947,7 +960,7 @@ fn a_record_names_the_cell_its_value_left() {
             target: EffectTarget::Point(cell(0x77)),
             mode: Mode::Delta { moves: Moves::Both },
         },
-        crossing_cell(record_site()),
+        crossing_cell(record_key()),
     ]);
     let ambiguous = ambiguous.with_calls(vec![taking()]);
     let mut store = MemoryStore::new();
@@ -959,7 +972,7 @@ fn a_record_names_the_cell_its_value_left() {
         ExecutionMode::Serial,
     )
     .unwrap();
-    let record = CrossingCell::from_bytes(&sent.store.cell(record_site().key()).unwrap()).unwrap();
+    let record = CrossingCell::from_bytes(&sent.store.cell(record_key()).unwrap()).unwrap();
     assert_eq!(
         record.terms,
         Terms::Escrowed {
@@ -1001,7 +1014,7 @@ fn a_crossing_merged_from_two_cells_is_refused_at_the_issue() {
         "a crossing with nothing to go back to is the sender's own defect",
     );
     assert!(
-        sent.store.cell(record_site().key()).is_none(),
+        sent.store.cell(record_key()).is_none(),
         "no record is written",
     );
     assert_eq!(balance(&sent, cell(PAYER)), 1_000, "and neither cell moved");
@@ -1046,7 +1059,7 @@ fn a_reclaim_of_a_record_nobody_may_take_back_is_refused() {
         "and nothing is credited back",
     );
     assert!(
-        refused.store.cell(record_site().key()).is_some(),
+        refused.store.cell(record_key()).is_some(),
         "the record stands, still naming the claim that may take it",
     );
 }
@@ -1057,7 +1070,7 @@ fn reclaiming(who: TxHash) -> BatchTx {
     BatchTx::new(
         who,
         declared(&[
-            crossing_cell(record_site()),
+            crossing_cell(record_key()),
             Effect {
                 target: EffectTarget::Point(cell(PAYER)),
                 mode: Mode::Delta { moves: Moves::Both },
@@ -1066,7 +1079,7 @@ fn reclaiming(who: TxHash) -> BatchTx {
         env(),
     )
     .with_disposals(vec![Disposal {
-        record: record_site().key(),
+        record: record_key(),
         disposition: Disposition::Reclaim,
     }])
 }
@@ -1122,13 +1135,19 @@ fn a_reclaim_restores_the_producing_vault_exactly() {
     );
     assert_eq!(balance(&reclaimed, cell(PAYER)), 500);
     assert!(
-        reclaimed.store.cell(record_site().key()).is_none(),
+        reclaimed.store.cell(record_key()).is_none(),
         "the record goes with the value it held",
     );
     assert!(
         reclaimed
             .store
-            .cell(CrossingSite::claim(&TestHasher, owner(PAYER), intent(), 0, 0, EXPIRY_MS).key())
+            .cell(
+                CrossingId {
+                    consumer: owner(PAYER),
+                    ..crossing()
+                }
+                .answer_key(&TestHasher, Answered::Taken),
+            )
             .is_none(),
         "a reclaim writes no claim under the producer's own target",
     );
@@ -1143,7 +1162,7 @@ fn a_reclaim_restores_the_producing_vault_exactly() {
         .collect();
     assert_eq!(
         changed,
-        BTreeSet::from([record_site().key(), cell(PAYER)]),
+        BTreeSet::from([record_key(), cell(PAYER)]),
         "a reclaim's write set is the record and the credit, and nothing else",
     );
 }
@@ -1237,9 +1256,9 @@ fn two_reclaims_of_one_record_in_one_batch_credit_once() {
 /// The producing node retiring a record whose claim committed: reads
 /// the record, deletes it, moves nothing. No node runs.
 fn retiring(who: TxHash) -> BatchTx {
-    BatchTx::new(who, declared(&[crossing_cell(record_site())]), env()).with_disposals(vec![
+    BatchTx::new(who, declared(&[crossing_cell(record_key())]), env()).with_disposals(vec![
         Disposal {
-            record: record_site().key(),
+            record: record_key(),
             disposition: Disposition::Retire,
         },
     ])
@@ -1270,7 +1289,7 @@ fn an_owed_record_retires_to_a_dated_tombstone() {
         ExecutionMode::Serial,
     )
     .unwrap();
-    let owed = CrossingCell::from_bytes(&sent.store.cell(record_site().key()).unwrap()).unwrap();
+    let owed = CrossingCell::from_bytes(&sent.store.cell(record_key()).unwrap()).unwrap();
     assert_eq!(owed.terms, Terms::Owed, "the fixture's edge delivers");
 
     let retired = execute(
@@ -1286,7 +1305,7 @@ fn an_owed_record_retires_to_a_dated_tombstone() {
     );
     let tomb = retired
         .store
-        .cell(record_site().key())
+        .cell(record_key())
         .and_then(|bytes| CrossingCell::from_bytes(&bytes))
         .expect("an owed record stands on as a tombstone");
     assert_eq!(tomb.terms, Terms::Retired, "retired rather than removed");
@@ -1323,7 +1342,7 @@ fn an_owed_record_retires_to_a_dated_tombstone() {
 #[test]
 fn a_settlement_that_hides_the_record_it_deletes_refuses_the_batch() {
     let undeclared = BatchTx::new(tx(31), declared(&[]), env()).with_disposals(vec![Disposal {
-        record: record_site().key(),
+        record: record_key(),
         disposition: Disposition::Retire,
     }]);
 
@@ -1336,7 +1355,7 @@ fn a_settlement_that_hides_the_record_it_deletes_refuses_the_batch() {
         .err(),
         Some(BatchError::UndeclaredCrossingCell {
             tx: tx(31),
-            key: record_site().key(),
+            key: record_key(),
         }),
     );
 }
@@ -1353,7 +1372,7 @@ fn a_retire_deletes_the_record_and_moves_nothing() {
         ExecutionMode::Serial,
     )
     .unwrap();
-    assert!(sent.store.cell(record_site().key()).is_some());
+    assert!(sent.store.cell(record_key()).is_some());
 
     let retired = execute(
         Arc::new(sent.store) as Arc<dyn Baseline>,
@@ -1371,13 +1390,13 @@ fn a_retire_deletes_the_record_and_moves_nothing() {
     assert_eq!(receipt.escrow.claimed(RESOURCE), 0);
     assert_eq!(receipt.escrow.issued(RESOURCE), 0);
     assert_eq!(
-        receipt.delta.cells.get(&record_site().key()),
+        receipt.delta.cells.get(&record_key()),
         Some(&None),
         "an escrowed crossing's record goes outright: its answer cell sweeps \
          itself on the expiry the record is keyed by, so nothing needs its \
          going dated"
     );
-    assert!(retired.store.cell(record_site().key()).is_none());
+    assert!(retired.store.cell(record_key()).is_none());
     assert_eq!(
         balance(&retired, cell(PAYER)),
         300,
@@ -1482,18 +1501,18 @@ fn a_reclaim_of_a_record_that_is_not_there_is_a_defect() {
 /// The consumer deleting its own answer, once the record it answered
 /// for is gone from the producer's chain: reads the cell, removes it,
 /// moves nothing. No node runs.
-fn deleting(who: TxHash, record: SubstateKey) -> BatchTx {
+fn deleting(who: TxHash, producer: Address) -> BatchTx {
     BatchTx::new(
         who,
         declared(&[Effect {
-            target: EffectTarget::Point(claim_site().key()),
+            target: EffectTarget::Point(claim_key()),
             mode: Mode::Write { moves: Moves::Both },
         }]),
         env(),
     )
     .with_deletions(vec![Deletion {
-        answer: claim_site().key(),
-        record,
+        answer: claim_key(),
+        producer,
     }])
 }
 
@@ -1501,8 +1520,8 @@ fn deleting(who: TxHash, record: SubstateKey) -> BatchTx {
 fn answered_store() -> MemoryStore {
     let mut store = MemoryStore::new();
     store.write(
-        claim_site().key(),
-        claim_site().claimed_by(tx(1), record_site().key()),
+        claim_key(),
+        crossing().answer(tx(1), Answered::Taken).to_bytes(),
     );
     store
 }
@@ -1512,7 +1531,7 @@ fn answered_store() -> MemoryStore {
 fn a_deletion_removes_the_answer_and_moves_nothing() {
     let outcome = execute(
         Arc::new(answered_store()) as Arc<dyn Baseline>,
-        &[deleting(tx(0x50), record_site().key())],
+        &[deleting(tx(0x50), owner(PAYER))],
         ExecutionMode::Serial,
     )
     .expect("a deletion is a batch");
@@ -1524,7 +1543,7 @@ fn a_deletion_removes_the_answer_and_moves_nothing() {
         receipt.outcome,
     );
     assert!(
-        outcome.store.cell(claim_site().key()).is_none(),
+        outcome.store.cell(claim_key()).is_none(),
         "and the answer is gone",
     );
     assert!(
@@ -1544,10 +1563,7 @@ fn a_deletion_removes_the_answer_and_moves_nothing() {
 fn an_answer_is_not_deleted_against_another_record() {
     let outcome = execute(
         Arc::new(answered_store()) as Arc<dyn Baseline>,
-        &[deleting(
-            tx(0x51),
-            CrossingSite::claim(&TestHasher, owner(PAYER), intent(), 0, 1, EXPIRY_MS).key(),
-        )],
+        &[deleting(tx(0x51), owner(PAYEE))],
         ExecutionMode::Serial,
     )
     .expect("a deletion is a batch");
@@ -1560,7 +1576,7 @@ fn an_answer_is_not_deleted_against_another_record() {
         "an answer for another record is not this deletion's to remove",
     );
     assert!(
-        outcome.store.cell(claim_site().key()).is_some(),
+        outcome.store.cell(claim_key()).is_some(),
         "and the answer stands",
     );
 }
@@ -1571,7 +1587,7 @@ fn an_answer_is_not_deleted_against_another_record() {
 fn an_absent_answer_is_not_deletable() {
     let outcome = execute(
         Arc::new(MemoryStore::new()) as Arc<dyn Baseline>,
-        &[deleting(tx(0x52), record_site().key())],
+        &[deleting(tx(0x52), owner(PAYER))],
         ExecutionMode::Serial,
     )
     .expect("a deletion is a batch");
@@ -1595,8 +1611,8 @@ fn an_absent_answer_is_not_deletable() {
 #[test]
 fn a_deletion_declares_the_answer_it_removes() {
     let undeclared = BatchTx::new(tx(0x53), declared(&[]), env()).with_deletions(vec![Deletion {
-        answer: claim_site().key(),
-        record: record_site().key(),
+        answer: claim_key(),
+        producer: owner(PAYER),
     }]);
 
     assert!(
@@ -1616,24 +1632,17 @@ fn a_deletion_declares_the_answer_it_removes() {
 /// decline cell its refusal would write, and the declaration names it
 /// beside the claim, as the host declares it.
 fn receiving_refusable(who: TxHash, crossed: Crossed, declares_never: bool) -> BatchTx {
-    let never = claim_site().answer_key(&TestHasher, Answered::Never);
+    let never = crossing().answer_key(&TestHasher, Answered::Never);
     let mut legs = LegPlan::whole(2);
     legs.skip(0).unwrap();
-    legs.arrives(
-        0,
-        0,
-        crossed,
-        claim_site(),
-        record_site().key(),
-        Some(never),
-    )
-    .unwrap();
+    legs.arrives(0, 0, crossed, claim_key(), crossing(), Some(never))
+        .unwrap();
     let mut effects = vec![
         Effect {
             target: EffectTarget::Point(cell(PAYEE)),
             mode: Mode::Delta { moves: Moves::Both },
         },
-        crossing_cell(claim_site()),
+        crossing_cell(claim_key()),
     ];
     if declares_never {
         effects.push(Effect {
@@ -1651,13 +1660,10 @@ fn receiving_refusable(who: TxHash, crossed: Crossed, declares_never: bool) -> B
 /// node runs, with the one "already answered" outcome.
 #[test]
 fn a_crossing_answered_never_cannot_be_taken() {
-    let never = claim_site().answer_key(&TestHasher, Answered::Never);
+    let never = crossing().answer_key(&TestHasher, Answered::Never);
     let mut store = MemoryStore::new();
     store.write(cell(PAYEE), encode_amount(0).to_vec());
-    store.write(
-        never,
-        claim_site().answered_by(tx(9), record_site().key(), Answered::Never),
-    );
+    store.write(never, crossing().answer(tx(9), Answered::Never).to_bytes());
 
     let receipt = run(
         &store,
@@ -1675,7 +1681,7 @@ fn a_crossing_answered_never_cannot_be_taken() {
         Outcome::EscrowAlreadyClaimed { key: never }
     );
     assert!(
-        !receipt.delta.cells.contains_key(&claim_site().key()),
+        !receipt.delta.cells.contains_key(&claim_key()),
         "a refused take writes no claim",
     );
     assert!(
@@ -1689,7 +1695,7 @@ fn a_crossing_answered_never_cannot_be_taken() {
 /// every writer of the key sits in one conflict group.
 #[test]
 fn an_undeclared_decline_cell_refuses_the_batch() {
-    let never = claim_site().answer_key(&TestHasher, Answered::Never);
+    let never = crossing().answer_key(&TestHasher, Answered::Never);
     assert_eq!(
         execute(
             Arc::new(MemoryStore::new()) as Arc<dyn Baseline>,

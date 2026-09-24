@@ -12,7 +12,7 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    CrossingAnswer, CrossingCell, CrossingSite, IssuanceGrant, Kind, ResourceKind, Terms,
+    Answered, CrossingAnswer, CrossingCell, CrossingId, IssuanceGrant, Kind, ResourceKind, Terms,
     distinct_ids,
 };
 use hyperscale_vm_types::{CROSSING_TOMBSTONE_GRACE_MS, ResourceAddr, SubstateKey};
@@ -253,11 +253,11 @@ impl KernelSession {
         // cell another member judges is refused where it is exercised.
         // So the origin is this member's to credit wherever there is
         // one, which is what a reclaim needs of it.
-        let terms = match departure.kind {
+        let terms = match departure.crossing.kind {
             Kind::Owed => Terms::Owed,
             Kind::Escrowed => {
                 let Some(credit) = origin else {
-                    return Err(SessionTrap::CrossingWithoutRecourse(departure.site.key()));
+                    return Err(SessionTrap::CrossingWithoutRecourse(departure.record));
                 };
                 Terms::Escrowed { credit }
             }
@@ -266,10 +266,11 @@ impl KernelSession {
         let crossed = Crossed { resource, amount };
         self.escrow.issue(node, output, crossed)?;
         self.record_crossing(
-            departure.site.key(),
+            departure.record,
             departure
-                .site
-                .crossing(self.tx, resource, amount, departure.consumer_claim, terms)
+                .crossing
+                .id
+                .cell(self.tx, resource, amount, departure.expiry_ms, terms)
                 .to_bytes(),
         )?;
         Ok(crossed)
@@ -443,7 +444,7 @@ impl KernelSession {
         self.store
             .read(deletion.answer)?
             .and_then(|bytes| CrossingAnswer::from_bytes(&bytes))
-            .filter(|answer| answer.record == deletion.record)
+            .filter(|answer| answer.producer == deletion.producer)
             .ok_or(SessionTrap::CrossingAnswerUnreadable(deletion.answer))?;
         self.store.remove(deletion.answer)?;
         Ok(())
@@ -483,11 +484,11 @@ impl KernelSession {
     pub(crate) fn escrow_in(
         &mut self,
         crossed: Crossed,
-        site: CrossingSite,
-        record: SubstateKey,
+        claim: SubstateKey,
+        id: CrossingId,
     ) -> Result<u32, SessionTrap> {
         self.escrow.claim(crossed)?;
-        self.record_crossing(site.key(), site.claimed_by(self.tx, record))?;
+        self.record_crossing(claim, id.answer(self.tx, Answered::Taken).to_bytes())?;
         Ok(self.open_bucket(Held::Amount(crossed.amount), crossed.resource, None))
     }
 
@@ -554,7 +555,7 @@ impl KernelSession {
 mod tests {
     use std::collections::BTreeSet;
 
-    use hyperscale_vm_effects::{CrossingSite, Hash32, IntentHash, Kind, TestHasher};
+    use hyperscale_vm_effects::{Crossing, CrossingId, Hash32, IntentHash, Kind, TestHasher};
     use hyperscale_vm_types::{Address, AddressClass, LocalKey, ResourceAddr, SubstateKey};
 
     use super::super::fixtures::{declared, session_over};
@@ -565,15 +566,14 @@ mod tests {
 
     const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
 
-    fn site() -> CrossingSite {
-        CrossingSite::record(
-            &TestHasher,
-            Address::new([0xA1; 31], AddressClass::Component),
-            IntentHash(Hash32([0x5A; 32])),
-            0,
-            0,
-            1_000,
-        )
+    fn crossing() -> CrossingId {
+        CrossingId {
+            producer: Address::new([0xA1; 31], AddressClass::Component),
+            consumer: Address::new([0xB2; 31], AddressClass::Component),
+            intent: IntentHash(Hash32([0x5A; 32])),
+            local: 0,
+            output: 0,
+        }
     }
 
     /// A cell the session applies, so a crossing funded from it names a
@@ -587,17 +587,12 @@ mod tests {
 
     fn departure() -> Departure {
         Departure {
-            kind: Kind::Escrowed,
-            site: site(),
-            consumer_claim: CrossingSite::claim(
-                &TestHasher,
-                Address::new([0xB2; 31], AddressClass::Component),
-                IntentHash(Hash32([0x5A; 32])),
-                0,
-                0,
-                1_000,
-            )
-            .key(),
+            record: crossing().record_key(&TestHasher),
+            crossing: Crossing {
+                id: crossing(),
+                kind: Kind::Escrowed,
+            },
+            expiry_ms: 1_000,
         }
     }
 
@@ -645,7 +640,9 @@ mod tests {
         let merged = session.open_bucket(Held::Amount(40), RESOURCE, None);
         assert_eq!(
             session.escrow_out(0, 0, merged, departure()),
-            Err(SessionTrap::CrossingWithoutRecourse(site().key())),
+            Err(SessionTrap::CrossingWithoutRecourse(
+                crossing().record_key(&TestHasher)
+            )),
         );
         assert!(
             session.bucket(merged).is_ok(),
@@ -663,7 +660,10 @@ mod tests {
         let mut session = session_over(MemoryStore::new(), &declared(&[]));
         let minted = session.open_bucket(Held::Amount(40), RESOURCE, None);
         let delivering = Departure {
-            kind: Kind::Owed,
+            crossing: Crossing {
+                kind: Kind::Owed,
+                ..departure().crossing
+            },
             ..departure()
         };
         assert_eq!(

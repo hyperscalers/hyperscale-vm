@@ -19,9 +19,8 @@ use hyperscale_vm_types::{
 };
 
 use crate::admission::{Admitted, NodeOrigin};
-use crate::cells::CrossingSite;
+use crate::cells::{Crossing, CrossingId, Kind};
 use crate::claim::Claim;
-use crate::hash::Hasher;
 use crate::manifest::{Manifest, NodeInput};
 use crate::route::ShardResolver;
 use crate::types::{EdgeContent, ShardId};
@@ -45,15 +44,10 @@ pub struct CrossingEdge<S = ShardId> {
     /// does not also run the producer. Several for a consumer inside a
     /// multi-shard core.
     pub to: BTreeSet<S>,
-    /// Whether an outbound leg consumes it — a delivery's arrival, which
-    /// the delivering member of each claiming shard waits on rather than
-    /// the issuing one.
-    pub delivers: bool,
-    /// The record cell, under the producing node's target.
-    pub record: CrossingSite,
-    /// The claim cell the consumer writes when it takes the crossing,
-    /// under the consuming node's target.
-    pub claim: CrossingSite,
+    /// The crossing itself: both ends of the edge, and its kind. An
+    /// owed one is a delivery's arrival, which the delivering member of
+    /// each claiming shard waits on rather than the issuing one.
+    pub crossing: Crossing,
 }
 
 impl<S: Ord> CrossingEdge<S> {
@@ -64,9 +58,7 @@ impl<S: Ord> CrossingEdge<S> {
             consumer: self.consumer,
             from: f(self.from),
             to: self.to.into_iter().map(f).collect(),
-            delivers: self.delivers,
-            record: self.record,
-            claim: self.claim,
+            crossing: self.crossing,
         }
     }
 }
@@ -128,16 +120,17 @@ impl<S: Ord + Copy> Star<S> {
     /// that lands there, so the member running it waits on an arrival
     /// rather than producing what it consumes.
     ///
-    /// Off the edges rather than off the role alone, and `delivers` is
-    /// already the edge's word for "its consumer is an outbound leg", so
-    /// this asks the one further question: does the value cross to
-    /// `shard`. An outbound leg fed from beside itself crosses no
-    /// boundary and answers `false`, which is right — its member issues.
+    /// Off the edges rather than off the role alone, and an owed
+    /// crossing is already the edge's word for "its consumer is an
+    /// outbound leg", so this asks the one further question: does the
+    /// value cross to `shard`. An outbound leg fed from beside itself
+    /// crosses no boundary and answers `false`, which is right — its
+    /// member issues.
     #[must_use]
     pub fn delivers_at(&self, node: u32, shard: S) -> bool {
-        self.edges
-            .iter()
-            .any(|edge| edge.delivers && edge.consumer == node && edge.to.contains(&shard))
+        self.edges.iter().any(|edge| {
+            edge.crossing.kind == Kind::Owed && edge.consumer == node && edge.to.contains(&shard)
+        })
     }
 
     /// The whole shape on every participant: no placement read, nothing
@@ -314,15 +307,15 @@ fn assemble(
 /// else can, and `accounts` are the accounts the transaction's intents
 /// act as. The two are held to different rules — a payer needs a member
 /// of any side, an account needs a shard the core waits on — which is
-/// why they arrive apart rather than folded into one list. `hasher`
-/// names the cells each crossing writes.
+/// why they arrive apart rather than folded into one list. No hasher:
+/// a crossing is named by its ends, and every key is derived from that
+/// name where it is needed.
 #[must_use]
 pub fn star_at(
     legs: &[LegShape],
     payer: Address,
     accounts: &[Address],
     shards: &dyn ShardResolver,
-    hasher: &dyn Hasher,
 ) -> Star {
     let homes: Vec<ShardId> = legs
         .iter()
@@ -341,7 +334,7 @@ pub fn star_at(
         homes: &homes,
         core: &core,
     };
-    let edges = placed.crossing_edges(hasher);
+    let edges = placed.crossing_edges();
     let decomposes = placed.decomposes(payer, accounts, &edges, shards);
     Star {
         roles,
@@ -516,7 +509,7 @@ impl Placed<'_> {
     /// an edge between two core nodes on two shards crosses nothing,
     /// since every core shard runs both, and a leg folded into the core
     /// hands its value to the core member it runs in.
-    fn crossing_edges(&self, hasher: &dyn Hasher) -> Vec<CrossingEdge> {
+    fn crossing_edges(&self) -> Vec<CrossingEdge> {
         let mut edges = Vec::new();
         for (consumer, node) in (0u32..).zip(self.legs) {
             for edge in &node.edges {
@@ -534,16 +527,21 @@ impl Placed<'_> {
                 // An outbound leg's arrival is owed and every other is
                 // escrowed, which is what the consumer's answer credits
                 // back to — or does not.
-                let delivers = self.role(consumer) == LegRole::Outbound;
+                let kind = if self.role(consumer) == LegRole::Outbound {
+                    Kind::Owed
+                } else {
+                    Kind::Escrowed
+                };
                 edges.push(CrossingEdge {
                     producer: edge.source,
                     output: edge.output,
                     consumer,
                     from: self.homes[edge.source as usize],
                     to,
-                    delivers,
-                    record: CrossingSite::record_of(hasher, producer, edge.output),
-                    claim: CrossingSite::claim_of(hasher, node.target, producer, edge.output),
+                    crossing: Crossing {
+                        id: CrossingId::of_edge(producer, node.target, edge.output),
+                        kind,
+                    },
                 });
             }
         }
@@ -784,6 +782,7 @@ mod tests {
     };
 
     use super::{Address, LegRole, LegShape, NodeOrigin, Star, assemble, classify_roles, star_at};
+    use crate::cells::Kind;
     use crate::claim::Claim;
     use crate::dsl::{Clause, Expr, ModeExpr};
     use crate::hash::{Hash32, TestHasher};
@@ -852,7 +851,7 @@ mod tests {
     /// The star `legs` imply under the test placement, over a routing
     /// whose fee payer is `payer` and which declares `owners`.
     fn paid_for(legs: &[LegShape], payer: Address, owners: &[Address]) -> Star {
-        star_at(legs, payer, owners, &resolver(), &TestHasher)
+        star_at(legs, payer, owners, &resolver())
     }
 
     /// The star `legs` imply under the test placement, over a routing
@@ -1101,11 +1100,15 @@ mod tests {
         assert_eq!(star.edges.len(), 1);
         let edge = &star.edges[0];
         assert_eq!((edge.producer, edge.output, edge.consumer), (0, 0, 1));
-        assert!(edge.delivers, "an outbound leg takes it as a delivery");
+        assert_eq!(
+            edge.crossing.kind,
+            Kind::Owed,
+            "an outbound leg takes it as a delivery"
+        );
         assert_eq!(edge.from, resolver().shard_of(producer));
         assert_eq!(edge.to, BTreeSet::from([resolver().shard_of(consumer)]));
-        assert_eq!(edge.record.key().owner, producer);
-        assert_eq!(edge.claim.key().owner, consumer);
+        assert_eq!(edge.crossing.id.producer, producer);
+        assert_eq!(edge.crossing.id.consumer, consumer);
     }
 
     /// The reservation-shaped source is the inbound leg: nothing the core
@@ -1821,8 +1824,9 @@ mod tests {
             "the sink beside the venue is the core's; the caller's leg stays a leg",
         );
         assert_eq!(star.edges.len(), 1, "the caller's leg crosses once");
-        assert!(
-            !star.edges[0].delivers,
+        assert_eq!(
+            star.edges[0].crossing.kind,
+            Kind::Escrowed,
             "and the core claims it rather than a delivery"
         );
         assert!(star.decomposes);
@@ -1858,9 +1862,7 @@ mod tests {
             leg(venue, LegRole::Core, &[(0, 0)], 1),
             leg(bob, LegRole::Outbound, &[(1, 0)], 2),
         ];
-        let over = |accounts: &[Address]| {
-            star_at(&legs, alice, accounts, &resolver(), &TestHasher).decomposes
-        };
+        let over = |accounts: &[Address]| star_at(&legs, alice, accounts, &resolver()).decomposes;
 
         assert!(
             over(&[alice]),
@@ -1907,7 +1909,7 @@ mod tests {
             "carol has to sit beside alice, or the self-fed delivery crosses",
         );
         let over = |legs: &[LegShape], accounts: &[Address]| {
-            star_at(legs, venue, accounts, &resolver(), &TestHasher).decomposes
+            star_at(legs, venue, accounts, &resolver()).decomposes
         };
 
         // Alice reserves, and her value crosses to a delivery the core
@@ -1960,7 +1962,7 @@ mod tests {
             leg(venue, LegRole::Core, &[], 1),
             leg(bob, LegRole::Outbound, &[(0, 0)], 2),
         ];
-        let star = |legs: &[LegShape]| star_at(legs, venue, &[alice], &resolver(), &TestHasher);
+        let star = |legs: &[LegShape]| star_at(legs, venue, &[alice], &resolver());
 
         assert_eq!(star(&legs).roles[0], LegRole::Inbound);
         legs[0].presents = vec![alice];
@@ -1999,9 +2001,8 @@ mod tests {
         let (chain, manifest) = star_world(Totality::Total);
         let legs = legs(&manifest, &chain);
         let participant = legs[0].target;
-        let over = |owners: &[Address]| {
-            star_at(&legs, legs[0].target, owners, &resolver(), &TestHasher).decomposes
-        };
+        let over =
+            |owners: &[Address]| star_at(&legs, legs[0].target, owners, &resolver()).decomposes;
         assert!(over(&[participant]));
 
         let stranger: Address = instance_of("stranger").into();

@@ -9,8 +9,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::{CrossingSite, Kind};
-use hyperscale_vm_types::{MAX_CROSSINGS_PER_TX, ResourceAddr, SubstateKey};
+use hyperscale_vm_effects::{Crossing, CrossingId};
+use hyperscale_vm_types::{Address, MAX_CROSSINGS_PER_TX, ResourceAddr, SubstateKey};
 
 use crate::modes::ModeError;
 
@@ -149,22 +149,24 @@ impl EscrowDelta {
     }
 }
 
-/// One edge leaving this execution: the record cell it writes, and the
-/// claim cell that would say the crossing was taken.
+/// One edge leaving this execution: the record cell it writes, the
+/// crossing it writes there, and when the record stops being claimable.
 ///
-/// Both are the parent's to name. The record sits under the producing
-/// node's target and the claim under the consuming node's, so only a
-/// reader of the manifest can pair them — and the record carries the
-/// pairing forward, since what outlives the manifest is the leaf.
+/// All three are the parent's to name. The record sits under the
+/// producing node's target and the crossing names the consuming node's,
+/// so only a reader of the manifest can pair them — and the record
+/// carries the pairing forward, since what outlives the manifest is the
+/// leaf.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Departure {
     /// The record cell, under the producing node's target.
-    pub site: CrossingSite,
-    /// The claim cell the consumer writes when it takes the crossing,
-    /// under the consuming node's target.
-    pub consumer_claim: SubstateKey,
-    /// Which kind of record this departure writes.
-    pub kind: Kind,
+    pub record: SubstateKey,
+    /// The crossing, with the kind of record this departure writes.
+    pub crossing: Crossing,
+    /// When the record stops being claimable: the producing intent's
+    /// own window end plus its grace, so no record is issued with an
+    /// expiry of nothing.
+    pub expiry_ms: u64,
 }
 
 /// One record this execution settles rather than runs a node for: a
@@ -206,12 +208,14 @@ pub struct Deletion {
     /// target — this shard's own leaf, which is why a deletion needs
     /// nothing carried with it.
     pub answer: SubstateKey,
-    /// The record on the producer's chain that answer answers for.
+    /// The producing node's target, under which the record that answer
+    /// answers for sits.
     ///
     /// Carried so the cell and the licence cannot come apart: the
-    /// reading that licenses the deletion is of this record, and the
-    /// cell is deleted only where it says the same.
-    pub record: SubstateKey,
+    /// reading that licenses the deletion is of that record, and the
+    /// cell is deleted only where it names the same producer — the
+    /// answer's own key already binds the rest of the crossing.
+    pub producer: Address,
 }
 
 /// What a settlement does with a record.
@@ -237,14 +241,11 @@ pub struct Arrival {
     /// What the producing shard escrowed on this edge.
     pub crossed: Crossed,
     /// The claim cell the execution taking it writes.
-    pub claim: CrossingSite,
-    /// The record cell on the producer's chain the claim answers for.
-    ///
-    /// Carried because the claim states it, and states it because
-    /// nothing else ever will: the record's owner is the producing
-    /// node's target, which lives in the manifest and not in either
-    /// leaf.
-    pub record: SubstateKey,
+    pub claim: SubstateKey,
+    /// The crossing the claim answers for, which the claim's value
+    /// states because nothing else ever will: the producing node's
+    /// target lives in the manifest and not in either leaf.
+    pub id: CrossingId,
     /// The decline cell the consumer's refusal writes for this edge,
     /// where the crossing is refusable; `None` for one owed to its
     /// consumer, which nothing takes back.
@@ -348,7 +349,7 @@ impl LegPlan {
     /// Every record cell this execution writes, in edge order.
     pub fn records(&self) -> impl Iterator<Item = SubstateKey> + '_ {
         self.edges.values().filter_map(|action| match action {
-            EdgeAction::Departs(departure) => Some(departure.site.key()),
+            EdgeAction::Departs(departure) => Some(departure.record),
             EdgeAction::Arrives(_) => None,
         })
     }
@@ -357,7 +358,7 @@ impl LegPlan {
     /// arrivals it takes.
     pub fn claims(&self) -> impl Iterator<Item = SubstateKey> + '_ {
         self.edges.values().filter_map(|action| match action {
-            EdgeAction::Arrives(arrival) => Some(arrival.claim.key()),
+            EdgeAction::Arrives(arrival) => Some(arrival.claim),
             EdgeAction::Departs(_) => None,
         })
     }
@@ -381,9 +382,9 @@ impl LegPlan {
         Ok(())
     }
 
-    /// File what arrives for one edge, the claim cell taking it writes,
-    /// and the decline cell its refusal would write where the crossing
-    /// is refusable.
+    /// File what arrives for one edge, the claim cell taking it writes
+    /// and the crossing that claim answers for, and the decline cell its
+    /// refusal would write where the crossing is refusable.
     ///
     /// # Errors
     ///
@@ -395,8 +396,8 @@ impl LegPlan {
         node: u32,
         output: u32,
         crossed: Crossed,
-        claim: CrossingSite,
-        record: SubstateKey,
+        claim: SubstateKey,
+        id: CrossingId,
         never: Option<SubstateKey>,
     ) -> Result<(), PlanFault> {
         if self.action(node) == NodeAction::Run {
@@ -408,7 +409,7 @@ impl LegPlan {
             EdgeAction::Arrives(Arrival {
                 crossed,
                 claim,
-                record,
+                id,
                 never,
             }),
         )
@@ -511,34 +512,46 @@ pub enum PlanFault {
 
 #[cfg(test)]
 mod tests {
-    use hyperscale_vm_effects::{Hash32, IntentHash, TestHasher};
-    use hyperscale_vm_types::ResourceAddr;
+    use hyperscale_vm_effects::{
+        Answered, Crossing, CrossingId, Hash32, IntentHash, Kind, TestHasher,
+    };
+    use hyperscale_vm_types::{ResourceAddr, SubstateKey};
 
     use super::{
-        Arrival, Crossed, CrossingSite, Departure, EscrowDelta, Kind, LegPlan,
-        MAX_CROSSINGS_PER_TX, ModeError, PlanFault,
+        Arrival, Crossed, Departure, EscrowDelta, LegPlan, MAX_CROSSINGS_PER_TX, ModeError,
+        PlanFault,
     };
 
     fn resource(tag: u8) -> ResourceAddr {
         ResourceAddr::new([tag; 31])
     }
 
-    fn cell(tag: u8) -> CrossingSite {
-        CrossingSite::record(
-            &TestHasher,
-            resource(tag),
-            IntentHash(Hash32([tag; 32])),
-            0,
-            0,
-            1_000,
-        )
+    /// The crossing `tag` names: produced under one resource's address
+    /// and consumed under the next one's.
+    fn crossing(tag: u8) -> CrossingId {
+        CrossingId {
+            producer: resource(tag).into(),
+            consumer: resource(tag.wrapping_add(1)).into(),
+            intent: IntentHash(Hash32([tag; 32])),
+            local: 0,
+            output: 0,
+        }
+    }
+
+    /// The claim key of `crossing(tag)`.
+    fn claim(tag: u8) -> SubstateKey {
+        crossing(tag).answer_key(&TestHasher, Answered::Taken)
     }
 
     fn departing(tag: u8) -> Departure {
+        let id = crossing(tag);
         Departure {
-            kind: Kind::Escrowed,
-            site: cell(tag),
-            consumer_claim: cell(tag.wrapping_add(1)).key(),
+            record: id.record_key(&TestHasher),
+            crossing: Crossing {
+                id,
+                kind: Kind::Escrowed,
+            },
+            expiry_ms: 1_000,
         }
     }
 
@@ -615,7 +628,8 @@ mod tests {
     fn a_divided_plan_names_what_it_does_not_run() {
         let mut plan = LegPlan::whole(3);
         plan.skip(1).expect("inside the manifest");
-        plan.arrives(1, 0, crossed(1, 50), cell(9), cell(9).key(), None)
+        let claim = crossing(9).answer_key(&TestHasher, Answered::Taken);
+        plan.arrives(1, 0, crossed(1, 50), claim, crossing(9), None)
             .expect("fits");
         plan.departs(2, 0, departing(8)).expect("fits");
 
@@ -626,8 +640,8 @@ mod tests {
             plan.arrival(1, 0),
             Some(Arrival {
                 crossed: crossed(1, 50),
-                claim: cell(9),
-                record: cell(9).key(),
+                claim,
+                id: crossing(9),
                 never: None,
             }),
         );
@@ -646,10 +660,10 @@ mod tests {
             Err(PlanFault::EdgeTwice { node: 0, output: 0 }),
         );
         plan.skip(1).expect("inside the manifest");
-        plan.arrives(1, 0, crossed(1, 5), cell(3), cell(3).key(), None)
+        plan.arrives(1, 0, crossed(1, 5), claim(3), crossing(3), None)
             .expect("fits");
         assert_eq!(
-            plan.arrives(1, 0, crossed(1, 6), cell(4), cell(4).key(), None),
+            plan.arrives(1, 0, crossed(1, 6), claim(4), crossing(4), None),
             Err(PlanFault::EdgeTwice { node: 1, output: 0 }),
         );
     }
@@ -660,7 +674,7 @@ mod tests {
     fn an_edge_agrees_with_the_node_it_hangs_off() {
         let mut plan = LegPlan::whole(2);
         assert_eq!(
-            plan.arrives(0, 0, crossed(1, 5), cell(9), cell(9).key(), None),
+            plan.arrives(0, 0, crossed(1, 5), claim(9), crossing(9), None),
             Err(PlanFault::ArrivesHere { node: 0, output: 0 }),
         );
         plan.skip(1).expect("inside the manifest");

@@ -307,7 +307,6 @@ fn a_transfer_acting_as_its_recipient_runs_whole() {
         ALICE.address(),
         &[ALICE.address(), BOB.address()],
         &PrefixShardResolver { bits: 8 },
-        &TestHasher,
     );
     assert_eq!(both.roles, alone.roles);
     assert!(!both.decomposes, "Bob's shard only delivers");

@@ -411,7 +411,6 @@ fn a_member_presenting_a_granted_claim_is_the_cores_off_the_granters_shard() {
         REGISTRAR.address(),
         &[REGISTRAR.address(), BOB.address()],
         &resolver,
-        &TestHasher,
     );
     assert_eq!(legs[0].presents, vec![REGISTRAR.address()]);
     assert_eq!(

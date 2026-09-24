@@ -933,7 +933,6 @@ pub fn star_and_shape_for(
         account.address(),
         &route_owners(account),
         &PrefixShardResolver { bits: 8 },
-        &TestHasher,
     );
     (star, legs)
 }
