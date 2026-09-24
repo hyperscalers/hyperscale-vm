@@ -23,9 +23,9 @@ use hyperscale_vm_effects::{
     AdmissionError, Admitted, COMMITTED_TX_SLOT, CROSSING_CLAIM_SLOT, CROSSING_DECLINE_SLOT,
     ChainRecords, Clause, Declaration, DeclarationError, ESCROW_RECORD_SLOT, EvalError, Expr,
     GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, Intent, IntentHeader, IntentTree,
-    ManifestGraph, MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType, Records,
-    SlotId, SlotRef, TargetExpr, TestHasher, Totality, Value, admit_tree, check_declarations,
-    child_key,
+    ManifestGraph, MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType,
+    READ_FRONTIER_SLOT, Records, SlotId, SlotRef, TargetExpr, TestHasher, Totality, Value,
+    admit_tree, check_declarations, child_key,
 };
 use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_types::{
@@ -339,9 +339,14 @@ fn the_decline_slot_is_refused_under_a_packages_prefix() {
     a_marker_slot_is_refused(CROSSING_DECLINE_SLOT);
 }
 
-/// The retired slot below the decline's stays in the band: retired,
-/// never reused, and never a package's to name.
+/// The retired slot between the decline's and the read frontier's stays
+/// in the band: retired, never reused, and never a package's to name.
 #[test]
 fn the_retired_slot_is_refused_under_a_packages_prefix() {
     a_marker_slot_is_refused(SlotId(0xFFF9));
+}
+
+#[test]
+fn the_read_frontier_slot_is_refused_under_a_packages_prefix() {
+    a_marker_slot_is_refused(READ_FRONTIER_SLOT);
 }

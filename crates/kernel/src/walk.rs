@@ -654,12 +654,6 @@ impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
                         .try_for_each(|deletion| session.escrow_delete(deletion))
                 }));
             }
-            // The tombstones its grace has run out on, removed.
-            Job::Tombstones(keys) => {
-                return Ok(walk_cells(session, |session| {
-                    keys.iter().try_for_each(|key| session.escrow_sweep(*key))
-                }));
-            }
             Job::Manifest { calls, legs } => (calls, legs),
         };
         let mut outputs: Vec<Vec<Option<u32>>> = Vec::with_capacity(calls.len());

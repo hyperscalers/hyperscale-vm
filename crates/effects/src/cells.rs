@@ -81,6 +81,17 @@ pub const CROSSING_DECLINE_SLOT: SlotId = SlotId(0xFFFA);
 /// it from any other cell and tell when it stops being needed.
 pub const COMMITTED_TX_SLOT: SlotId = SlotId(0xFFFC);
 
+/// The reserved role of the read frontier under a shard's own owner, in
+/// the kernel band.
+///
+/// One ordered collection per shard, keyed by producer shard, holding
+/// the highest anchor of that producer this chain has read a state
+/// claim at. Written by the commit fold and read by the vote fence and
+/// the deletion licence; no kernel writes it. A read is refused below
+/// the frontier, so an absence at or above it comes after every
+/// presence the chain ever committed.
+pub const READ_FRONTIER_SLOT: SlotId = SlotId(0xFFF8);
+
 /// The most bytes a [`Marker`] cell holds.
 ///
 /// A nullifier or a committed cell: a transaction hash, an expiry and
@@ -109,6 +120,7 @@ const _: () = assert!(ESCROW_RECORD_SLOT.0 >= KERNEL_SLOT_BASE);
 const _: () = assert!(CROSSING_CLAIM_SLOT.0 >= KERNEL_SLOT_BASE);
 const _: () = assert!(CROSSING_DECLINE_SLOT.0 >= KERNEL_SLOT_BASE);
 const _: () = assert!(COMMITTED_TX_SLOT.0 >= KERNEL_SLOT_BASE);
+const _: () = assert!(READ_FRONTIER_SLOT.0 >= KERNEL_SLOT_BASE);
 const _: () = assert!(NULLIFIER_SLOT.0 != ESCROW_RECORD_SLOT.0);
 const _: () = assert!(NULLIFIER_SLOT.0 != CROSSING_CLAIM_SLOT.0);
 const _: () = assert!(ESCROW_RECORD_SLOT.0 != CROSSING_CLAIM_SLOT.0);
@@ -119,6 +131,11 @@ const _: () = assert!(COMMITTED_TX_SLOT.0 != NULLIFIER_SLOT.0);
 const _: () = assert!(COMMITTED_TX_SLOT.0 != ESCROW_RECORD_SLOT.0);
 const _: () = assert!(COMMITTED_TX_SLOT.0 != CROSSING_CLAIM_SLOT.0);
 const _: () = assert!(COMMITTED_TX_SLOT.0 != CROSSING_DECLINE_SLOT.0);
+const _: () = assert!(READ_FRONTIER_SLOT.0 != NULLIFIER_SLOT.0);
+const _: () = assert!(READ_FRONTIER_SLOT.0 != ESCROW_RECORD_SLOT.0);
+const _: () = assert!(READ_FRONTIER_SLOT.0 != CROSSING_CLAIM_SLOT.0);
+const _: () = assert!(READ_FRONTIER_SLOT.0 != CROSSING_DECLINE_SLOT.0);
+const _: () = assert!(READ_FRONTIER_SLOT.0 != COMMITTED_TX_SLOT.0);
 
 /// The canonical nullifier key for a signed intent under one of its
 /// accounts:
@@ -352,10 +369,12 @@ pub enum Kind {
 ///
 /// The two agree on almost nothing. An escrowed crossing has an owner
 /// and comes home where no consumer claims it; an owed one has neither,
-/// and stands until its consumer takes it. Which disposals are possible,
-/// which readings answer, what a clock may do to it — all of it follows
-/// from which of the two a record is, so the record says so rather than
-/// leaving every reader to work it out again.
+/// and stands until its consumer takes it. Which disposals are possible
+/// and which readings answer follow from which of the two a record is,
+/// so the record says so rather than leaving every reader to work it
+/// out again. Either way the record goes at its disposal: nothing dates
+/// the going of it, because the chain reading it gone reads it at or
+/// above the frontier it has already read the producer at.
 ///
 /// Resolved once, at the issue, and carried on the record: what outlives
 /// the manifest is the leaf, and the member that settles a record may
@@ -373,43 +392,16 @@ pub enum Terms {
     /// commits it, so no cell is the crossing's to return to and the
     /// record stands until the claim retires it.
     Owed,
-    /// Disposed of, and standing only so its going can be dated.
-    ///
-    /// **A tombstone, and the one cell in this family whose life is a
-    /// life.** The value is gone — credited back or moved where the
-    /// consumer's claim ran — so nothing can be built from it and no
-    /// delivery can run off it. What the key is still doing there is
-    /// carrying a clock: a consumer deletes its answer once no held
-    /// reading of the live record can still be admitted, and it reads
-    /// the record rather than remembering it. An absence is the one
-    /// reading whose meaning needs no clock, so the producer holds the
-    /// key for
-    /// [`CROSSING_TOMBSTONE_GRACE_MS`](hyperscale_vm_types::CROSSING_TOMBSTONE_GRACE_MS)
-    /// past the disposal and then takes it away. The going of it is the
-    /// date.
-    ///
-    /// [`CrossingCell::expiry_ms`] names that instant here, which is
-    /// the one term this variant changes: for the other two it is read
-    /// off the producing intent's window, and for this one off the
-    /// disposal, because the disposal is what it is a grace on.
-    Retired,
 }
 
 impl Terms {
-    /// Which kind of crossing these terms are the terms of, for terms
-    /// that are still a crossing's.
-    ///
-    /// The half a claim's key reads, where the whole is what a reclaim
-    /// credits. [`Self::Retired`] has no kind and answers `None`: the
-    /// crossing it was the terms of is over, and a caller reaching for
-    /// a kind is asking about a live edge. [`CrossingLeaf::read`] reads
-    /// it to tell a record from a tombstone.
+    /// Which kind of crossing these terms are the terms of: the half a
+    /// claim's key reads, where the whole is what a reclaim credits.
     #[must_use]
-    pub const fn kind(self) -> Option<Kind> {
+    pub const fn kind(self) -> Kind {
         match self {
-            Self::Escrowed { .. } => Some(Kind::Escrowed),
-            Self::Owed => Some(Kind::Owed),
-            Self::Retired => None,
+            Self::Escrowed { .. } => Kind::Escrowed,
+            Self::Owed => Kind::Owed,
         }
     }
 }
@@ -784,8 +776,8 @@ impl CrossingId {
 /// A crossing with its kind: what the classification says of an edge,
 /// or what a live record's [`Terms`] say of it.
 ///
-/// Only those two yield one. An answer or a tombstone yields only a
-/// [`CrossingId`], since neither leaf carries a kind. The kind is read
+/// Only those two yield one. An answer yields only a [`CrossingId`],
+/// since it carries no kind. The kind is read
 /// off the signed leg role — a crossing an outbound leg consumes is
 /// owed, every other one is escrowed — so both shards derive one kind
 /// from the tree, and a reader of the edge's kind on either shard reads
@@ -817,15 +809,6 @@ pub enum CrossingLeaf {
         /// The record.
         cell: CrossingCell,
     },
-    /// A disposed record, standing only so its going can be dated. Only
-    /// an owed record tombstones — an escrowed crossing's answers need
-    /// no dating — which is why this arm carries no kind.
-    Tombstone {
-        /// The crossing it was the record of.
-        id: CrossingId,
-        /// The tombstone, with `Terms::Retired`.
-        cell: CrossingCell,
-    },
     /// A consumer's answer, either way.
     Answer {
         /// The crossing it answers for.
@@ -844,14 +827,13 @@ impl CrossingLeaf {
         if let Some(cell) = CrossingCell::from_bytes(value) {
             let id = CrossingId::of_record(key.owner, &cell);
             if id.record_key(hasher) == key {
-                return Some(
-                    cell.terms
-                        .kind()
-                        .map_or(Self::Tombstone { id, cell }, |kind| Self::Record {
-                            crossing: Crossing { id, kind },
-                            cell,
-                        }),
-                );
+                return Some(Self::Record {
+                    crossing: Crossing {
+                        id,
+                        kind: cell.terms.kind(),
+                    },
+                    cell,
+                });
             }
         }
         if let Some(answer) = CrossingAnswer::from_bytes(value) {

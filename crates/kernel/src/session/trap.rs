@@ -257,7 +257,7 @@ pub enum SessionTrap {
     #[error("escrow cell {0:?} is not declared in the form the crossing needs")]
     EscrowCreditUndeclared(SubstateKey),
     /// A settlement's record cell that is absent, does not decode, or is
-    /// a tombstone, or a reclaim of a record naming nothing to credit.
+    /// a reclaim of a record naming nothing to credit.
     #[error("escrow record {0:?} is not readable as a record to settle")]
     EscrowRecordUnreadable(SubstateKey),
     /// Two crossings of one execution at one cell.

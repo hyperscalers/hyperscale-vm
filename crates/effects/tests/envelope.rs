@@ -1070,7 +1070,6 @@ fn a_crossing_leaf_reads_by_derivation() {
     let id = crossing(BOB, ALICE, bob, 1, 0);
     let credit = child_key(&TestHasher, BOB, ESCROW_RECORD_SLOT, &[b"vault".to_vec()]);
     let record = id.cell(tx, RES_Y, 10, EXPIRY_MS, Terms::Escrowed { credit });
-    let tombstone = id.cell(tx, RES_Y, 0, EXPIRY_MS, Terms::Retired);
     let taken = id.answer(tx, Answered::Taken);
     let never = id.answer(tx, Answered::Never);
     let record_key = id.record_key(&TestHasher);
@@ -1088,14 +1087,6 @@ fn a_crossing_leaf_reads_by_derivation() {
             cell: record,
         }),
         "a live record reads as a record, with the kind its terms say"
-    );
-    assert_eq!(
-        read(record_key, &tombstone.to_bytes()),
-        Some(CrossingLeaf::Tombstone {
-            id,
-            cell: tombstone
-        }),
-        "a retired record reads as a tombstone, never as a record"
     );
     assert_eq!(
         read(claim_key, &taken.to_bytes()),

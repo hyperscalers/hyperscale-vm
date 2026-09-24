@@ -57,7 +57,8 @@ pub use cells::{
     Answered, COMMITTED_TX_SLOT, CROSSING_ANSWER_CELL_BYTES, CROSSING_CELL_BYTES,
     CROSSING_CLAIM_SLOT, CROSSING_DECLINE_SLOT, Crossing, CrossingAnswer, CrossingCell, CrossingId,
     CrossingLeaf, ESCROW_RECORD_SLOT, Kind, MARKER_CELL_BYTES, Marked, Marker, NULLIFIER_SLOT,
-    Terms, committed_tx_key, crossing_expiry_ms, nullifier_expiry_ms, nullifier_key,
+    READ_FRONTIER_SLOT, Terms, committed_tx_key, crossing_expiry_ms, nullifier_expiry_ms,
+    nullifier_key,
 };
 pub use claim::Claim;
 pub use dsl::{

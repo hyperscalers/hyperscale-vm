@@ -104,26 +104,6 @@ pub const COMMITTED_GRACE_MS: u64 = 264_000;
 /// the reshape span and the floor against the sum.
 pub const CROSSING_GRACE_MS: u64 = 1_500_000;
 
-/// How long a retired escrow record stands as a tombstone before its
-/// producer removes it, in milliseconds.
-///
-/// **What it buys is a clock on an absence.** A consumer's answer cell
-/// defends against a delivery running twice, and a second run needs a
-/// held reading of the record — a claim carrying the record's value,
-/// admitted inside the reading window of its anchor — so the answer is
-/// needed only until no such reading can still be admitted, which is
-/// one of these past the disposal. The consumer does not read *when*
-/// the record went: a reading may carry the cell, but a fold deciding
-/// on a date carried in a cell would need a clock to hold it to, and an
-/// absence needs none. So the producer holds the key for exactly this
-/// span and then takes it away, and the going of it is the date.
-///
-/// The figure is the chain's reading window, and the workspace asserts
-/// the two against each other. Nothing here can derive it: it bounds
-/// what a block admits, which is the chain's business, and this crate
-/// states only the life the cell is written with.
-pub const CROSSING_TOMBSTONE_GRACE_MS: u64 = 48_000;
-
 /// The bound on intents one envelope's tree may carry. A wire bound on
 /// the decode; the attestations each carries are priced, per scheme,
 /// by [`DeclaredWork::signature`].

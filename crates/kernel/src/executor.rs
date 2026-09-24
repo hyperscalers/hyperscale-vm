@@ -195,7 +195,7 @@ impl BatchTx {
     pub fn with_legs(mut self, legs: LegPlan) -> Self {
         let calls = match self.job {
             Job::Manifest { calls, .. } => calls,
-            Job::Records(_) | Job::Deletions(_) | Job::Tombstones(_) => Vec::new(),
+            Job::Records(_) | Job::Deletions(_) => Vec::new(),
         };
         self.job = Job::Manifest { calls, legs };
         self
@@ -261,7 +261,7 @@ impl BatchTx {
     pub fn with_calls(mut self, calls: Vec<NodeCall>) -> Self {
         let legs = match self.job {
             Job::Manifest { legs, .. } => legs,
-            Job::Records(_) | Job::Deletions(_) | Job::Tombstones(_) => LegPlan::whole(0),
+            Job::Records(_) | Job::Deletions(_) => LegPlan::whole(0),
         };
         self.job = Job::Manifest { calls, legs };
         self
@@ -272,7 +272,7 @@ impl BatchTx {
     pub fn calls(&self) -> &[NodeCall] {
         match &self.job {
             Job::Manifest { calls, .. } => calls,
-            Job::Records(_) | Job::Deletions(_) | Job::Tombstones(_) => &[],
+            Job::Records(_) | Job::Deletions(_) => &[],
         }
     }
 
@@ -283,7 +283,7 @@ impl BatchTx {
     pub(crate) fn record_cells(&self) -> Vec<SubstateKey> {
         match &self.job {
             Job::Manifest { legs, .. } => legs.records().collect(),
-            Job::Records(_) | Job::Deletions(_) | Job::Tombstones(_) => Vec::new(),
+            Job::Records(_) | Job::Deletions(_) => Vec::new(),
         }
     }
 
@@ -293,7 +293,7 @@ impl BatchTx {
     #[must_use]
     pub(crate) fn disposed_records(&self) -> Vec<SubstateKey> {
         match &self.job {
-            Job::Manifest { .. } | Job::Deletions(_) | Job::Tombstones(_) => Vec::new(),
+            Job::Manifest { .. } | Job::Deletions(_) => Vec::new(),
             Job::Records(disposals) => disposals.iter().map(|disposal| disposal.record).collect(),
         }
     }
@@ -307,7 +307,6 @@ impl BatchTx {
         match &self.job {
             Job::Manifest { .. } | Job::Records(_) => Vec::new(),
             Job::Deletions(deletions) => deletions.iter().map(|deletion| deletion.answer).collect(),
-            Job::Tombstones(keys) => keys.clone(),
         }
     }
 
@@ -316,7 +315,7 @@ impl BatchTx {
     pub(crate) fn claim_cells(&self) -> Vec<SubstateKey> {
         match &self.job {
             Job::Manifest { legs, .. } => legs.claims().collect(),
-            Job::Records(_) | Job::Deletions(_) | Job::Tombstones(_) => Vec::new(),
+            Job::Records(_) | Job::Deletions(_) => Vec::new(),
         }
     }
 
@@ -334,7 +333,7 @@ impl BatchTx {
     pub(crate) fn never_cells(&self) -> Vec<SubstateKey> {
         match &self.job {
             Job::Manifest { legs, .. } => legs.nevers().collect(),
-            Job::Records(_) | Job::Deletions(_) | Job::Tombstones(_) => Vec::new(),
+            Job::Records(_) | Job::Deletions(_) => Vec::new(),
         }
     }
 
@@ -399,17 +398,6 @@ pub enum Job {
     /// record its producer has since disposed of. It reads no record —
     /// there is none here to read — and moves nothing.
     Deletions(Vec<Deletion>),
-    /// No manifest: the retired records this shard holds whose grace
-    /// its own clock has passed, taken away.
-    ///
-    /// The producer's side of a crossing's end. A disposed record is
-    /// not removed where it is disposed of — it stands on as a
-    /// tombstone so its consumer can date the going of it by reading
-    /// the key absent, which is the one thing a state proof says
-    /// plainly. This is what finally takes it away, and the whole of
-    /// the licence is in the cell and the clock, so the kernel checks
-    /// it rather than trusting the composer.
-    Tombstones(Vec<SubstateKey>),
 }
 
 impl Job {
@@ -419,7 +407,7 @@ impl Job {
     pub fn departure(&self, node: u32, output: u32) -> Option<Departure> {
         match self {
             Self::Manifest { legs, .. } => legs.departure(node, output),
-            Self::Records(_) | Self::Deletions(_) | Self::Tombstones(_) => None,
+            Self::Records(_) | Self::Deletions(_) => None,
         }
     }
 }

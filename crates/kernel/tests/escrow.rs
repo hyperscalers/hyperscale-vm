@@ -24,9 +24,8 @@ use hyperscale_vm_kernel::{
     execute_batch,
 };
 use hyperscale_vm_types::{
-    AbortReason, Address, AddressClass, CROSSING_TOMBSTONE_GRACE_MS, Effect, EffectSet,
-    EffectTarget, MAX_CROSSINGS_PER_TX, Mode, Moves, Outcome, ResourceAddr, SubstateKey, TxHash,
-    encode_amount,
+    AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, MAX_CROSSINGS_PER_TX,
+    Mode, Moves, Outcome, ResourceAddr, SubstateKey, TxHash, encode_amount,
 };
 
 const RESOURCE: ResourceAddr = ResourceAddr::new([0xE1; 31]);
@@ -1264,23 +1263,12 @@ fn retiring(who: TxHash) -> BatchTx {
     ])
 }
 
-/// An owed record retires to a tombstone, whose going is what dates the
-/// disposal for its consumer.
-///
-/// **Why the key stands on, and only for an owed crossing.** A
-/// consumer's answer cell makes a replayed delivery abort, and a replay
-/// needs a bundle carrying the record to run at all — so the answer is
-/// needed only until no such bundle can still be admitted, which is one
-/// tombstone grace past this disposal. The consumer cannot read *when*
-/// the disposal was: a state proof says present or absent and never
-/// says a value. An absence it can read. So the producer holds the key
-/// for exactly that span and then takes it away.
-///
-/// An escrowed crossing needs none of it — its answer cell sweeps
-/// itself on the expiry the record is keyed by — which is why that half
-/// still goes outright.
+/// An owed record goes outright at its retirement, as an escrowed one
+/// does: the consumer reads the going of it at an anchor at or above
+/// the frontier its chain has read this producer at, so nothing dates
+/// the disposal and no key stands on for it.
 #[test]
-fn an_owed_record_retires_to_a_dated_tombstone() {
+fn an_owed_record_is_removed_on_retirement() {
     let mut store = MemoryStore::new();
     store.write(cell(PAYER), encode_amount(500).to_vec());
     let sent = execute(
@@ -1303,22 +1291,15 @@ fn an_owed_record_retires_to_a_dated_tombstone() {
         "{:?}",
         retired.receipts[&tx(13)],
     );
-    let tomb = retired
-        .store
-        .cell(record_key())
-        .and_then(|bytes| CrossingCell::from_bytes(&bytes))
-        .expect("an owed record stands on as a tombstone");
-    assert_eq!(tomb.terms, Terms::Retired, "retired rather than removed");
-    assert_eq!(tomb.amount, 0, "carrying no value to build a bundle from");
     assert_eq!(
-        tomb.expiry_ms,
-        1_000 + CROSSING_TOMBSTONE_GRACE_MS,
-        "and removed one grace past this disposal, which is the date its \
-         consumer reads off the key going",
+        retired.receipts[&tx(13)].delta.cells.get(&record_key()),
+        Some(&None),
+        "the record is removed where it is retired",
     );
+    assert!(retired.store.cell(record_key()).is_none());
 
-    // A second settlement reads a tombstone that names the same edge,
-    // and is refused rather than pushing the removal later.
+    // A second settlement finds no record, and is refused as the
+    // batch's defect.
     let again = execute(
         Arc::new(retired.store) as Arc<dyn Baseline>,
         &[retiring(tx(14))],
@@ -1327,7 +1308,7 @@ fn an_owed_record_retires_to_a_dated_tombstone() {
     .unwrap();
     assert!(
         !matches!(again.receipts[&tx(14)].outcome, Outcome::Completed { .. }),
-        "a tombstone is not a balance anything can be settled against",
+        "a retired record is not a balance anything can be settled against",
     );
 }
 
@@ -1392,9 +1373,7 @@ fn a_retire_deletes_the_record_and_moves_nothing() {
     assert_eq!(
         receipt.delta.cells.get(&record_key()),
         Some(&None),
-        "an escrowed crossing's record goes outright: its answer cell sweeps \
-         itself on the expiry the record is keyed by, so nothing needs its \
-         going dated"
+        "a retired record goes outright"
     );
     assert!(retired.store.cell(record_key()).is_none());
     assert_eq!(
