@@ -379,11 +379,11 @@ pub enum Terms {
     /// life.** The value is gone — credited back or moved where the
     /// consumer's claim ran — so nothing can be built from it and no
     /// delivery can run off it. What the key is still doing there is
-    /// carrying a clock: a consumer deletes its answer once no bundle
-    /// for the record can still be admitted, and it reads the record
-    /// rather than remembering it, because a proof carries a value hash
-    /// and never a value. An absence is the one thing a proof can say
-    /// plainly, so the producer holds the key for
+    /// carrying a clock: a consumer deletes its answer once no held
+    /// reading of the live record can still be admitted, and it reads
+    /// the record rather than remembering it. An absence is the one
+    /// reading whose meaning needs no clock, so the producer holds the
+    /// key for
     /// [`CROSSING_TOMBSTONE_GRACE_MS`](hyperscale_vm_types::CROSSING_TOMBSTONE_GRACE_MS)
     /// past the disposal and then takes it away. The going of it is the
     /// date.
