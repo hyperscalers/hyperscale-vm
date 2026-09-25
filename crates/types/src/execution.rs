@@ -492,19 +492,7 @@ pub enum AbortReason {
     /// write the state either way.
     #[hbor(discriminant = 71)]
     CrossingKeyRepeated,
-    /// A crossing no outbound leg consumes, carrying value with no one
-    /// cell behind it.
-    ///
-    /// Such a record names nobody: its consumer may claim it, and if the
-    /// consumer refuses nothing may take it back, so the value stands in
-    /// a cell no sweep reaches and no action can move. A crossing an
-    /// outbound leg consumes is the exception the whole shape is built
-    /// on — it is owed to that consumer and nothing is meant to take it
-    /// back. Every other one has to be able to come home, so the kernel
-    /// refuses to issue one that cannot rather than issue value into a
-    /// dead end.
-    #[hbor(discriminant = 75)]
-    CrossingWithoutRecourse,
+
     /// A body named a handle the table holds and its frame was never
     /// lent: a site bound for another node, or a bucket an earlier node
     /// left in flight.
@@ -522,6 +510,29 @@ pub enum AbortReason {
     /// Event bytes past what one transaction may emit between them.
     #[hbor(discriminant = 74)]
     EventBytesExceeded,
+    /// A crossing no outbound leg consumes, carrying value with no one
+    /// cell behind it.
+    ///
+    /// Such a record names nobody: its consumer may claim it, and if the
+    /// consumer refuses nothing may take it back, so the value stands in
+    /// a cell no sweep reaches and no action can move. A crossing an
+    /// outbound leg consumes is the exception the whole shape is built
+    /// on — it is owed to that consumer and nothing is meant to take it
+    /// back. Every other one has to be able to come home, so the kernel
+    /// refuses to issue one that cannot rather than issue value into a
+    /// dead end.
+    #[hbor(discriminant = 75)]
+    CrossingWithoutRecourse,
+    /// A member was planned to take an owed crossing.
+    ///
+    /// An owed crossing's consumer runs in no member: its commit fold
+    /// credits the record's reading and writes the taken answer, and is
+    /// the only writer of it. A plan filing one as a member's arrival
+    /// is a classification defect, and a take beside the fold's credit
+    /// would pay the crossing twice, so the kernel refuses it before it
+    /// claims or writes.
+    #[hbor(discriminant = 76)]
+    OwedArrival,
 }
 
 /// What one node answered with: the value its method handed back, in the
@@ -862,6 +873,7 @@ mod tests {
             (73, AbortReason::MissingCeiling),
             (74, AbortReason::EventBytesExceeded),
             (75, AbortReason::CrossingWithoutRecourse),
+            (76, AbortReason::OwedArrival),
         ];
         for (byte, reason) in classes {
             assert_eq!(

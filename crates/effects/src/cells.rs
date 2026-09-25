@@ -292,6 +292,11 @@ fn answer_key(
 /// it is all a reader gets — a record is not sweepable and no expiry in
 /// the key could make it so.
 ///
+/// Where the value lands is the kind's: an escrowed crossing's credit is
+/// the origin cell its [`Terms`] name, and an owed crossing's is the
+/// consumer's principal vault for the record's resource, credited by the
+/// consumer's commit fold.
+///
 /// The edge is named here as well as in the key because a reclaim reads
 /// this cell and nothing else — the producing shard credits the resource
 /// and the amount back from the leaf alone, holding no transaction body
@@ -387,8 +392,11 @@ pub enum Terms {
     },
     /// Owed to its consumer by a verdict that has. A crossing an
     /// outbound leg consumes is that consumer's from the moment the core
-    /// commits it, so no cell is the crossing's to return to and the
-    /// record stands until the claim retires it.
+    /// commits it, so no cell is the crossing's to return to. No member
+    /// takes it: the consumer's commit fold credits its principal vault
+    /// for the record's resource off the record's reading and writes the
+    /// `Taken`, and the record stands until the producer's fold reads
+    /// that `Taken` and retires it.
     Owed,
 }
 

@@ -271,6 +271,10 @@ pub enum SessionTrap {
     /// to go back to, so nothing could ever take it back.
     #[error("crossing cell {0:?} carries value with no cell to return it to")]
     CrossingWithoutRecourse(SubstateKey),
+    /// A member was planned to take an owed crossing, whose consumer's
+    /// commit fold credits it and which no member takes.
+    #[error("claim cell {0:?} takes an owed crossing, which only the consumer's fold credits")]
+    OwedArrival(SubstateKey),
 }
 
 impl From<SessionTrap> for AbortReason {
@@ -315,6 +319,7 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::EscrowRecordUnreadable(_) => Self::EscrowRecordUnreadable,
             SessionTrap::CrossingKeyRepeated(_) => Self::CrossingKeyRepeated,
             SessionTrap::CrossingWithoutRecourse(_) => Self::CrossingWithoutRecourse,
+            SessionTrap::OwedArrival(_) => Self::OwedArrival,
         }
     }
 }

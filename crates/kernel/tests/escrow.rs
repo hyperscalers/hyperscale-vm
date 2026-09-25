@@ -99,7 +99,10 @@ fn arriving(crossed: Crossed, never: Option<SubstateKey>) -> Arrival {
     Arrival {
         crossed,
         claim: claim_key(),
-        id: crossing(),
+        crossing: Crossing {
+            id: crossing(),
+            kind: Kind::Escrowed,
+        },
         never,
         validity_end_ms: VALIDITY_END_MS,
     }
@@ -467,6 +470,53 @@ fn a_take_states_the_validity_end_its_arrival_names() {
         claim_key(),
         crossing().answer_key(&TestHasher, Answered::Taken),
         "the figure is in the value, and the key is the crossing's",
+    );
+}
+
+/// A member planned to take an owed crossing is refused before it claims
+/// or writes anything: the consumer's commit fold is the only writer of
+/// an owed crossing's taken answer, so a take beside it would pay the
+/// crossing twice.
+#[test]
+fn an_owed_arrival_is_refused_by_the_kernel() {
+    let mut arrived = MemoryStore::new();
+    arrived.write(cell(PAYEE), encode_amount(0).to_vec());
+    let mut legs = LegPlan::whole(2);
+    legs.skip(0).unwrap();
+    let owed = Arrival {
+        crossing: Crossing {
+            id: crossing(),
+            kind: Kind::Owed,
+        },
+        ..arriving(
+            Crossed {
+                resource: RESOURCE,
+                amount: 200,
+            },
+            None,
+        )
+    };
+    legs.arrives(0, 0, &owed).unwrap();
+    let taken = run(
+        &arrived,
+        receiving(Crossed {
+            resource: RESOURCE,
+            amount: 200,
+        })
+        .with_legs(legs),
+    );
+    assert!(
+        matches!(
+            taken.outcome,
+            Outcome::UserError {
+                reason: AbortReason::OwedArrival
+            }
+        ),
+        "{taken:?}",
+    );
+    assert!(
+        !taken.delta.cells.contains_key(&claim_key()),
+        "and no claim is written",
     );
 }
 

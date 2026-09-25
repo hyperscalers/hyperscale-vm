@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use hyperscale_vm_effects::{Crossing, CrossingId};
+use hyperscale_vm_effects::Crossing;
 use hyperscale_vm_types::{MAX_CROSSINGS_PER_TX, ResourceAddr, SubstateKey};
 
 use crate::modes::ModeError;
@@ -196,10 +196,11 @@ pub struct Arrival {
     pub crossed: Crossed,
     /// The claim cell the execution taking it writes.
     pub claim: SubstateKey,
-    /// The crossing the claim answers for, which the claim's value
-    /// states because nothing else ever will: the producing node's
-    /// target lives in the manifest and not in either leaf.
-    pub id: CrossingId,
+    /// The crossing the claim answers for, with its kind: the identity
+    /// the claim's value states, because nothing else ever will — the
+    /// producing node's target lives in the manifest and not in either
+    /// leaf — and whether the crossing is owed, which no member takes.
+    pub crossing: Crossing,
     /// The decline cell the consumer's refusal writes for this edge,
     /// where the crossing is refusable; `None` for one owed to its
     /// consumer, which nothing takes back.
@@ -494,12 +495,15 @@ mod tests {
         }
     }
 
-    /// An owed arrival of `crossed`, taken into `claim` for `id`.
+    /// An escrowed arrival of `crossed`, taken into `claim` for `id`.
     fn arriving(crossed: Crossed, claim: SubstateKey, id: CrossingId) -> Arrival {
         Arrival {
             crossed,
             claim,
-            id,
+            crossing: Crossing {
+                id,
+                kind: Kind::Escrowed,
+            },
             never: None,
             validity_end_ms: 1_000,
         }

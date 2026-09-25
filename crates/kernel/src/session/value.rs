@@ -379,10 +379,14 @@ impl KernelSession {
         let Arrival {
             crossed,
             claim,
-            id,
+            crossing,
             validity_end_ms,
             ..
         } = *arrival;
+        if crossing.kind == Kind::Owed {
+            return Err(SessionTrap::OwedArrival(claim));
+        }
+        let id = crossing.id;
         self.escrow.claim(crossed)?;
         self.record_crossing(
             claim,
