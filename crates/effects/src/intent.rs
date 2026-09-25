@@ -49,7 +49,7 @@ use crate::admission::{
     AdmissionError, Admitted, IntentView, MAX_SOCKETS, Wired, admit_intents,
     check_instance_value_depth, check_value_depth, flatten, resolve_tree, walk,
 };
-use crate::cells::{crossing_expiry_ms, nullifier_expiry_ms, nullifier_key};
+use crate::cells::{nullifier_expiry_ms, nullifier_key};
 use crate::claim::Claim;
 use crate::dsl::PresentedGrants;
 use crate::graph::{ClaimRef, Constraint, ManifestGraph, ValueRef};
@@ -742,7 +742,6 @@ pub fn admit_tree(
             accounts: &intent.accounts,
             attested_by: &intent.attested_by,
             identity: record.intent,
-            expiry_ms: crossing_expiry_ms(&intent.header),
         })
         .collect();
     // The envelope's own records, layered behind what the chain already

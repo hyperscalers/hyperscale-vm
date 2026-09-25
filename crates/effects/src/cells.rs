@@ -10,8 +10,8 @@
 
 use hyperscale_hbor::{Hbor, from_slice, to_vec};
 use hyperscale_vm_types::{
-    ARTIFACT_GRACE_MS, Address, COMMITTED_GRACE_MS, CROSSING_GRACE_MS, IntentHash, LegShape,
-    ResourceAddr, SubstateKey, SweepBucket, TxHash,
+    ARTIFACT_GRACE_MS, Address, COMMITTED_GRACE_MS, IntentHash, LegShape, ResourceAddr,
+    SubstateKey, SweepBucket, TxHash,
 };
 
 use crate::KERNEL_SLOT_BASE;
@@ -225,12 +225,12 @@ pub fn committed_tx_key(
 /// collide are then two whose material the grinder chose, and reaching
 /// somebody else's is a second preimage again.
 ///
-/// The expiry is not in the identity at all, which is what separates
-/// this family from the sweepable ones: they lead their local half with
-/// the bucket their expiry falls in, and a key carrying no bucket is one
-/// no sweep can walk to. The edge alone names the record, and the record
-/// states its own expiry in its value, where it is the anchor a presence
-/// is asked from rather than a life.
+/// No time is in the identity at all, which is what separates this
+/// family from the sweepable ones: they lead their local half with the
+/// bucket their expiry falls in, and a key carrying no bucket is one no
+/// sweep can walk to. The edge alone names the record, and the record
+/// states its transaction's validity end in its value, where it is the
+/// anchor a presence is asked from rather than a life.
 fn escrow_record_key(
     hasher: &dyn Hasher,
     owner: impl Into<Address>,
@@ -282,7 +282,8 @@ fn answer_key(
 }
 
 /// What an escrow record cell holds: the value that left, the edge it
-/// left on, when it stops being claimable, and who issued it.
+/// left on, when its issuing transaction's validity ends, and who
+/// issued it.
 ///
 /// Self-describing on [`Marker`]'s terms: the value re-derives the
 /// key, so a reader holding nothing but the leaf can tell what it is.
@@ -298,7 +299,7 @@ fn answer_key(
 /// cells that is — an account's vault for a resource is the account
 /// package's own layout, and a component's is another.
 ///
-/// The expiry, the issuing transaction and the consumer's target are
+/// The validity end, the issuing transaction and the consumer's target are
 /// terms of the reclaim rather than the record's identity, which stays
 /// the edge the key is derived from. The transaction is what a
 /// successor's reclaim is admitted under, the tick and its receipt being
@@ -322,17 +323,13 @@ pub struct CrossingCell {
     pub local: u32,
     /// Which of its outputs the edge carried.
     pub output: u32,
-    /// The producing intent's own window end plus [`CROSSING_GRACE_MS`] —
-    /// the intent's, not the transaction's, so the composer chooses no
-    /// part of it.
+    /// The issuing transaction's validity end: the instant from which no
+    /// core can admit it, since a block admits a transaction only at a
+    /// weighted time before this figure.
     ///
-    /// What it names depends on the terms. For an escrowed crossing it is
-    /// when no chain can still be claiming: the sweep of the claim cell
-    /// the record is decided against, keyed by this same figure so the
-    /// two agree. For an owed one nothing sweeps, so what is left of it
-    /// is the deadline a reader recovers from it — the anchor a presence
-    /// is asked from, and not a life.
-    pub expiry_ms: u64,
+    /// A reader's deadline is this plus the finalization delay the chain
+    /// allows; the figure enters no key.
+    pub validity_end_ms: u64,
     /// The transaction whose execution issued the crossing.
     pub tx: TxHash,
     /// The consuming node's target, which the consumer's answer cells
@@ -733,15 +730,15 @@ impl CrossingId {
     }
 
     /// The record's value, once the execution knows what crossed, which
-    /// transaction issued it, when it stops being claimable and on what
-    /// terms.
+    /// transaction issued it, when that transaction's validity ends and
+    /// on what terms.
     #[must_use]
     pub const fn cell(
         self,
         tx: TxHash,
         resource: ResourceAddr,
         amount: u128,
-        expiry_ms: u64,
+        validity_end_ms: u64,
         terms: Terms,
     ) -> CrossingCell {
         CrossingCell {
@@ -750,7 +747,7 @@ impl CrossingId {
             intent: self.intent,
             local: self.local,
             output: self.output,
-            expiry_ms,
+            validity_end_ms,
             tx,
             consumer: self.consumer,
             terms,
@@ -857,17 +854,4 @@ impl CrossingLeaf {
 #[must_use]
 pub const fn nullifier_expiry_ms(header: &IntentHeader) -> u64 {
     header.validity_end_ms.saturating_add(ARTIFACT_GRACE_MS)
-}
-
-/// When the escrow cells of every node an intent holds stop being owed:
-/// the window its signer signed, plus the grace [`CROSSING_GRACE_MS`]
-/// takes.
-///
-/// The intent's own window, on [`nullifier_expiry_ms`]'s terms and for
-/// the same two reasons. The grace differs because the families do: a
-/// nullifier is answered on its own chain, and a crossing is decided
-/// across a reshape cut.
-#[must_use]
-pub const fn crossing_expiry_ms(header: &IntentHeader) -> u64 {
-    header.validity_end_ms.saturating_add(CROSSING_GRACE_MS)
 }

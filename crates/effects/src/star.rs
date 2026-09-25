@@ -291,7 +291,6 @@ fn assemble(
                 declares: declares.next().unwrap_or_else(|| vec![node.target]),
                 intent: origin.intent,
                 local: origin.local,
-                expiry_ms: origin.expiry_ms,
             }
         })
         .collect()
@@ -822,7 +821,7 @@ mod tests {
                     .and_then(|package| package.methods.get(node.method.as_str()).cloned())
                     .expect("the fixture resolves every target");
                 let unsigned = NodeOrigin::unsigned(index);
-                NodeOrigin::of(unsigned.intent, index, unsigned.expiry_ms, &signature)
+                NodeOrigin::of(unsigned.intent, index, &signature)
             })
             .collect()
     }
@@ -892,7 +891,6 @@ mod tests {
             declares: vec![target],
             intent: IntentHash(Hash32([7; 32])),
             local,
-            expiry_ms: 1_000,
         }
     }
 

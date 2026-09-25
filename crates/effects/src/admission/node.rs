@@ -240,12 +240,8 @@ impl Admission<'_> {
         let resolved = self.resolve_records(node)?;
         let signature = self.resolve_signature(&resolved, node, node_index)?;
         let meta = resolved.instance.as_ref();
-        self.origins.push(NodeOrigin::of(
-            intent.identity,
-            local,
-            intent.expiry_ms,
-            signature,
-        ));
+        self.origins
+            .push(NodeOrigin::of(intent.identity, local, signature));
 
         let (bound, inputs) = self.bind_args(intent_index, local, node, signature, node_index)?;
 

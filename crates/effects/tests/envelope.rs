@@ -65,9 +65,9 @@ fn claim_key(
     crossing(BOB, consumer, intent, local, output).answer_key(&TestHasher, Answered::Taken)
 }
 use hyperscale_vm_types::{
-    ARTIFACT_GRACE_MS, Address, COMMITTED_GRACE_MS, CROSSING_GRACE_MS, CallTarget, Effect,
-    EffectTarget, MAX_ATTESTATIONS, MAX_INTENTS, MAX_MANIFEST_NODES, Mode, Moves, NetworkId,
-    PrincipalAddr, ResourceAddr, SWEEP_BUCKET_SHIFT, SubstateKey, SweepBucket, TxHash,
+    ARTIFACT_GRACE_MS, Address, COMMITTED_GRACE_MS, CallTarget, Effect, EffectTarget,
+    MAX_ATTESTATIONS, MAX_INTENTS, MAX_MANIFEST_NODES, Mode, Moves, NetworkId, PrincipalAddr,
+    ResourceAddr, SWEEP_BUCKET_SHIFT, SubstateKey, SweepBucket, TxHash,
 };
 use proptest::prelude::{any, proptest};
 
@@ -705,16 +705,6 @@ fn an_origin_names_the_intent_its_node_signed() {
         .map(|origin| (origin.intent, origin.local))
         .collect();
     assert_eq!(origins, vec![(root, 0), (bob, 0), (root, 1), (bob, 1)],);
-    // And each carries its own intent's horizon: the window that
-    // intent's signer signed plus the crossing grace, which outlives the
-    // nullifier's by the span a successor needs to decide an inherited
-    // record across a reshape cut.
-    for origin in admitted.origins() {
-        assert_eq!(
-            origin.expiry_ms,
-            TEST_HEADER.validity_end_ms + CROSSING_GRACE_MS,
-        );
-    }
     for record in admitted.intents() {
         assert_eq!(
             record.expiry_ms,
@@ -754,18 +744,20 @@ fn an_escrow_key_is_fixed_by_the_intent_its_node_signed() {
     let (one, other) = (origin_of(&first, 1), origin_of(&second, 1));
     assert_eq!(one, other);
     assert_eq!(one.intent, bob);
-    assert_eq!(
-        record_key(BOB, one.intent, one.local, 0),
-        record_key(BOB, other.intent, other.local, 0),
+    // No crossing key carries a time: the record and both of the
+    // consumer's answers sit where they sat, however the transaction's
+    // window moved.
+    let (one, other) = (
+        crossing(BOB, ALICE, one.intent, one.local, 0),
+        crossing(BOB, ALICE, other.intent, other.local, 0),
     );
-
-    // The root's own nodes moved with the root's window, which is the
-    // same rule read from the other side: the party whose signature
-    // fixes the window is the party whose cells it keys.
-    assert_ne!(
-        origin_of(&first, 0).expiry_ms,
-        origin_of(&second, 0).expiry_ms
-    );
+    assert_eq!(one.record_key(&TestHasher), other.record_key(&TestHasher));
+    for answered in [Answered::Taken, Answered::Never] {
+        assert_eq!(
+            one.answer_key(&TestHasher, answered),
+            other.answer_key(&TestHasher, answered),
+        );
+    }
 }
 
 /// The material separates every edge of every node of every intent, and
@@ -868,8 +860,9 @@ fn neither_a_record_nor_its_claim_carries_a_bucket() {
     );
 }
 
-/// A crossing cell says what left, on which edge, when it stops being
-/// claimable, which transaction issued it and which target the
+/// A crossing cell says what left, on which edge, when its issuing
+/// transaction's validity ends, which transaction issued it and which
+/// target the
 /// consumer's answers sit under — so a reclaim reads the leaf and
 /// nothing else, holding no transaction body and no window of them, and
 /// the leaf rebuilds the whole crossing. A successor inherits the prefix
@@ -883,13 +876,14 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
     let tx = TxHash(Hash32([7; 32]));
     let id = crossing(BOB, ALICE, bob, 1, 0);
     let credit = child_key(&TestHasher, BOB, ESCROW_RECORD_SLOT, &[b"vault".to_vec()]);
-    let cell = id.cell(tx, RES_Y, 10, EXPIRY_MS, Terms::Escrowed { credit });
+    let validity_end_ms = TEST_HEADER.validity_end_ms;
+    let cell = id.cell(tx, RES_Y, 10, validity_end_ms, Terms::Escrowed { credit });
 
     assert_eq!(cell.resource, RES_Y);
     assert_eq!(cell.amount, 10);
     assert_eq!(cell.intent, bob);
     assert_eq!((cell.local, cell.output), (1, 0));
-    assert_eq!(cell.expiry_ms, EXPIRY_MS);
+    assert_eq!(cell.validity_end_ms, validity_end_ms);
     assert_eq!(cell.tx, tx);
     assert_eq!(cell.consumer, Address::from(ALICE));
     assert_eq!(cell.terms, Terms::Escrowed { credit });
@@ -2587,7 +2581,7 @@ mod cell_widths {
             intent: IntentHash(hash32()),
             local: u32::MAX,
             output: u32::MAX,
-            expiry_ms: u64::MAX,
+            validity_end_ms: u64::MAX,
             tx: TxHash(hash32()),
             consumer: key().owner,
             terms: Terms::Escrowed { credit: key() },

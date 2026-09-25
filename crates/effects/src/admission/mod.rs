@@ -114,14 +114,6 @@ pub struct NodeOrigin {
     pub intent: IntentHash,
     /// Its index within that intent's own graph.
     pub local: u32,
-    /// When the cells this node's crossings write stop being owed: its
-    /// intent's own window end plus the retention grace.
-    ///
-    /// The intent's window and never the transaction's. A transaction's
-    /// window is the intersection of every intent's, so this is never
-    /// the earlier of the two — and it is signed by the party whose
-    /// cells it keys, where the transaction's is the composer's.
-    pub expiry_ms: u64,
     /// Whether the method's only movement is one reserve of its own
     /// ([`MethodSignature::is_reservation_shaped`]).
     pub(crate) reservation_shaped: bool,
@@ -136,16 +128,10 @@ pub struct NodeOrigin {
 impl NodeOrigin {
     /// The origin of a node at `local` in `intent`, calling `signature`.
     #[must_use]
-    pub(crate) fn of(
-        intent: IntentHash,
-        local: u32,
-        expiry_ms: u64,
-        signature: &MethodSignature,
-    ) -> Self {
+    pub(crate) fn of(intent: IntentHash, local: u32, signature: &MethodSignature) -> Self {
         Self {
             intent,
             local,
-            expiry_ms,
             reservation_shaped: signature.is_reservation_shaped(),
             commits_nothing: signature.commits_nothing(),
             unrefusable: signature.is_unrefusable(),
@@ -160,7 +146,6 @@ impl NodeOrigin {
         Self {
             intent: IntentHash(Hash32([0; 32])),
             local,
-            expiry_ms: 0,
             reservation_shaped: false,
             commits_nothing: false,
             unrefusable: false,

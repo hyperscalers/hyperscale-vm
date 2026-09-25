@@ -85,25 +85,6 @@ pub const ARTIFACT_GRACE_MS: u64 = 144_000;
 /// argument for the span beside the window.
 pub const COMMITTED_GRACE_MS: u64 = 264_000;
 
-/// How long an escrow record and the claim it is decided against outlive
-/// the producing intent's signed window, in milliseconds.
-///
-/// The one exception to [`ARTIFACT_GRACE_MS`], and the reason is that
-/// this is the one family a reshape reads across a cut. A record written
-/// near a cut is inherited by a successor that must decide it against a
-/// claim cell now sitting on some other chain, and every other bound on
-/// reshape evidence is one span — so a claim window shorter than that
-/// leaves a record nobody can dispose of, its value stranded where
-/// presence and absence are both unprovable.
-///
-/// The floor is far below the figure and is a different argument: a
-/// crossing's delivery is admissible to the delivery window's close, one
-/// admitted at the last moment has claimed by the finalization delay or
-/// never will, and the reclaim that proves it needs the room every
-/// abandonment gets to commit. The workspace asserts the figure against
-/// the reshape span and the floor against the sum.
-pub const CROSSING_GRACE_MS: u64 = 1_500_000;
-
 /// The bound on intents one envelope's tree may carry. A wire bound on
 /// the decode; the attestations each carries are priced, per scheme,
 /// by [`DeclaredWork::signature`].

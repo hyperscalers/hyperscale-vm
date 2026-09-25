@@ -33,8 +33,8 @@ const PAYEE: u8 = 0xC1;
 /// A second cell to reserve from, for the node that departs twice.
 const OTHER: u8 = 0xB1;
 
-/// Any expiry; nothing here reaches one.
-const EXPIRY_MS: u64 = 1_000_000;
+/// Any validity end; nothing here reaches one.
+const VALIDITY_END_MS: u64 = 1_000_000;
 
 fn test_hash(data: &[u8]) -> [u8; 32] {
     TestHasher.hash(b"crypto", &[data]).0
@@ -81,7 +81,7 @@ fn claim_key() -> SubstateKey {
 }
 
 /// The edge as a producer files it: the record it writes, the crossing
-/// it writes there, and when the record stops being claimable.
+/// it writes there, and the issuing transaction's validity end.
 fn record_departure() -> Departure {
     Departure {
         record: record_key(),
@@ -89,7 +89,7 @@ fn record_departure() -> Departure {
             id: crossing(),
             kind: Kind::Escrowed,
         },
-        expiry_ms: EXPIRY_MS,
+        validity_end_ms: VALIDITY_END_MS,
     }
 }
 
@@ -920,6 +920,32 @@ fn a_delivered_crossing_names_nobody() {
         Terms::Owed,
         "a delivering edge credits the producing frame for nothing",
     );
+}
+
+/// The record states the validity end its departure names, byte for
+/// byte, whichever kind of crossing it is.
+#[test]
+fn a_record_states_the_validity_end_its_departure_names() {
+    let states = |departure: Departure| {
+        let mut store = MemoryStore::new();
+        store.write(cell(PAYER), encode_amount(1_000).to_vec());
+        let sent = execute(
+            Arc::new(store) as Arc<dyn Baseline>,
+            &[sending_on(200, departure)],
+            ExecutionMode::Serial,
+        )
+        .unwrap();
+        CrossingCell::from_bytes(&sent.store.cell(record_key()).unwrap())
+            .unwrap()
+            .validity_end_ms
+    };
+    let later = Departure {
+        validity_end_ms: VALIDITY_END_MS + 7,
+        ..record_departure()
+    };
+    assert_eq!(states(record_departure()), VALIDITY_END_MS);
+    assert_eq!(states(delivered_departure()), VALIDITY_END_MS);
+    assert_eq!(states(later), VALIDITY_END_MS + 7);
 }
 
 /// The record names the cell the value actually left, so a reclaim

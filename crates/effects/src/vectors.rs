@@ -126,7 +126,6 @@ pub fn crossing_key_vectors(hasher: &dyn Hasher) -> Vec<(&'static str, SubstateK
         declares: Vec::new(),
         intent: IntentHash(Hash32([seed ^ 0xFF; 32])),
         local: u32::from(seed) % 3,
-        expiry_ms: 1_000,
     };
     let consumer = |seed: u8| Address::new([seed; 31], AddressClass::Principal);
     let first = CrossingId::of_edge(&producer(0x11), consumer(0x22), 0);

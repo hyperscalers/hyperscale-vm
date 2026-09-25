@@ -150,7 +150,8 @@ impl EscrowDelta {
 }
 
 /// One edge leaving this execution: the record cell it writes, the
-/// crossing it writes there, and when the record stops being claimable.
+/// crossing it writes there, and the issuing transaction's validity end
+/// the record states.
 ///
 /// All three are the parent's to name. The record sits under the
 /// producing node's target and the crossing names the consuming node's,
@@ -163,10 +164,9 @@ pub struct Departure {
     pub record: SubstateKey,
     /// The crossing, with the kind of record this departure writes.
     pub crossing: Crossing,
-    /// When the record stops being claimable: the producing intent's
-    /// own window end plus its grace, so no record is issued with an
-    /// expiry of nothing.
-    pub expiry_ms: u64,
+    /// The issuing transaction's validity end, which the record states
+    /// so a holder of the leaf and no body can date the crossing.
+    pub validity_end_ms: u64,
 }
 
 /// One record this execution takes back rather than runs a node for: a
@@ -505,7 +505,7 @@ mod tests {
                 id,
                 kind: Kind::Escrowed,
             },
-            expiry_ms: 1_000,
+            validity_end_ms: 1_000,
         }
     }
 

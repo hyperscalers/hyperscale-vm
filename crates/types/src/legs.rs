@@ -85,8 +85,4 @@ pub struct LegShape {
     pub intent: IntentHash,
     /// The node's index within its own intent's graph.
     pub local: u32,
-    /// When the cells this node's crossings write stop being owed: its
-    /// intent's own window end plus the escrow grace — never the
-    /// transaction's, which is the composer's to choose.
-    pub expiry_ms: u64,
 }

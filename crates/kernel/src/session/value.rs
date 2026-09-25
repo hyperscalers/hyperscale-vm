@@ -269,7 +269,7 @@ impl KernelSession {
             departure
                 .crossing
                 .id
-                .cell(self.tx, resource, amount, departure.expiry_ms, terms)
+                .cell(self.tx, resource, amount, departure.validity_end_ms, terms)
                 .to_bytes(),
         )?;
         Ok(crossed)
@@ -486,7 +486,7 @@ mod tests {
                 id: crossing(),
                 kind: Kind::Escrowed,
             },
-            expiry_ms: 1_000,
+            validity_end_ms: 1_000,
         }
     }
 

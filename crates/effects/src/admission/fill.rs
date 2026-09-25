@@ -104,12 +104,6 @@ pub struct IntentView<'a> {
     /// composition the composer assembles, which is material a party
     /// other than the cell's owner can grind.
     pub(crate) identity: IntentHash,
-    /// When what this intent's signature brought into being stops being
-    /// owed: the window its own signer signed plus the artifact grace,
-    /// on [`nullifier_expiry_ms`](crate::nullifier_expiry_ms)'s terms. The
-    /// other half of the material a node's cells are keyed by, and
-    /// carried here for the reason the identity is.
-    pub(crate) expiry_ms: u64,
 }
 
 impl<'a> Deref for IntentView<'a> {
