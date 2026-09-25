@@ -128,9 +128,19 @@ impl<S: Ord + Copy> Star<S> {
     /// member issues.
     #[must_use]
     pub fn delivers_at(&self, node: u32, shard: S) -> bool {
-        self.edges.iter().any(|edge| {
-            edge.crossing.kind == Kind::Owed && edge.consumer == node && edge.to.contains(&shard)
-        })
+        delivered_at(&self.edges, node, &shard)
+    }
+
+    /// The shards that commit the transaction: every shard running a
+    /// node it does not take delivery of there.
+    ///
+    /// A shard outside it runs nothing but deliveries, and an owed
+    /// crossing's delivery is its consumer's commit fold crediting the
+    /// record's reading, so that shard never includes the transaction.
+    /// Only meaningful for a shape that divides.
+    #[must_use]
+    pub fn committing(&self) -> BTreeSet<S> {
+        committing_at(&self.roles, &self.homes, &self.core, &self.edges)
     }
 
     /// The whole shape on every participant: no placement read, nothing
@@ -452,6 +462,32 @@ fn settle(
     settled
 }
 
+/// Whether an owed crossing lands on `shard` for `node`: the node is
+/// delivered there rather than run.
+fn delivered_at<S: Ord>(edges: &[CrossingEdge<S>], node: u32, shard: &S) -> bool {
+    edges.iter().any(|edge| {
+        edge.crossing.kind == Kind::Owed && edge.consumer == node && edge.to.contains(shard)
+    })
+}
+
+/// Every shard running some node it does not take delivery of: the
+/// one reading of [`Star::committing`], which the decomposition rules
+/// ask before the star exists.
+fn committing_at<S: Ord + Copy>(
+    roles: &[LegRole],
+    homes: &[S],
+    core: &BTreeSet<S>,
+    edges: &[CrossingEdge<S>],
+) -> BTreeSet<S> {
+    (0..u32::try_from(homes.len()).unwrap_or(u32::MAX))
+        .flat_map(|node| {
+            running_at(roles, homes, core, node)
+                .into_iter()
+                .filter(move |shard| !delivered_at(edges, node, shard))
+        })
+        .collect()
+}
+
 /// The node's settled role. A node past the manifest is core, the
 /// direction every unsure answer takes.
 fn role_at(roles: &[LegRole], node: u32) -> LegRole {
@@ -561,11 +597,11 @@ impl Placed<'_> {
         edges: &[CrossingEdge],
         shards: &dyn ShardResolver,
     ) -> bool {
-        let participants: BTreeSet<ShardId> = self.homes.iter().copied().collect();
+        let committing = committing_at(self.roles, self.homes, self.core, edges);
         self.core_bears_a_verdict()
             && self.a_leg_sits_off_the_core()
             && Self::crossings_fit(edges)
-            && Self::every_route_owner_participates(&participants, payer, accounts, shards)
+            && Self::every_route_owner_commits(&committing, payer, accounts, shards)
             && self.every_account_is_awaited(accounts, edges, shards)
             && self.every_node_declares_inside_its_scope(shards)
             && self.every_edge_has_one_consumer()
@@ -600,34 +636,34 @@ impl Placed<'_> {
     /// Every party the routing declares beyond any node's frame — the
     /// fee payer, whose vault the reservation and the burn reach, and
     /// every account an intent acts as, whose nullifier and `auth` cell
-    /// sit under its prefix — sits on a shard that runs a member, so
-    /// some member's scope covers it.
+    /// sit under its prefix — sits on a shard that commits the
+    /// transaction, so some member's scope covers it.
     ///
-    /// What is excluded is a shard that runs nothing. A payer on such a
-    /// shard is a routing participant with no member: the shard would
-    /// freeze divided, compose a member and find no plan for it, and
-    /// attest a refusal with the price apart while the core committed.
-    /// An account likewise would have its nullifier written by whichever
-    /// member happened to run there, after the core committed or never.
-    /// Running whole provisions the vault and writes the nullifier where
-    /// a whole execution always did.
+    /// What is excluded is a shard that runs nothing, and a shard that
+    /// runs only deliveries. A payer on either is a routing participant
+    /// with no member: the shard would freeze divided and include
+    /// nothing, and the reservation and the burn would have nowhere to
+    /// land while the core committed. An account likewise would have its
+    /// nullifier written by no member at all. Running whole provisions
+    /// the vault and writes the nullifier where a whole execution always
+    /// did. The cost is a transfer whose fee payer sits on the
+    /// recipient's shard: it runs whole on both shards, two certificate
+    /// rounds where the divided shape ran one member.
     ///
-    /// The test is per shard and not per node, which is what it means to
-    /// say some member's scope covers the owner: a payer whose shard
-    /// runs only a delivery passes, and should. What provisions the
-    /// vault and takes the reservation is that the shard runs a member
-    /// at all, not which role that member plays. An account is held to
+    /// The test is per shard and not per node: what provisions the vault
+    /// and takes the reservation is that the shard commits a member at
+    /// all, not which role that member plays. An account is held to
     /// more — its shard must be one the core waits on — and
     /// `every_account_is_awaited` says why.
-    fn every_route_owner_participates(
-        participants: &BTreeSet<ShardId>,
+    fn every_route_owner_commits(
+        committing: &BTreeSet<ShardId>,
         payer: Address,
         accounts: &[Address],
         shards: &dyn ShardResolver,
     ) -> bool {
         std::iter::once(payer)
             .chain(accounts.iter().copied())
-            .all(|owner| participants.contains(&shards.shard_of(owner)))
+            .all(|owner| committing.contains(&shards.shard_of(owner)))
     }
 
     /// Every shard the core's verdict waits on: the core's own, and the
@@ -653,7 +689,7 @@ impl Placed<'_> {
     /// Every account an intent acts as sits on a shard the core waits
     /// on.
     ///
-    /// Stronger than participating, and for one reason: an account's
+    /// Stronger than committing, and for one reason: an account's
     /// sign-in is a condition its own shard judges at materialization,
     /// and a body that ran on the claim its signature resolved to is
     /// retracted only where the verdict it belongs to waited on that
@@ -667,7 +703,7 @@ impl Placed<'_> {
     /// what [`settle`] made of it.
     ///
     /// The fee payer is not held to this. What the reservation needs is
-    /// a member of any side, which is what participating already says.
+    /// a member of any role, which is what committing already says.
     fn every_account_is_awaited(
         &self,
         accounts: &[Address],
@@ -1875,6 +1911,35 @@ mod tests {
         assert!(
             !over(&[alice, bob]),
             "one account the core does not wait on is enough",
+        );
+    }
+
+    /// A fee payer on a shard that only takes delivery runs the shape
+    /// whole: that shard commits nothing, so nothing there could take
+    /// the reservation or burn the fee. The same payer on the core's
+    /// shard, or on the inbound leg's, divides.
+    #[test]
+    fn a_payer_whose_shard_only_delivers_does_not_decompose() {
+        let alice = Address::new([0x11; 31], AddressClass::Component);
+        let venue = Address::new([0x91; 31], AddressClass::Component);
+        let bob = Address::new([0x22; 31], AddressClass::Component);
+        let legs = vec![
+            leg(alice, LegRole::Inbound, &[], 0),
+            leg(venue, LegRole::Core, &[(0, 0)], 1),
+            leg(bob, LegRole::Outbound, &[(1, 0)], 2),
+        ];
+        let star = |payer: Address| star_at(&legs, payer, &[], &resolver());
+
+        let divided = star(alice);
+        assert!(divided.decomposes, "a payer on the inbound leg's shard");
+        assert!(star(venue).decomposes, "and one on the core's");
+        assert!(
+            !divided.committing().contains(&resolver().shard_of(bob)),
+            "the delivery's shard commits nothing",
+        );
+        assert!(
+            !star(bob).decomposes,
+            "so a payer there has nowhere to be charged, and the shape runs whole",
         );
     }
 

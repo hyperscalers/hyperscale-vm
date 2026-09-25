@@ -18,6 +18,7 @@ use crate::KERNEL_SLOT_BASE;
 use crate::hash::Hasher;
 use crate::intent::IntentHeader;
 use crate::types::{SlotId, bucketed_child_key, child_key};
+use crate::vocabulary::vault_cell;
 
 /// The kernel-reserved role of intent nullifier substates under an
 /// account's prefix.
@@ -731,6 +732,15 @@ impl CrossingId {
             self.local,
             self.output,
         )
+    }
+
+    /// The cell an owed crossing's value lands in: the consumer's
+    /// principal vault for `resource`, credited by the consumer's commit
+    /// fold when it reads the record. It sits under the consumer, beside
+    /// the taken answer that guards it, so the two route to one shard.
+    #[must_use]
+    pub fn owed_credit(&self, hasher: &dyn Hasher, resource: ResourceAddr) -> SubstateKey {
+        vault_cell(hasher, self.consumer, resource)
     }
 
     /// The record's value, once the execution knows what crossed, which

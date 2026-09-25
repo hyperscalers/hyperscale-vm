@@ -9,8 +9,11 @@
 //! rather than a lost optimisation.
 
 use hyperscale_hbor::Name;
+use hyperscale_vm_effects::vocabulary::VAULT;
+use hyperscale_vm_effects::{Clause, Expr, ModeExpr, ParamType, SlotRef, TargetExpr};
 use hyperscale_vm_runtime::check_method;
 use hyperscale_vm_stdlib::{ACCOUNT_MODULE, STAKING_MODULE, account, staking};
+use hyperscale_vm_types::Moves;
 
 /// One method, as the two conditions below see it.
 struct Method {
@@ -113,4 +116,52 @@ fn the_candidates_for_the_mark_are_what_they_were() {
         vec!["account::deposit".to_string()],
         "the methods eligible for the mark moved; decide whether the marks should follow",
     );
+}
+
+/// Every method carrying the mark takes one fungible bucket and
+/// declares one effect: a credit of that bucket to its own target's
+/// vault for the bucket's resource.
+///
+/// What an owed crossing's consumer fold stands on. The fold credits the
+/// consumer's vault from the record and runs no body, which is the
+/// method's whole effect only while every total method is this deposit.
+/// A second total method of any other shape has to fail here, or bring
+/// its own movement to the fold.
+#[test]
+fn a_total_method_is_a_vault_deposit() {
+    let bucket = || Expr::ResourceOf(Box::new(Expr::Arg(0)));
+    let deposit = vec![Clause::Effect {
+        guard: None,
+        target: TargetExpr::Point(Expr::ChildKey {
+            owner: Box::new(Expr::SelfAddr),
+            slot: SlotRef::Fixed(VAULT),
+            material: vec![bucket()],
+        }),
+        mode: ModeExpr::Delta { moves: Moves::In },
+        denomination: Some(Box::new(bucket())),
+        reach: None,
+    }];
+    for (name, metadata) in [
+        ("account", account::metadata()),
+        ("staking", staking::metadata()),
+    ] {
+        for (method, signature) in &metadata.methods {
+            if !signature.totality.is_total() {
+                continue;
+            }
+            assert_eq!(
+                signature.params,
+                [ParamType::Bucket],
+                "{name}::{method} is total and takes something other than one fungible bucket",
+            );
+            assert_eq!(
+                signature.effects, deposit,
+                "{name}::{method} is total and declares something other than its vault's credit",
+            );
+            assert!(
+                signature.issues.is_empty() && signature.destroys.is_empty(),
+                "{name}::{method} is total and moves supply",
+            );
+        }
+    }
 }

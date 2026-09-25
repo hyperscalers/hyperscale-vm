@@ -24,10 +24,32 @@
 //! so it is found because it was told rather than because it was
 //! derived.
 
-use crate::types::SlotId;
+use hyperscale_vm_types::{Address, ResourceAddr, SubstateKey};
+
+use crate::hash::Hasher;
+use crate::types::{SlotId, Value, child_key};
 
 /// A fungible balance cell under its holder.
 pub const VAULT: SlotId = SlotId(1);
+
+/// The principal vault cell for `resource` under `owner`.
+///
+/// The one derivation of the key the account metadata's deposit and
+/// withdraw clauses compute, the fee burn debits and an owed crossing's
+/// credit lands in.
+#[must_use]
+pub fn vault_cell(
+    hasher: &dyn Hasher,
+    owner: impl Into<Address>,
+    resource: ResourceAddr,
+) -> SubstateKey {
+    child_key(
+        hasher,
+        owner,
+        VAULT,
+        &[Value::Address(resource.into()).canonical_bytes()],
+    )
+}
 /// A creation-fixed configuration leaf.
 pub const CONFIG: SlotId = SlotId(2);
 /// An account's stored authority: the cell its shard judges the keys
