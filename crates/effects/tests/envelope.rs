@@ -900,8 +900,11 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
 
     // The claim's value: which transaction took it, on this edge, and
     // the producer whose record it answers for.
-    let claimed = CrossingAnswer::from_bytes(&id.answer(tx, Answered::Taken).to_bytes())
-        .expect("a claim is its own value");
+    let claimed = CrossingAnswer::from_bytes(
+        &id.answer(tx, Answered::Taken, TEST_HEADER.validity_end_ms)
+            .to_bytes(),
+    )
+    .expect("a claim is its own value");
     assert_eq!(
         claimed,
         CrossingAnswer {
@@ -911,6 +914,7 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
             output: 0,
             producer: BOB.into(),
             answered: Answered::Taken,
+            validity_end_ms: TEST_HEADER.validity_end_ms,
         }
     );
     assert_eq!(
@@ -946,8 +950,11 @@ fn a_claim_names_its_record_and_no_sweep_reaches_it() {
     let answer = id.answer_key(&TestHasher, Answered::Taken);
     assert_ne!(answer, record, "a claim never aliases the record it claims");
 
-    let claim = CrossingAnswer::from_bytes(&id.answer(tx, Answered::Taken).to_bytes())
-        .expect("a claim is its own value");
+    let claim = CrossingAnswer::from_bytes(
+        &id.answer(tx, Answered::Taken, TEST_HEADER.validity_end_ms)
+            .to_bytes(),
+    )
+    .expect("a claim is its own value");
     assert_eq!(
         claim,
         CrossingAnswer {
@@ -957,6 +964,7 @@ fn a_claim_names_its_record_and_no_sweep_reaches_it() {
             output: 0,
             producer: BOB.into(),
             answered: Answered::Taken,
+            validity_end_ms: TEST_HEADER.validity_end_ms,
         }
     );
     assert_eq!(
@@ -970,6 +978,20 @@ fn a_claim_names_its_record_and_no_sweep_reaches_it() {
         claim.to_bytes().len() <= CROSSING_ANSWER_CELL_BYTES as usize,
         "a claim encodes under the width the declaration prices it at: {} bytes",
         claim.to_bytes().len(),
+    );
+    let widest = CrossingAnswer {
+        tx: TxHash(Hash32([0xFF; 32])),
+        intent: IntentHash(Hash32([0xFF; 32])),
+        local: u32::MAX,
+        output: u32::MAX,
+        producer: BOB.into(),
+        answered: Answered::Never,
+        validity_end_ms: u64::MAX,
+    };
+    assert!(
+        widest.to_bytes().len() <= CROSSING_ANSWER_CELL_BYTES as usize,
+        "and so does the widest answer: {} bytes",
+        widest.to_bytes().len(),
     );
 
     // Its key carries no expiry bucket, which is what keeps every sweep
@@ -1011,10 +1033,16 @@ fn a_decline_is_the_claims_other_half_at_its_own_key() {
     let tx = TxHash(Hash32([9; 32]));
     let id = crossing(BOB, ALICE, bob, 1, 0);
 
-    let declined = CrossingAnswer::from_bytes(&id.answer(tx, Answered::Never).to_bytes())
-        .expect("a decline is its own value");
-    let taken = CrossingAnswer::from_bytes(&id.answer(tx, Answered::Taken).to_bytes())
-        .expect("a claim is its own value");
+    let declined = CrossingAnswer::from_bytes(
+        &id.answer(tx, Answered::Never, TEST_HEADER.validity_end_ms)
+            .to_bytes(),
+    )
+    .expect("a decline is its own value");
+    let taken = CrossingAnswer::from_bytes(
+        &id.answer(tx, Answered::Taken, TEST_HEADER.validity_end_ms)
+            .to_bytes(),
+    )
+    .expect("a claim is its own value");
     assert_eq!(
         declined,
         CrossingAnswer {
@@ -1064,8 +1092,8 @@ fn a_crossing_leaf_reads_by_derivation() {
     let id = crossing(BOB, ALICE, bob, 1, 0);
     let credit = child_key(&TestHasher, BOB, ESCROW_RECORD_SLOT, &[b"vault".to_vec()]);
     let record = id.cell(tx, RES_Y, 10, EXPIRY_MS, Terms::Escrowed { credit });
-    let taken = id.answer(tx, Answered::Taken);
-    let never = id.answer(tx, Answered::Never);
+    let taken = id.answer(tx, Answered::Taken, TEST_HEADER.validity_end_ms);
+    let never = id.answer(tx, Answered::Never, TEST_HEADER.validity_end_ms);
     let record_key = id.record_key(&TestHasher);
     let claim_key = id.answer_key(&TestHasher, Answered::Taken);
     let decline_key = id.answer_key(&TestHasher, Answered::Never);

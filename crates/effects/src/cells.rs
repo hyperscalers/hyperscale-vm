@@ -599,6 +599,10 @@ pub struct CrossingAnswer {
     pub producer: Address,
     /// Which way the answer went.
     pub answered: Answered,
+    /// The answering transaction's validity end, the figure the record
+    /// this answers for states: what dates a consumer's question about
+    /// that record as the producer's is dated.
+    pub validity_end_ms: u64,
 }
 
 impl CrossingAnswer {
@@ -758,7 +762,12 @@ impl CrossingId {
     /// answered the crossing, on this edge, which way, and the producer
     /// whose record it answers for.
     #[must_use]
-    pub const fn answer(self, tx: TxHash, answered: Answered) -> CrossingAnswer {
+    pub const fn answer(
+        self,
+        tx: TxHash,
+        answered: Answered,
+        validity_end_ms: u64,
+    ) -> CrossingAnswer {
         CrossingAnswer {
             tx,
             intent: self.intent,
@@ -766,6 +775,7 @@ impl CrossingId {
             output: self.output,
             producer: self.producer,
             answered,
+            validity_end_ms,
         }
     }
 }

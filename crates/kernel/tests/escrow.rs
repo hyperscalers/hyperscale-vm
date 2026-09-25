@@ -18,7 +18,7 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_embed::GuestArg;
 use hyperscale_vm_kernel::{
-    Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, Departure, Disposal,
+    Arrival, Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, Departure, Disposal,
     EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked, KernelSession,
     LegPlan, ManifestWalk, MemoryStore, Receipt, Substates, decode_amount, execute_batch,
 };
@@ -89,6 +89,18 @@ fn record_departure() -> Departure {
             id: crossing(),
             kind: Kind::Escrowed,
         },
+        validity_end_ms: VALIDITY_END_MS,
+    }
+}
+
+/// The fixture's crossing arriving here as `crossed`, taken into its
+/// claim cell, with the decline cell `never` screened.
+fn arriving(crossed: Crossed, never: Option<SubstateKey>) -> Arrival {
+    Arrival {
+        crossed,
+        claim: claim_key(),
+        id: crossing(),
+        never,
         validity_end_ms: VALIDITY_END_MS,
     }
 }
@@ -409,8 +421,7 @@ fn receiving(crossed: Crossed) -> BatchTx {
 fn receiving_as(who: TxHash, crossed: Crossed) -> BatchTx {
     let mut legs = LegPlan::whole(2);
     legs.skip(0).unwrap();
-    legs.arrives(0, 0, crossed, claim_key(), crossing(), None)
-        .unwrap();
+    legs.arrives(0, 0, &arriving(crossed, None)).unwrap();
     BatchTx::new(
         who,
         declared(&[
@@ -424,6 +435,39 @@ fn receiving_as(who: TxHash, crossed: Crossed) -> BatchTx {
     )
     .with_calls(vec![taking(), call("put", 1, 0)])
     .with_legs(legs)
+}
+
+/// A take writes the arrival's validity end into the claim, at the key
+/// the crossing derives: the figure the record states, so the consumer
+/// dates its question as the producer does.
+#[test]
+fn a_take_states_the_validity_end_its_arrival_names() {
+    let mut arrived = MemoryStore::new();
+    arrived.write(cell(PAYEE), encode_amount(0).to_vec());
+    let taken = run(
+        &arrived,
+        receiving(Crossed {
+            resource: RESOURCE,
+            amount: 200,
+        }),
+    );
+    assert!(
+        matches!(taken.outcome, Outcome::Completed { .. }),
+        "{taken:?}"
+    );
+    let claim = CrossingAnswer::from_bytes(
+        taken.delta.cells[&claim_key()]
+            .as_deref()
+            .expect("the claim committed"),
+    )
+    .expect("a claim decodes");
+    assert_eq!(claim.validity_end_ms, VALIDITY_END_MS);
+    assert_eq!(claim.answered, Answered::Taken);
+    assert_eq!(
+        claim_key(),
+        crossing().answer_key(&TestHasher, Answered::Taken),
+        "the figure is in the value, and the key is the crossing's",
+    );
 }
 
 /// The two halves reconcile without either reading the other: what the
@@ -591,13 +635,13 @@ fn an_aborted_claim_leaves_the_crossing_claimable() {
     legs.arrives(
         0,
         0,
-        Crossed {
-            resource: RESOURCE,
-            amount: 200,
-        },
-        claim_key(),
-        crossing(),
-        None,
+        &arriving(
+            Crossed {
+                resource: RESOURCE,
+                amount: 200,
+            },
+            None,
+        ),
     )
     .unwrap();
     let entry = BatchTx::new(
@@ -734,13 +778,13 @@ fn an_undeclared_claim_cell_refuses_the_batch() {
     legs.arrives(
         0,
         0,
-        Crossed {
-            resource: RESOURCE,
-            amount: 200,
-        },
-        claim_key(),
-        crossing(),
-        None,
+        &arriving(
+            Crossed {
+                resource: RESOURCE,
+                amount: 200,
+            },
+            None,
+        ),
     )
     .unwrap();
     let entry = BatchTx::new(
@@ -1407,8 +1451,7 @@ fn receiving_refusable(who: TxHash, crossed: Crossed, declares_never: bool) -> B
     let never = crossing().answer_key(&TestHasher, Answered::Never);
     let mut legs = LegPlan::whole(2);
     legs.skip(0).unwrap();
-    legs.arrives(0, 0, crossed, claim_key(), crossing(), Some(never))
-        .unwrap();
+    legs.arrives(0, 0, &arriving(crossed, Some(never))).unwrap();
     let mut effects = vec![
         Effect {
             target: EffectTarget::Point(cell(PAYEE)),
@@ -1435,7 +1478,12 @@ fn a_crossing_answered_never_cannot_be_taken() {
     let never = crossing().answer_key(&TestHasher, Answered::Never);
     let mut store = MemoryStore::new();
     store.write(cell(PAYEE), encode_amount(0).to_vec());
-    store.write(never, crossing().answer(tx(9), Answered::Never).to_bytes());
+    store.write(
+        never,
+        crossing()
+            .answer(tx(9), Answered::Never, VALIDITY_END_MS)
+            .to_bytes(),
+    );
 
     let receipt = run(
         &store,

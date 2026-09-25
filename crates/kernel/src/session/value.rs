@@ -12,13 +12,13 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    Answered, CrossingCell, CrossingId, IssuanceGrant, Kind, ResourceKind, Terms, distinct_ids,
+    Answered, CrossingCell, IssuanceGrant, Kind, ResourceKind, Terms, distinct_ids,
 };
 use hyperscale_vm_types::{ResourceAddr, SubstateKey};
 
 use super::buckets::Held;
 use super::{Capability, KernelSession, Op, SessionTrap, Settlement};
-use crate::escrow::{Crossed, Departure, Disposal};
+use crate::escrow::{Arrival, Crossed, Departure, Disposal};
 use crate::ledger::AmountLedger;
 use crate::modes::{DeltaOp, decode_amount};
 use crate::store::WorkingStore;
@@ -375,14 +375,20 @@ impl KernelSession {
     /// # Errors
     ///
     /// [`SessionTrap`] on an overflowing escrow total.
-    pub(crate) fn escrow_in(
-        &mut self,
-        crossed: Crossed,
-        claim: SubstateKey,
-        id: CrossingId,
-    ) -> Result<u32, SessionTrap> {
+    pub(crate) fn escrow_in(&mut self, arrival: &Arrival) -> Result<u32, SessionTrap> {
+        let Arrival {
+            crossed,
+            claim,
+            id,
+            validity_end_ms,
+            ..
+        } = *arrival;
         self.escrow.claim(crossed)?;
-        self.record_crossing(claim, id.answer(self.tx, Answered::Taken).to_bytes())?;
+        self.record_crossing(
+            claim,
+            id.answer(self.tx, Answered::Taken, validity_end_ms)
+                .to_bytes(),
+        )?;
         Ok(self.open_bucket(Held::Amount(crossed.amount), crossed.resource, None))
     }
 

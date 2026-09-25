@@ -207,6 +207,8 @@ pub struct Arrival {
     /// Filed so the take screen covers it: a `Never` standing at it is
     /// the crossing already answered, and the member must not run.
     pub never: Option<SubstateKey>,
+    /// The taking transaction's validity end, which the claim states.
+    pub validity_end_ms: u64,
 }
 
 /// What this execution does with one of a manifest's nodes.
@@ -345,28 +347,11 @@ impl LegPlan {
     /// [`PlanFault`]: a node past the manifest, an edge already acted on,
     /// an arrival for a node this execution runs itself, or a plan past
     /// [`MAX_CROSSINGS_PER_TX`].
-    pub fn arrives(
-        &mut self,
-        node: u32,
-        output: u32,
-        crossed: Crossed,
-        claim: SubstateKey,
-        id: CrossingId,
-        never: Option<SubstateKey>,
-    ) -> Result<(), PlanFault> {
+    pub fn arrives(&mut self, node: u32, output: u32, arrival: &Arrival) -> Result<(), PlanFault> {
         if self.action(node) == NodeAction::Run {
             return Err(PlanFault::ArrivesHere { node, output });
         }
-        self.act(
-            node,
-            output,
-            EdgeAction::Arrives(Arrival {
-                crossed,
-                claim,
-                id,
-                never,
-            }),
-        )
+        self.act(node, output, &EdgeAction::Arrives(*arrival))
     }
 
     /// File the record cell one departing edge writes.
@@ -385,7 +370,7 @@ impl LegPlan {
         if self.action(node) == NodeAction::Elsewhere {
             return Err(PlanFault::DepartsElsewhere { node, output });
         }
-        self.act(node, output, EdgeAction::Departs(departure))
+        self.act(node, output, &EdgeAction::Departs(departure))
     }
 
     /// The node's action. A node past the manifest runs, which is what
@@ -405,7 +390,7 @@ impl LegPlan {
 
     /// File `action` at one edge, which must be free: a second action on
     /// one edge is two answers to what happens to one value.
-    fn act(&mut self, node: u32, output: u32, action: EdgeAction) -> Result<(), PlanFault> {
+    fn act(&mut self, node: u32, output: u32, action: &EdgeAction) -> Result<(), PlanFault> {
         if self.nodes.get(node as usize).is_none() {
             return Err(PlanFault::NoSuchNode { node });
         }
@@ -415,7 +400,7 @@ impl LegPlan {
         if self.edges.len() >= MAX_CROSSINGS_PER_TX {
             return Err(PlanFault::TooWide);
         }
-        self.edges.insert((node, output), action);
+        self.edges.insert((node, output), *action);
         Ok(())
     }
 }
@@ -509,6 +494,17 @@ mod tests {
         }
     }
 
+    /// An owed arrival of `crossed`, taken into `claim` for `id`.
+    fn arriving(crossed: Crossed, claim: SubstateKey, id: CrossingId) -> Arrival {
+        Arrival {
+            crossed,
+            claim,
+            id,
+            never: None,
+            validity_end_ms: 1_000,
+        }
+    }
+
     fn crossed(tag: u8, amount: u128) -> Crossed {
         Crossed {
             resource: resource(tag),
@@ -583,7 +579,7 @@ mod tests {
         let mut plan = LegPlan::whole(3);
         plan.skip(1).expect("inside the manifest");
         let claim = crossing(9).answer_key(&TestHasher, Answered::Taken);
-        plan.arrives(1, 0, crossed(1, 50), claim, crossing(9), None)
+        plan.arrives(1, 0, &arriving(crossed(1, 50), claim, crossing(9)))
             .expect("fits");
         plan.departs(2, 0, departing(8)).expect("fits");
 
@@ -592,12 +588,7 @@ mod tests {
         assert!(plan.runs(2));
         assert_eq!(
             plan.arrival(1, 0),
-            Some(Arrival {
-                crossed: crossed(1, 50),
-                claim,
-                id: crossing(9),
-                never: None,
-            }),
+            Some(arriving(crossed(1, 50), claim, crossing(9))),
         );
         assert_eq!(plan.departure(2, 0), Some(departing(8)));
         assert_eq!(plan.arrival(1, 1), None, "another output is another edge");
@@ -614,10 +605,10 @@ mod tests {
             Err(PlanFault::EdgeTwice { node: 0, output: 0 }),
         );
         plan.skip(1).expect("inside the manifest");
-        plan.arrives(1, 0, crossed(1, 5), claim(3), crossing(3), None)
+        plan.arrives(1, 0, &arriving(crossed(1, 5), claim(3), crossing(3)))
             .expect("fits");
         assert_eq!(
-            plan.arrives(1, 0, crossed(1, 6), claim(4), crossing(4), None),
+            plan.arrives(1, 0, &arriving(crossed(1, 6), claim(4), crossing(4))),
             Err(PlanFault::EdgeTwice { node: 1, output: 0 }),
         );
     }
@@ -628,7 +619,7 @@ mod tests {
     fn an_edge_agrees_with_the_node_it_hangs_off() {
         let mut plan = LegPlan::whole(2);
         assert_eq!(
-            plan.arrives(0, 0, crossed(1, 5), claim(9), crossing(9), None),
+            plan.arrives(0, 0, &arriving(crossed(1, 5), claim(9), crossing(9))),
             Err(PlanFault::ArrivesHere { node: 0, output: 0 }),
         );
         plan.skip(1).expect("inside the manifest");
