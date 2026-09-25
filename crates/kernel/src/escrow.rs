@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_vm_effects::{Crossing, CrossingId};
-use hyperscale_vm_types::{Address, MAX_CROSSINGS_PER_TX, ResourceAddr, SubstateKey};
+use hyperscale_vm_types::{MAX_CROSSINGS_PER_TX, ResourceAddr, SubstateKey};
 
 use crate::modes::ModeError;
 
@@ -169,69 +169,23 @@ pub struct Departure {
     pub expiry_ms: u64,
 }
 
-/// One record this execution settles rather than runs a node for: a
-/// crossing the producing shard issued, either taken back or retired.
+/// One record this execution takes back rather than runs a node for: a
+/// crossing the producing shard issued that no consumer will take.
 ///
-/// The record is read and deleted either way. Taken back, its resource
-/// and amount are credited to the cell the value left, and nothing else
-/// is written; retired, nothing moves, since the consumer's committed
-/// claim moved the value where it ran. Every term is the leaf's, so a
-/// replica holding the prefix and nothing else — a split child —
-/// composes a settlement from the record alone.
+/// The record is read and deleted, and its resource and amount are
+/// credited to the cell the value left; nothing else is written. Every
+/// term is the leaf's, so a replica holding the prefix and nothing else
+/// — a split child — composes a reclaim from the record alone.
 ///
-/// Evidence for either is the parent's to establish. What the kernel
-/// checks is that the record is there to read, and its removal is what
-/// refuses a second settlement.
+/// The evidence is the parent's to establish. What the kernel checks is
+/// that the record is there to read, and its removal is what refuses a
+/// second reclaim. A record whose consumer took the crossing is not
+/// this job's: its removal is a commit-fold write licensed by the
+/// consumer's answer read present, and reaches no session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Disposal {
     /// The record cell to read.
     pub record: SubstateKey,
-    /// What the settlement does with the record.
-    pub disposition: Disposition,
-}
-
-/// One answer cell a member deletes: the cell, and the record it has to
-/// name.
-///
-/// The consumer's own housekeeping, once the crossing it answered is
-/// over. An answer is needed only while the record it answers for
-/// stands, and the only thing that removes a record is the producer's
-/// disposal — which happens against this very cell read present. So an
-/// answer whose record is gone answers a question nobody can ask again.
-///
-/// What licenses the deletion is a reading the deleting block carries,
-/// and none of it reaches here: the kernel holds the member to
-/// naming a cell that is there and answers for the record claimed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Deletion {
-    /// The answer cell to read and remove, under the consuming node's
-    /// target — this shard's own leaf, which is why a deletion needs
-    /// nothing carried with it.
-    pub answer: SubstateKey,
-    /// The producing node's target, under which the record that answer
-    /// answers for sits.
-    ///
-    /// Carried so the cell and the licence cannot come apart: the
-    /// reading that licenses the deletion is of that record, and the
-    /// cell is deleted only where it names the same producer — the
-    /// answer's own key already binds the rest of the crossing.
-    pub producer: Address,
-}
-
-/// What a settlement does with a record.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Disposition {
-    /// No consumer claimed: credit the value back to the cell it left
-    /// and remove the record.
-    ///
-    /// Only a crossing naming a cell to credit is disposed of this way.
-    /// One an outbound leg consumes names none and nothing takes it
-    /// back, so its only disposal is the retirement its consumer's
-    /// claim licenses.
-    Reclaim,
-    /// The consumer's claim committed: delete the record and move
-    /// nothing.
-    Retire,
 }
 
 /// What arrived for the edge a node this execution does not run would

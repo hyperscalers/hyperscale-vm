@@ -39,7 +39,7 @@ use hyperscale_vm_types::{
     MAX_EVENT_BYTES_PER_TX, Mode, ModeKind, Moves, Outcome, SubstateKey, TxHash, UnmetCondition,
 };
 
-use crate::escrow::{Deletion, Departure, Disposal, EscrowDelta, LegPlan};
+use crate::escrow::{Departure, Disposal, EscrowDelta, LegPlan};
 use crate::ledger::AmountLedger;
 use crate::locality::OwnerSet;
 use crate::overlay::OverlayStore;
@@ -195,7 +195,7 @@ impl BatchTx {
     pub fn with_legs(mut self, legs: LegPlan) -> Self {
         let calls = match self.job {
             Job::Manifest { calls, .. } => calls,
-            Job::Records(_) | Job::Deletions(_) => Vec::new(),
+            Job::Records(_) => Vec::new(),
         };
         self.job = Job::Manifest { calls, legs };
         self
@@ -206,14 +206,6 @@ impl BatchTx {
     #[must_use]
     pub fn with_disposals(mut self, disposals: Vec<Disposal>) -> Self {
         self.job = Job::Records(disposals);
-        self
-    }
-
-    /// Bind the answer cells this execution deletes instead of walking a
-    /// manifest.
-    #[must_use]
-    pub fn with_deletions(mut self, deletions: Vec<Deletion>) -> Self {
-        self.job = Job::Deletions(deletions);
         self
     }
 
@@ -261,7 +253,7 @@ impl BatchTx {
     pub fn with_calls(mut self, calls: Vec<NodeCall>) -> Self {
         let legs = match self.job {
             Job::Manifest { legs, .. } => legs,
-            Job::Records(_) | Job::Deletions(_) => LegPlan::whole(0),
+            Job::Records(_) => LegPlan::whole(0),
         };
         self.job = Job::Manifest { calls, legs };
         self
@@ -272,41 +264,28 @@ impl BatchTx {
     pub fn calls(&self) -> &[NodeCall] {
         match &self.job {
             Job::Manifest { calls, .. } => calls,
-            Job::Records(_) | Job::Deletions(_) => &[],
+            Job::Records(_) => &[],
         }
     }
 
     /// Every record cell this execution creates: what its departing
-    /// edges write. A settlement creates none — it reads records and
+    /// edges write. A reclaim creates none — it reads records and
     /// deletes them.
     #[must_use]
     pub(crate) fn record_cells(&self) -> Vec<SubstateKey> {
         match &self.job {
             Job::Manifest { legs, .. } => legs.records().collect(),
-            Job::Records(_) | Job::Deletions(_) => Vec::new(),
+            Job::Records(_) => Vec::new(),
         }
     }
 
-    /// Every record cell this execution disposes of: what a settlement
-    /// deletes, whether it retires the record or takes it back. A
+    /// Every record cell this execution takes back and deletes. A
     /// manifest disposes of none — it issues them.
     #[must_use]
     pub(crate) fn disposed_records(&self) -> Vec<SubstateKey> {
         match &self.job {
-            Job::Manifest { .. } | Job::Deletions(_) => Vec::new(),
+            Job::Manifest { .. } => Vec::new(),
             Job::Records(disposals) => disposals.iter().map(|disposal| disposal.record).collect(),
-        }
-    }
-
-    /// Every answer cell this execution deletes: what a deletion
-    /// removes once the record it answered for is gone. Every other job
-    /// deletes none — a manifest writes answers, and a settlement reads
-    /// them on the far side of a crossing.
-    #[must_use]
-    pub(crate) fn disposed_answers(&self) -> Vec<SubstateKey> {
-        match &self.job {
-            Job::Manifest { .. } | Job::Records(_) => Vec::new(),
-            Job::Deletions(deletions) => deletions.iter().map(|deletion| deletion.answer).collect(),
         }
     }
 
@@ -315,7 +294,7 @@ impl BatchTx {
     pub(crate) fn claim_cells(&self) -> Vec<SubstateKey> {
         match &self.job {
             Job::Manifest { legs, .. } => legs.claims().collect(),
-            Job::Records(_) | Job::Deletions(_) => Vec::new(),
+            Job::Records(_) => Vec::new(),
         }
     }
 
@@ -333,7 +312,7 @@ impl BatchTx {
     pub(crate) fn never_cells(&self) -> Vec<SubstateKey> {
         match &self.job {
             Job::Manifest { legs, .. } => legs.nevers().collect(),
-            Job::Records(_) | Job::Deletions(_) => Vec::new(),
+            Job::Records(_) => Vec::new(),
         }
     }
 
@@ -357,8 +336,8 @@ impl BatchTx {
 ///
 /// A manifest is walked: its lowered invocations run in node order, under
 /// a plan saying which of them this participant runs and what crosses at
-/// the edges between them. Records are settled: no node is invoked, and
-/// each record named is read and taken back or retired. A settlement
+/// the edges between them. Records are taken back: no node is invoked,
+/// and each record named is read, credited back and removed. A reclaim
 /// names cells and not a manifest, which is what lets a shard holding
 /// the record and no body — a reshape successor — compose one.
 #[derive(Clone, Debug)]
@@ -388,16 +367,8 @@ pub enum Job {
         /// statement of which participant this is.
         legs: LegPlan,
     },
-    /// Settle the records named, in order, invoking nothing.
+    /// Take back the records named, in order, invoking nothing.
     Records(Vec<Disposal>),
-    /// Delete the answer cells named, in order, invoking nothing.
-    ///
-    /// The consumer's housekeeping once a crossing is over. Where
-    /// [`Self::Records`] disposes of a record on evidence of what its
-    /// consumer did, this one removes an answer this shard wrote whose
-    /// record its producer has since disposed of. It reads no record —
-    /// there is none here to read — and moves nothing.
-    Deletions(Vec<Deletion>),
 }
 
 impl Job {
@@ -407,7 +378,7 @@ impl Job {
     pub fn departure(&self, node: u32, output: u32) -> Option<Departure> {
         match self {
             Self::Manifest { legs, .. } => legs.departure(node, output),
-            Self::Records(_) | Self::Deletions(_) => None,
+            Self::Records(_) => None,
         }
     }
 }
@@ -937,15 +908,14 @@ fn created_cells(entry: &BatchTx) -> Vec<(SubstateKey, Outcome)> {
 /// screen holds to an exclusive declaration.
 ///
 /// Wider than [`created_cells`] by the cells a job deletes — the
-/// records a settlement disposes of, and the answers a deletion removes
-/// — and by the decline cells a member's refusal writes. None is
-/// created here: a removal is a write on the same cell, and a `Never`
-/// is written by the host under the member's name, so each belongs in
-/// the same conflict group and wants the same exclusive declaration.
-/// Screening creations alone let a settlement whose declaration omitted
-/// a record it deletes through, to surface later as an undeclared
-/// access: a kernel defect, and a halt, where a batch that cannot be
-/// run should simply refuse.
+/// records a reclaim disposes of — and by the decline cells a member's
+/// refusal writes. None is created here: a removal is a write on the
+/// same cell, and a `Never` is written by the host under the member's
+/// name, so each belongs in the same conflict group and wants the same
+/// exclusive declaration. Screening creations alone let a reclaim whose
+/// declaration omitted a record it deletes through, to surface later as
+/// an undeclared access: a kernel defect, and a halt, where a batch
+/// that cannot be run should simply refuse.
 fn marker_writes(entry: &BatchTx) -> Vec<(SubstateKey, Outcome)> {
     created_cells(entry)
         .into_iter()
@@ -957,9 +927,8 @@ fn marker_writes(entry: &BatchTx) -> Vec<(SubstateKey, Outcome)> {
         )
         .chain(
             entry
-                .disposed_answers()
+                .never_cells()
                 .into_iter()
-                .chain(entry.never_cells())
                 .map(|key| (key, Outcome::EscrowAlreadyClaimed { key })),
         )
         .collect()

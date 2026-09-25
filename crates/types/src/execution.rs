@@ -480,7 +480,7 @@ pub enum AbortReason {
     /// land in an overlay nobody settles. A classification that let a
     /// member reach it is the defect, so the kernel refuses rather than
     /// drops.
-    #[hbor(discriminant = 71)]
+    #[hbor(discriminant = 70)]
     OutsideScope,
     /// One execution wrote two crossings at one cell.
     ///
@@ -490,7 +490,7 @@ pub enum AbortReason {
     /// consumer is credited twice against a single claim. Admission
     /// refuses the shapes that reach it; this is the kernel refusing to
     /// write the state either way.
-    #[hbor(discriminant = 72)]
+    #[hbor(discriminant = 71)]
     CrossingKeyRepeated,
     /// A crossing no outbound leg consumes, carrying value with no one
     /// cell behind it.
@@ -503,20 +503,8 @@ pub enum AbortReason {
     /// back. Every other one has to be able to come home, so the kernel
     /// refuses to issue one that cannot rather than issue value into a
     /// dead end.
-    #[hbor(discriminant = 76)]
+    #[hbor(discriminant = 75)]
     CrossingWithoutRecourse,
-    // Discriminant 77 is retired and never reused.
-    /// A deletion named an answer cell that is absent, does not decode,
-    /// or answers for a record other than the one it deletes against.
-    ///
-    /// The composing chain establishes that the crossing is over — the
-    /// record read absent twice, at producer anchors far enough apart
-    /// that nothing it promised is servable — and names the cell that
-    /// answered it. Both are the parent's, so a mismatch here is the
-    /// batch's own defect, and the kernel refuses rather than remove a
-    /// cell still answering for a record that stands.
-    #[hbor(discriminant = 78)]
-    CrossingAnswerUnreadable,
     /// A body named a handle the table holds and its frame was never
     /// lent: a site bound for another node, or a bucket an earlier node
     /// left in flight.
@@ -526,13 +514,13 @@ pub enum AbortReason {
     /// frame, which resolves exactly the handles the walk lent it and the
     /// ones it made while it ran. Distinct from an unknown handle so a
     /// receipt says which fence answered.
-    #[hbor(discriminant = 73)]
+    #[hbor(discriminant = 72)]
     HandleOutsideFrame,
     /// A lowered call at a node the batch bound no compute ceiling for.
-    #[hbor(discriminant = 74)]
+    #[hbor(discriminant = 73)]
     MissingCeiling,
     /// Event bytes past what one transaction may emit between them.
-    #[hbor(discriminant = 75)]
+    #[hbor(discriminant = 74)]
     EventBytesExceeded,
 }
 
@@ -868,13 +856,12 @@ mod tests {
             (67, AbortReason::ConditionStraddlesScope),
             (68, AbortReason::EscrowCreditUndeclared),
             (69, AbortReason::EscrowRecordUnreadable),
-            (71, AbortReason::OutsideScope),
-            (72, AbortReason::CrossingKeyRepeated),
-            (73, AbortReason::HandleOutsideFrame),
-            (74, AbortReason::MissingCeiling),
-            (75, AbortReason::EventBytesExceeded),
-            (76, AbortReason::CrossingWithoutRecourse),
-            (78, AbortReason::CrossingAnswerUnreadable),
+            (70, AbortReason::OutsideScope),
+            (71, AbortReason::CrossingKeyRepeated),
+            (72, AbortReason::HandleOutsideFrame),
+            (73, AbortReason::MissingCeiling),
+            (74, AbortReason::EventBytesExceeded),
+            (75, AbortReason::CrossingWithoutRecourse),
         ];
         for (byte, reason) in classes {
             assert_eq!(

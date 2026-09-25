@@ -601,21 +601,21 @@ fn satisfies(
 /// Run a job that invokes no node: what it writes, in order, or the
 /// first trap that stops it.
 ///
-/// A settlement, a refusal and a deletion are the three of them. None
-/// costs fuel, none reaches a guest, and so none can refuse for a
-/// guest's reason — what each can refuse for is its own cells, which is
-/// the batch's defect and not the transaction's.
+/// A reclaim is the one of them. It costs no fuel and reaches no guest,
+/// and so cannot refuse for a guest's reason — what it can refuse for
+/// is its own cells, which is the batch's defect and not the
+/// transaction's.
 fn walk_cells(
     mut session: KernelSession,
     mut each: impl FnMut(&mut KernelSession) -> Result<(), SessionTrap>,
 ) -> RunResult {
     if let Err(trap) = each(&mut session) {
         let outcome = match trap {
-            SessionTrap::EscrowRecordUnreadable(_)
-            | SessionTrap::EscrowCreditUndeclared(_)
-            | SessionTrap::CrossingAnswerUnreadable(_) => Outcome::ProtocolError {
-                reason: trap.into(),
-            },
+            SessionTrap::EscrowRecordUnreadable(_) | SessionTrap::EscrowCreditUndeclared(_) => {
+                Outcome::ProtocolError {
+                    reason: trap.into(),
+                }
+            }
             other => Outcome::UserError {
                 reason: other.into(),
             },
@@ -636,22 +636,13 @@ fn walk_cells(
 impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
     fn run(&self, entry: &BatchTx, mut session: KernelSession) -> Result<RunResult, Unavailable> {
         let (calls, legs) = match &entry.job {
-            // The records this member disposes of: read, credited back
-            // or retired, deleted.
+            // The records this member takes back: read, credited back,
+            // deleted.
             Job::Records(disposals) => {
                 return Ok(walk_cells(session, |session| {
                     disposals
                         .iter()
                         .try_for_each(|disposal| session.escrow_settle(disposal))
-                }));
-            }
-            // The answer cells it deletes: crossings this shard answered
-            // whose records their producers have since disposed of.
-            Job::Deletions(deletions) => {
-                return Ok(walk_cells(session, |session| {
-                    deletions
-                        .iter()
-                        .try_for_each(|deletion| session.escrow_delete(deletion))
                 }));
             }
             Job::Manifest { calls, legs } => (calls, legs),

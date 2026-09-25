@@ -641,7 +641,7 @@ impl CrossingAnswer {
 /// No expiry, because none of the keys carries one: the record and the
 /// answers are unbucketed, so nothing sweeps them, and the record states
 /// its own expiry in its value.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hbor)]
 pub struct CrossingId {
     /// The producing node's target, which the record sits under.
     pub producer: Address,

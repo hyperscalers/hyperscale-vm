@@ -12,14 +12,13 @@
 use std::collections::BTreeSet;
 
 use hyperscale_vm_effects::{
-    Answered, CrossingAnswer, CrossingCell, CrossingId, IssuanceGrant, Kind, ResourceKind, Terms,
-    distinct_ids,
+    Answered, CrossingCell, CrossingId, IssuanceGrant, Kind, ResourceKind, Terms, distinct_ids,
 };
 use hyperscale_vm_types::{ResourceAddr, SubstateKey};
 
 use super::buckets::Held;
 use super::{Capability, KernelSession, Op, SessionTrap, Settlement};
-use crate::escrow::{Crossed, Deletion, Departure, Disposal, Disposition};
+use crate::escrow::{Crossed, Departure, Disposal};
 use crate::ledger::AmountLedger;
 use crate::modes::{DeltaOp, decode_amount};
 use crate::store::WorkingStore;
@@ -292,8 +291,8 @@ impl KernelSession {
         }
     }
 
-    /// Settle one record this execution issued: take the crossing back,
-    /// or retire the record once its claim committed.
+    /// Take back one record this execution issued: credit the crossing
+    /// to the cell it left and remove the record.
     ///
     /// Taking it back counts the crossing as a loss and credits it to
     /// the cell the value left, so the fold balances with no term of its
@@ -321,66 +320,27 @@ impl KernelSession {
             .read(disposal.record)?
             .and_then(|bytes| CrossingCell::from_bytes(&bytes))
             .ok_or(SessionTrap::EscrowRecordUnreadable(disposal.record))?;
-        if disposal.disposition == Disposition::Reclaim {
-            let Terms::Escrowed { credit } = record.terms else {
-                return Err(SessionTrap::EscrowRecordUnreadable(disposal.record));
-            };
-            let site = self
-                .table
-                .iter()
-                .position(|held| matches!(held, Capability::Delta { key, .. } if *key == credit))
-                .and_then(|index| u32::try_from(index).ok())
-                .ok_or(SessionTrap::EscrowCreditUndeclared(credit))?;
-            let crossed = Crossed {
-                resource: record.resource,
-                amount: record.amount,
-            };
-            self.escrow.claim(crossed)?;
-            let funds = self.open_bucket(Held::Amount(crossed.amount), crossed.resource, None);
-            self.cell_put(site, 0, funds)?;
-        }
-        // The record goes whatever its terms. Its consumer reads the
-        // going of it at an anchor at or above the frontier its chain
-        // has already read this producer at, so the absence needs no
-        // date and the key stands for nothing once the value is gone.
+        let Terms::Escrowed { credit } = record.terms else {
+            return Err(SessionTrap::EscrowRecordUnreadable(disposal.record));
+        };
+        let site = self
+            .table
+            .iter()
+            .position(|held| matches!(held, Capability::Delta { key, .. } if *key == credit))
+            .and_then(|index| u32::try_from(index).ok())
+            .ok_or(SessionTrap::EscrowCreditUndeclared(credit))?;
+        let crossed = Crossed {
+            resource: record.resource,
+            amount: record.amount,
+        };
+        self.escrow.claim(crossed)?;
+        let funds = self.open_bucket(Held::Amount(crossed.amount), crossed.resource, None);
+        self.cell_put(site, 0, funds)?;
+        // The record goes with the value. Its consumer reads the going
+        // of it at an anchor at or above the frontier its chain has
+        // already read this producer at, so the absence needs no date
+        // and the key stands for nothing once the value is back.
         self.store.remove(disposal.record)?;
-        Ok(())
-    }
-
-    /// Delete an answer cell this shard wrote, once the crossing it
-    /// answered for is over.
-    ///
-    /// The last of the three cell jobs, and the only one that ends a
-    /// crossing rather than deciding it. An answer — a claim or a
-    /// decline — is needed while the record it answers for stands, and
-    /// nothing removes a record but its producer's own disposal, which
-    /// happens against this cell read present. So a deletion moves no
-    /// value and states no verdict: it takes away a cell whose question
-    /// has been asked for the last time.
-    ///
-    /// What licenses it is a reading of the record, absent, at an
-    /// anchor of the producer at or above the frontier the composing
-    /// chain has read it at — and that reading is the chain's, carried
-    /// in the block that deletes. One is enough because every presence
-    /// the chain ever carried sits below that anchor. What is checked
-    /// here is the narrower thing the parent could get wrong:
-    /// that the cell is there and answers for the record the licence
-    /// was established against. Named the same way
-    /// [`escrow_settle`](Self::escrow_settle) holds a record to naming
-    /// its edge.
-    ///
-    /// # Errors
-    ///
-    /// [`SessionTrap::CrossingAnswerUnreadable`] for an answer cell
-    /// that is absent, does not decode, or answers for another record;
-    /// and any [`SessionTrap`] the store raises.
-    pub(crate) fn escrow_delete(&mut self, deletion: &Deletion) -> Result<(), SessionTrap> {
-        self.store
-            .read(deletion.answer)?
-            .and_then(|bytes| CrossingAnswer::from_bytes(&bytes))
-            .filter(|answer| answer.producer == deletion.producer)
-            .ok_or(SessionTrap::CrossingAnswerUnreadable(deletion.answer))?;
-        self.store.remove(deletion.answer)?;
         Ok(())
     }
 

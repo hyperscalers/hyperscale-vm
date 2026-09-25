@@ -18,10 +18,9 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_embed::GuestArg;
 use hyperscale_vm_kernel::{
-    Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, Deletion, Departure,
-    Disposal, Disposition, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult,
-    Invoked, KernelSession, LegPlan, ManifestWalk, MemoryStore, Receipt, Substates, decode_amount,
-    execute_batch,
+    Baseline, BatchError, BatchOutcome, BatchTx, Capability, Crossed, Departure, Disposal,
+    EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked, KernelSession,
+    LegPlan, ManifestWalk, MemoryStore, Receipt, Substates, decode_amount, execute_batch,
 };
 use hyperscale_vm_types::{
     AbortReason, Address, AddressClass, Effect, EffectSet, EffectTarget, MAX_CROSSINGS_PER_TX,
@@ -1079,7 +1078,6 @@ fn reclaiming(who: TxHash) -> BatchTx {
     )
     .with_disposals(vec![Disposal {
         record: record_key(),
-        disposition: Disposition::Reclaim,
     }])
 }
 
@@ -1252,23 +1250,13 @@ fn two_reclaims_of_one_record_in_one_batch_credit_once() {
     );
 }
 
-/// The producing node retiring a record whose claim committed: reads
-/// the record, deletes it, moves nothing. No node runs.
-fn retiring(who: TxHash) -> BatchTx {
-    BatchTx::new(who, declared(&[crossing_cell(record_key())]), env()).with_disposals(vec![
-        Disposal {
-            record: record_key(),
-            disposition: Disposition::Retire,
-        },
-    ])
-}
-
-/// An owed record goes outright at its retirement, as an escrowed one
-/// does: the consumer reads the going of it at an anchor at or above
-/// the frontier its chain has read this producer at, so nothing dates
-/// the disposal and no key stands on for it.
+/// An owed record is nobody's to take back: the crossing it holds is
+/// the consumer's whether or not the consumer has run, and its only
+/// disposal is the commit-fold removal the consumer's claim licenses.
+/// A reclaim naming one is the batch's defect, refused, and the record
+/// stands.
 #[test]
-fn an_owed_record_is_removed_on_retirement() {
+fn an_owed_record_is_not_reclaimable() {
     let mut store = MemoryStore::new();
     store.write(cell(PAYER), encode_amount(500).to_vec());
     let sent = execute(
@@ -1280,51 +1268,37 @@ fn an_owed_record_is_removed_on_retirement() {
     let owed = CrossingCell::from_bytes(&sent.store.cell(record_key()).unwrap()).unwrap();
     assert_eq!(owed.terms, Terms::Owed, "the fixture's edge delivers");
 
-    let retired = execute(
+    let refused = execute(
         Arc::new(sent.store) as Arc<dyn Baseline>,
-        &[retiring(tx(13))],
+        &[reclaiming(tx(13))],
         ExecutionMode::Serial,
     )
     .unwrap();
-    assert!(
-        matches!(retired.receipts[&tx(13)].outcome, Outcome::Completed { .. }),
-        "{:?}",
-        retired.receipts[&tx(13)],
-    );
     assert_eq!(
-        retired.receipts[&tx(13)].delta.cells.get(&record_key()),
-        Some(&None),
-        "the record is removed where it is retired",
+        refused.receipts[&tx(13)].outcome,
+        Outcome::ProtocolError {
+            reason: AbortReason::EscrowRecordUnreadable,
+        },
+        "a record with no cell to credit is not a balance a reclaim can read",
     );
-    assert!(retired.store.cell(record_key()).is_none());
-
-    // A second settlement finds no record, and is refused as the
-    // batch's defect.
-    let again = execute(
-        Arc::new(retired.store) as Arc<dyn Baseline>,
-        &[retiring(tx(14))],
-        ExecutionMode::Serial,
-    )
-    .unwrap();
     assert!(
-        !matches!(again.receipts[&tx(14)].outcome, Outcome::Completed { .. }),
-        "a retired record is not a balance anything can be settled against",
+        refused.store.cell(record_key()).is_some(),
+        "and the record stands for its consumer",
     );
 }
 
-/// A settlement that does not declare the record it deletes refuses the
+/// A reclaim that does not declare the record it deletes refuses the
 /// batch, rather than running and surfacing as an undeclared access.
 ///
-/// A settlement creates no cell, so a screen over creations alone never
+/// A reclaim creates no cell, so a screen over creations alone never
 /// looked at it — and the write it makes is a deletion of the very cell
-/// two settlements would race for. The kernel treats an undeclared
+/// two reclaims would race for. The kernel treats an undeclared
 /// access as its own defect, so the omission has to be caught here,
 /// where it is merely a malformed batch.
 #[test]
 fn a_settlement_that_hides_the_record_it_deletes_refuses_the_batch() {
     let undeclared = BatchTx::new(tx(31), declared(&[]), env()).with_disposals(vec![Disposal {
         record: record_key(),
-        disposition: Disposition::Retire,
     }]);
 
     assert_eq!(
@@ -1339,83 +1313,6 @@ fn a_settlement_that_hides_the_record_it_deletes_refuses_the_batch() {
             key: record_key(),
         }),
     );
-}
-
-/// Issue, then retire: the record is gone, nothing moved, no fold term
-/// entered, and the vault stands where the escrow left it.
-#[test]
-fn a_retire_deletes_the_record_and_moves_nothing() {
-    let mut store = MemoryStore::new();
-    store.write(cell(PAYER), encode_amount(500).to_vec());
-    let sent = execute(
-        Arc::new(store) as Arc<dyn Baseline>,
-        &[sending(200)],
-        ExecutionMode::Serial,
-    )
-    .unwrap();
-    assert!(sent.store.cell(record_key()).is_some());
-
-    let retired = execute(
-        Arc::new(sent.store) as Arc<dyn Baseline>,
-        &[retiring(tx(12))],
-        ExecutionMode::Serial,
-    )
-    .unwrap();
-    let receipt = &retired.receipts[&tx(12)];
-    assert!(
-        matches!(receipt.outcome, Outcome::Completed { .. }),
-        "{receipt:?}"
-    );
-    assert_eq!(receipt.fuel, 0, "no node ran");
-    assert!(receipt.delta.movements.is_empty());
-    assert_eq!(receipt.escrow.claimed(RESOURCE), 0);
-    assert_eq!(receipt.escrow.issued(RESOURCE), 0);
-    assert_eq!(
-        receipt.delta.cells.get(&record_key()),
-        Some(&None),
-        "a retired record goes outright"
-    );
-    assert!(retired.store.cell(record_key()).is_none());
-    assert_eq!(
-        balance(&retired, cell(PAYER)),
-        300,
-        "the value stays claimed"
-    );
-}
-
-/// A second retire finds no record: the batch's defect, refused, and
-/// nothing changes.
-#[test]
-fn a_second_retire_is_refused() {
-    let mut store = MemoryStore::new();
-    store.write(cell(PAYER), encode_amount(500).to_vec());
-    let sent = execute(
-        Arc::new(store) as Arc<dyn Baseline>,
-        &[sending(200)],
-        ExecutionMode::Serial,
-    )
-    .unwrap();
-    let once = execute(
-        Arc::new(sent.store) as Arc<dyn Baseline>,
-        &[retiring(tx(12))],
-        ExecutionMode::Serial,
-    )
-    .unwrap();
-    let twice = execute(
-        Arc::new(once.store) as Arc<dyn Baseline>,
-        &[retiring(tx(13))],
-        ExecutionMode::Serial,
-    )
-    .unwrap();
-    let receipt = &twice.receipts[&tx(13)];
-    assert_eq!(
-        receipt.outcome,
-        Outcome::ProtocolError {
-            reason: AbortReason::EscrowRecordUnreadable,
-        },
-    );
-    assert!(receipt.delta.cells.is_empty());
-    assert_eq!(balance(&twice, cell(PAYER)), 300);
 }
 
 /// Two crossings at one cell are refused inside the execution, whatever
@@ -1475,136 +1372,6 @@ fn a_reclaim_of_a_record_that_is_not_there_is_a_defect() {
         },
     );
     assert!(receipt.delta.movements.is_empty());
-}
-
-/// The consumer deleting its own answer, once the record it answered
-/// for is gone from the producer's chain: reads the cell, removes it,
-/// moves nothing. No node runs.
-fn deleting(who: TxHash, producer: Address) -> BatchTx {
-    BatchTx::new(
-        who,
-        declared(&[Effect {
-            target: EffectTarget::Point(claim_key()),
-            mode: Mode::Write { moves: Moves::Both },
-        }]),
-        env(),
-    )
-    .with_deletions(vec![Deletion {
-        answer: claim_key(),
-        producer,
-    }])
-}
-
-/// A store holding the claim this shard wrote for the fixture's edge.
-fn answered_store() -> MemoryStore {
-    let mut store = MemoryStore::new();
-    store.write(
-        claim_key(),
-        crossing().answer(tx(1), Answered::Taken).to_bytes(),
-    );
-    store
-}
-
-/// A deletion takes the answer away and nothing else.
-#[test]
-fn a_deletion_removes_the_answer_and_moves_nothing() {
-    let outcome = execute(
-        Arc::new(answered_store()) as Arc<dyn Baseline>,
-        &[deleting(tx(0x50), owner(PAYER))],
-        ExecutionMode::Serial,
-    )
-    .expect("a deletion is a batch");
-    let receipt = &outcome.receipts[&tx(0x50)];
-
-    assert!(
-        matches!(receipt.outcome, Outcome::Completed { .. }),
-        "a deletion completes; outcome {:?}",
-        receipt.outcome,
-    );
-    assert!(
-        outcome.store.cell(claim_key()).is_none(),
-        "and the answer is gone",
-    );
-    assert!(
-        receipt.delta.movements.is_empty(),
-        "nothing moved: the value was decided when the crossing was answered",
-    );
-    assert_eq!(receipt.fuel, 0, "no node ran");
-}
-
-/// An answer is deleted against the record it names and no other.
-///
-/// What licenses a deletion is that record read absent twice, and the
-/// cell and the licence would come apart if the kernel took the
-/// parent's word for which cell answers for which record — a crossing
-/// still open would lose the answer holding it open.
-#[test]
-fn an_answer_is_not_deleted_against_another_record() {
-    let outcome = execute(
-        Arc::new(answered_store()) as Arc<dyn Baseline>,
-        &[deleting(tx(0x51), owner(PAYEE))],
-        ExecutionMode::Serial,
-    )
-    .expect("a deletion is a batch");
-
-    assert_eq!(
-        outcome.receipts[&tx(0x51)].outcome,
-        Outcome::ProtocolError {
-            reason: AbortReason::CrossingAnswerUnreadable,
-        },
-        "an answer for another record is not this deletion's to remove",
-    );
-    assert!(
-        outcome.store.cell(claim_key()).is_some(),
-        "and the answer stands",
-    );
-}
-
-/// An answer that is not there is not one to delete: a member naming
-/// one is the batch's own defect.
-#[test]
-fn an_absent_answer_is_not_deletable() {
-    let outcome = execute(
-        Arc::new(MemoryStore::new()) as Arc<dyn Baseline>,
-        &[deleting(tx(0x52), owner(PAYER))],
-        ExecutionMode::Serial,
-    )
-    .expect("a deletion is a batch");
-
-    assert_eq!(
-        outcome.receipts[&tx(0x52)].outcome,
-        Outcome::ProtocolError {
-            reason: AbortReason::CrossingAnswerUnreadable,
-        },
-    );
-}
-
-/// A deletion declares the cell it removes.
-///
-/// A removal is a write, so it belongs in the same conflict group as
-/// every other writer of that cell and wants the same exclusive
-/// declaration. Screened where the batch is judged, because a member
-/// that reached the kernel without it would fail at finish as an
-/// undeclared access — a halt, where a batch that cannot be run should
-/// simply refuse.
-#[test]
-fn a_deletion_declares_the_answer_it_removes() {
-    let undeclared = BatchTx::new(tx(0x53), declared(&[]), env()).with_deletions(vec![Deletion {
-        answer: claim_key(),
-        producer: owner(PAYER),
-    }]);
-
-    assert!(
-        matches!(
-            execute(
-                Arc::new(answered_store()) as Arc<dyn Baseline>,
-                &[undeclared],
-                ExecutionMode::Serial,
-            ),
-            Err(BatchError::UndeclaredCrossingCell { .. })
-        ),
-        "a deletion naming a cell its declaration does not reach is refused",
-    );
 }
 
 /// The receiving half of a refusable crossing: the arrival files the

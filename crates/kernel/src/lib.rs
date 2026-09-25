@@ -35,8 +35,7 @@ pub mod supply;
 pub mod walk;
 
 pub use escrow::{
-    Arrival, Crossed, Deletion, Departure, Disposal, Disposition, EdgeAction, EscrowDelta, LegPlan,
-    NodeAction, PlanFault,
+    Arrival, Crossed, Departure, Disposal, EdgeAction, EscrowDelta, LegPlan, NodeAction, PlanFault,
 };
 pub use executor::{
     BatchError, BatchOutcome, BatchTx, ExecutionMode, GuestRunner, Job, RunResult, Unavailable,
