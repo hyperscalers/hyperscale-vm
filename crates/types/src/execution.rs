@@ -533,6 +533,13 @@ pub enum AbortReason {
     /// claims or writes.
     #[hbor(discriminant = 76)]
     OwedArrival,
+    /// A call the kernel performs as a vault deposit whose arguments are
+    /// not the one site and one bucket the shape binds.
+    ///
+    /// Admission marks a call a deposit only over that binding, so this
+    /// is the batch's defect rather than the sender's.
+    #[hbor(discriminant = 77)]
+    DepositUnbound,
 }
 
 /// What one node answered with: the value its method handed back, in the

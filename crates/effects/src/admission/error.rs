@@ -398,8 +398,8 @@ pub enum AdmissionError {
     ///
     /// Reached here rather than in the walk for every rule this stage
     /// can decide — a claim leaf reads the node's own signed evidence
-    /// and nothing else — so a wallet hears it before signing and a
-    /// total leg never carries the verdict into its own execution.
+    /// and nothing else — so a wallet hears it before signing and an
+    /// outbound leg never carries the verdict into its own execution.
     #[error("node {node} presents evidence that does not satisfy what it must")]
     EvidenceUnsatisfied {
         /// The offending node.

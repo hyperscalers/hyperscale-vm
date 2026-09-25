@@ -195,6 +195,21 @@ pub struct NodeCall {
     /// presented set alone, a stored leaf by the rule stored at the
     /// cell, judged where the cell lives.
     pub requires: Vec<Rule<JudgedLeaf>>,
+    /// Who performs the call: the package's code, or the kernel.
+    pub body: Body,
+}
+
+/// Who performs a node's call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Body {
+    /// The package's export, invoked in its own frame.
+    Guest,
+    /// The kernel's credit of the call's bucket into the one vault site
+    /// its declaration names, for a
+    /// [vault deposit](crate::signature::MethodSignature::is_vault_deposit).
+    /// The export is never invoked, so the credit is the same on every
+    /// path, whatever the package's code would have done.
+    Deposit,
 }
 
 #[cfg(test)]

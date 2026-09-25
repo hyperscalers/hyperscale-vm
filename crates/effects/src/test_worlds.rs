@@ -12,8 +12,9 @@ use crate::metadata::{PackageHash, PackageMetadata};
 use crate::records::Records;
 use crate::resource::{GrantsExpr, ResourceKind};
 use crate::route::PrefixShardResolver;
-use crate::signature::{MethodSignature, ParamType, Totality};
+use crate::signature::{AbiParam, MethodSignature, ParamType, Totality};
 use crate::types::{EdgeContent, SlotId, Value, resource_address};
+use crate::vocabulary::VAULT;
 
 pub fn pkg(name: &str) -> PackageHash {
     PackageHash(TestHasher.hash(b"package", &[name.as_bytes()]))
@@ -83,13 +84,46 @@ pub fn resolver() -> PrefixShardResolver {
     PrefixShardResolver { bits: 8 }
 }
 
+/// A vault deposit: one fungible bucket credited to this instance's own
+/// vault for the bucket's resource, and nothing else.
+pub fn deposit_sink() -> MethodSignature {
+    let bucket = || Expr::ResourceOf(Box::new(Expr::Arg(0)));
+    MethodSignature {
+        params: vec![ParamType::Bucket],
+        abi: vec![AbiParam::Handle { clause: 0, site: 0 }, AbiParam::Bucket(0)],
+        effects: vec![Clause::Effect {
+            reach: None,
+            guard: None,
+            target: TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(Expr::SelfAddr),
+                slot: SlotRef::Fixed(VAULT),
+                material: vec![bucket()],
+            }),
+            mode: ModeExpr::Delta { moves: Moves::In },
+            denomination: Some(Box::new(bucket())),
+        }],
+        ..MethodSignature::default()
+    }
+}
+
+/// A sink that is not a deposit: a delta on a slot of its own.
+pub fn core_sink() -> MethodSignature {
+    MethodSignature {
+        effects: vec![self_point(
+            SlotId(3),
+            ModeExpr::Delta { moves: Moves::Both },
+        )],
+        ..MethodSignature::default()
+    }
+}
+
 /// The star in its canonical shape: a reservation-shaped source, a
 /// venue in the middle whose output the source's value feeds, and a
-/// sink whose totality the caller chooses.
+/// sink whose signature the caller chooses.
 ///
 /// Three nodes rather than two because the sink has to be a node the
 /// core does not consume from, which is exactly what makes it a leg.
-pub fn star_world(sink: Totality) -> (Records, Manifest) {
+pub fn star_world(sink: MethodSignature) -> (Records, Manifest) {
     let mut chain = Records::new();
     let mut vault_pkg = PackageMetadata::default();
     vault_pkg.methods.insert(
@@ -121,17 +155,7 @@ pub fn star_world(sink: Totality) -> (Records, Manifest) {
         },
     );
     let mut sink_pkg = PackageMetadata::default();
-    sink_pkg.methods.insert(
-        Name::declared("deposit"),
-        MethodSignature {
-            totality: sink,
-            effects: vec![self_point(
-                SlotId(3),
-                ModeExpr::Delta { moves: Moves::Both },
-            )],
-            ..MethodSignature::default()
-        },
-    );
+    sink_pkg.methods.insert(Name::declared("deposit"), sink);
     chain.packages.publish_unchecked(pkg("vault"), vault_pkg);
     chain.packages.publish_unchecked(pkg("venue"), venue_pkg);
     chain.packages.publish_unchecked(pkg("sink"), sink_pkg);

@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use hyperscale_vm_effects::{Declaration, Hash32, Hasher, NodeCall, PackageHash, TestHasher};
+use hyperscale_vm_effects::{Body, Declaration, Hash32, Hasher, NodeCall, PackageHash, TestHasher};
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
     KernelSession, ManifestWalk, MemoryStore, Receipt, execute_batch,
@@ -64,6 +64,7 @@ fn call() -> NodeCall {
         issues: Vec::new(),
         evidence: Vec::new(),
         requires: Vec::new(),
+        body: Body::Guest,
     }
 }
 

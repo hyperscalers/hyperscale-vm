@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{
-    Authority, Claim, Condition, Declaration, Hash32, Hasher, JudgedLeaf, MAX_RULE_BRANCHES,
+    Authority, Body, Claim, Condition, Declaration, Hash32, Hasher, JudgedLeaf, MAX_RULE_BRANCHES,
     MAX_RULE_DEPTH, NodeCall, PackageHash, Rule, RuleBytes, SlotId, StoredRule, TestHasher,
     child_key,
 };
@@ -122,6 +122,7 @@ fn call(target: Address, evidence: Vec<Claim>, requires: Vec<Rule<JudgedLeaf>>) 
         issues: Vec::new(),
         evidence,
         requires,
+        body: Body::Guest,
     }
 }
 

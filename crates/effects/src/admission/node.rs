@@ -609,7 +609,7 @@ impl Admission<'_> {
             self.hasher,
             self.grants,
             frame,
-            signature.is_unrefusable(),
+            signature.is_vault_deposit(),
             node_index,
         )?);
         // Issuance is an actor question like any other, so its entry

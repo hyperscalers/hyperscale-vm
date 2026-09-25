@@ -19,9 +19,9 @@
 //!
 //! Behaviourally, a body running under Bob's subintent that names the
 //! seeded rep of a cell only Alice declared is refused as outside its
-//! frame, and the trade does not settle. Alice's own deposit naming the
-//! same number is refused the same way, since the seeded sites belong
-//! to no frame: her deposit reaches her leaf by the site routing lent
+//! frame, and the trade does not settle. Alice's own withdrawal naming
+//! the same number is refused the same way, since the seeded sites
+//! belong to no frame: a frame reaches a leaf by the site routing lent
 //! it. The same guest with that read left out settles the trade, which
 //! is what says the refusal is the reach and not the composition.
 //!
@@ -141,7 +141,7 @@ fn signers(entry: &BatchTx) -> Result<(Address, Address)> {
     Ok((alice, bob))
 }
 
-/// The first site one signer's `deposit` node was handed: a cell that
+/// The first cell of one signer's own in the routed table: a cell that
 /// signer declared, and that the other signer's intent never names.
 fn a_cell_only_this_signer_declared(entry: &BatchTx, signer: Address) -> Result<u32> {
     let found = entry
@@ -164,12 +164,12 @@ fn a_cell_only_this_signer_declared(entry: &BatchTx, signer: Address) -> Result<
 /// One package stands in for both signers' accounts here, because what
 /// this lane varies is the signer rather than the code — two distinct
 /// packages sharing one table is `node_reach`. Every export keeps the
-/// shape routing lowered it to: `withdraw` produces its one edge,
-/// `deposit` consumes the bucket it is handed, and neither answers.
+/// shape routing lowered it to: `withdraw` produces its one edge and
+/// does not answer. `deposit` is the kernel's, so its body never runs.
 ///
 /// The only thing the body does that its own node did not ask for is
 /// read `foreign` and emit what it holds — where a rep is given. With
-/// none, the deposit keeps to the bucket and the vault it was handed.
+/// none, the withdrawal keeps to the vault it was handed.
 fn account_guest(foreign: Option<u32>) -> Vec<u8> {
     let tattle = foreign.map_or(String::new(), |foreign| {
         format!(
@@ -193,17 +193,18 @@ fn account_guest(foreign: Option<u32>) -> Vec<u8> {
   (func (export "authorize")
     (call $reply (i32.const 0) (i32.const 0)))
 
-  ;; The whole reservation, handed on as the one edge the node declares.
+  ;; The whole reservation, handed on as the one edge the node declares
+  ;; — and on the way past, read the cell at `foreign` and emit it, where
+  ;; one is named.
   (func (export "withdraw") (param $vault i32)
+    (local $len i32){tattle}
     (i32.store (i32.const 256)
       (call $reserve_take (local.get $vault) (i32.const 0)))
     (call $reply (i32.const 256) (i32.const 1)))
 
-  ;; Credit the vault with what arrived — and on the way past, read the
-  ;; cell at `foreign` and emit it, where one is named.
+  ;; Never invoked: the kernel performs a deposit itself.
   (func (export "deposit")
     (param $vault i32) (param $funds i32)
-    (local $len i32){tattle}
     (call $site_put (local.get $vault) (i32.const 0) (local.get $funds))
     (call $reply (i32.const 0) (i32.const 0))))
 "#
@@ -300,10 +301,10 @@ fn the_trade_settles_when_each_frame_keeps_to_what_it_was_lent() -> Result<()> {
 ///
 /// Alice exposed a bucket across the envelope's edge. The leaf her own
 /// deposit was lent is not on that edge and is named by no node of
-/// Bob's intent, so no frame of his was lent it. Nor was Alice's own
-/// frame lent the seeded number: her deposit reaches the leaf by the
-/// site routing bound for it, and the seeded sites belong to no frame —
-/// so whichever deposit runs first is the one refused, and nothing it
+/// Bob's intent, so no frame of his was lent it. Nor was any frame of
+/// Alice's lent the seeded number: a frame reaches a leaf by the site
+/// routing bound for it, and the seeded sites belong to no frame — so
+/// whichever withdrawal runs first is the one refused, and nothing it
 /// read reaches the receipt.
 #[test]
 fn a_subintent_cannot_read_a_cell_only_the_other_signer_declared() -> Result<()> {

@@ -94,7 +94,7 @@ pub use intent::{
     MAX_TREE_DEPTH, Member, Nullifier, SignedIntent, Socket, TREE_WIRE_DEPTH, TreeDecodeError,
     admit_tree, attest, decode_tree, encode_tree,
 };
-pub use invoke::{CallArg, EdgeBound, IssuanceGrant, NodeCall, distinct_ids};
+pub use invoke::{Body, CallArg, EdgeBound, IssuanceGrant, NodeCall, distinct_ids};
 pub use manifest::{Bounds, JudgedLeaf, Manifest, ManifestHash, Node, NodeInput};
 pub use metadata::{
     DeclaredPackages, MetadataCache, PACKAGE_SLOT, PackageHash, PackageMetadata, PublishRefusal,

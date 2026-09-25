@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use hyperscale_hbor::Bytes;
 use hyperscale_vm_effects::{
-    CallArg, EdgeContent, JudgedLeaf, NodeCall, PackageHash, Rule, RuleBytes,
+    Body, CallArg, EdgeContent, JudgedLeaf, NodeCall, PackageHash, Rule, RuleBytes,
 };
 use hyperscale_vm_embed::{GuestArg, Invoked};
 use hyperscale_vm_types::{
@@ -195,6 +195,12 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
         // so a body that reaches here reaches rights somebody granted.
         session.grant_issuance(call.issues.clone());
 
+        if call.body == Body::Deposit {
+            let [GuestArg::Site { site }, GuestArg::Bucket(funds)] = args[..] else {
+                return Err(composition_defect(session, AbortReason::DepositUnbound));
+            };
+            return settled(node, call, deposit(session, site, funds));
+        }
         let invoked = self.backend.invoke(
             session,
             &GuestCall {
@@ -206,6 +212,27 @@ impl<B: GuestBackend + ?Sized> ManifestWalk<'_, B> {
             },
         );
         settled(node, call, invoked)
+    }
+}
+
+/// The kernel's own performance of a vault deposit: the lent bucket
+/// credited to the one site the declaration bound, as the export's
+/// `put` would have, with no code of the package's run.
+///
+/// Spends no fuel and produces nothing. A trap is the one a guest's
+/// `put` would have met, so it is priced where a guest's is.
+fn deposit(mut session: KernelSession, site: u32, funds: u32) -> InvokeResult {
+    let result = match session.cell_put(site, 0, funds) {
+        Ok(()) => Invoked::Produced {
+            edges: Vec::new(),
+            answer: None,
+        },
+        Err(trap) => Invoked::Aborted(AbortReason::from(trap)),
+    };
+    InvokeResult {
+        session,
+        fuel: 0,
+        result,
     }
 }
 

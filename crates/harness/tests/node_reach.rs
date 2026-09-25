@@ -23,7 +23,8 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{
-    CallArg, Declaration, Hash32, Hasher, NodeCall, PackageHash, SlotId, TestHasher, child_key,
+    Body, CallArg, Declaration, Hash32, Hasher, NodeCall, PackageHash, SlotId, TestHasher,
+    child_key,
 };
 use hyperscale_vm_embed::abi::{ABI, MEMORY, STATE};
 use hyperscale_vm_harness::driver::{Lanes, test_hash};
@@ -222,6 +223,7 @@ fn node(package: PackageHash, target: Address, export: &str, site: u32) -> NodeC
         issues: Vec::new(),
         evidence: Vec::new(),
         requires: Vec::new(),
+        body: Body::Guest,
     }
 }
 

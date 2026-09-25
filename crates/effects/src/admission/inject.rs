@@ -349,7 +349,7 @@ pub(super) fn inject_movement_rules(
     hasher: &dyn Hasher,
     grants: &PresentedGrants,
     frame: &mut Declaration,
-    unrefusable: bool,
+    vault_deposit: bool,
     node_index: u32,
 ) -> Result<Vec<Injected>, AdmissionError> {
     let mut injected = Vec::new();
@@ -488,7 +488,7 @@ pub(super) fn inject_movement_rules(
         // at once, and no stage before the leg holds both — so it is a
         // verdict the declaring node's own walk reaches, which a frame
         // whose caller commits without waiting may not carry.
-        if unrefusable && !resolved.judged().before_any_leg() {
+        if vault_deposit && !resolved.judged().before_any_leg() {
             return Err(AdmissionError::MovementUnanswerable {
                 node: node_index,
                 resource,

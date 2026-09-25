@@ -9,11 +9,9 @@
 //! rather than a lost optimisation.
 
 use hyperscale_hbor::Name;
-use hyperscale_vm_effects::vocabulary::VAULT;
-use hyperscale_vm_effects::{Clause, Expr, ModeExpr, ParamType, SlotRef, TargetExpr};
+use hyperscale_vm_effects::{MethodSignature, Totality};
 use hyperscale_vm_runtime::check_method;
 use hyperscale_vm_stdlib::{ACCOUNT_MODULE, STAKING_MODULE, account, staking};
-use hyperscale_vm_types::Moves;
 
 /// One method, as the two conditions below see it.
 struct Method {
@@ -118,49 +116,34 @@ fn the_candidates_for_the_mark_are_what_they_were() {
     );
 }
 
-/// Every method carrying the mark takes one fungible bucket and
-/// declares one effect: a credit of that bucket to its own target's
-/// vault for the bucket's resource.
+/// A genesis method is a vault deposit exactly when it carries the mark,
+/// and it stays one with the mark taken off.
 ///
-/// What an owed crossing's consumer fold stands on. The fold credits the
-/// consumer's vault from the record and runs no body, which is the
-/// method's whole effect only while every total method is this deposit.
-/// A second total method of any other shape has to fail here, or bring
-/// its own movement to the fold.
+/// What an owed crossing's consumer fold stands on. The kernel performs a
+/// deposit and the fold credits the consumer's vault from the record, so
+/// the method's shape rather than its mark is what makes it outbound —
+/// which the copy with the mark removed, as a published package's
+/// signature carries it, has to show.
 #[test]
-fn a_total_method_is_a_vault_deposit() {
-    let bucket = || Expr::ResourceOf(Box::new(Expr::Arg(0)));
-    let deposit = vec![Clause::Effect {
-        guard: None,
-        target: TargetExpr::Point(Expr::ChildKey {
-            owner: Box::new(Expr::SelfAddr),
-            slot: SlotRef::Fixed(VAULT),
-            material: vec![bucket()],
-        }),
-        mode: ModeExpr::Delta { moves: Moves::In },
-        denomination: Some(Box::new(bucket())),
-        reach: None,
-    }];
+fn outbound_is_the_deposit_shape() {
     for (name, metadata) in [
         ("account", account::metadata()),
         ("staking", staking::metadata()),
     ] {
         for (method, signature) in &metadata.methods {
-            if !signature.totality.is_total() {
-                continue;
-            }
             assert_eq!(
-                signature.params,
-                [ParamType::Bucket],
-                "{name}::{method} is total and takes something other than one fungible bucket",
+                signature.is_vault_deposit(),
+                signature.totality.is_total(),
+                "{name}::{method}: the deposit shape and the mark disagree",
             );
+            let unmarked = MethodSignature {
+                totality: Totality::Infallible,
+                ..signature.clone()
+            };
             assert_eq!(
-                signature.effects, deposit,
-                "{name}::{method} is total and declares something other than its vault's credit",
-            );
-            assert!(
-                signature.issues.is_empty() && signature.destroys.is_empty(),
-                "{name}::{method} is total and moves supply",
+                unmarked.is_vault_deposit(),
+                signature.totality.is_total(),
+                "{name}::{method}: taking the mark off changed the shape",
             );
         }
     }

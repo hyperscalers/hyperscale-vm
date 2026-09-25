@@ -200,9 +200,9 @@ pub fn legs_of(admitted: &Admitted) -> Vec<LegShape> {
 ///   can be among its arguments, and its only movement is one reserve.
 /// - An **attesting** leg takes no value edge and moves nothing at all.
 /// - An **outbound** leg's output feeds nothing and nothing about it can
-///   refuse: the verified total mark over its body, no evidence asked of
-///   its caller, no declared bound on an edge it consumes, and a frame
-///   admission alone answers.
+///   refuse: a vault deposit, which the kernel performs and which asks
+///   no evidence of its caller, no declared bound on an edge it
+///   consumes, and a frame admission alone answers.
 ///
 /// Every other node is core, and so is every node the tests are unsure
 /// about. That direction is the safe one: a node wrongly called core
@@ -237,7 +237,7 @@ fn classify_roles(manifest: &Manifest, origins: &[NodeOrigin], answered: &[bool]
                 .inputs
                 .iter()
                 .all(|input| matches!(input, NodeInput::Literal(_)));
-            let unrefusable = origin.unrefusable
+            let unrefusable = origin.vault_deposit
                 && answered.get(index as usize).copied().unwrap_or(false)
                 && node.inputs.iter().all(|input| match input {
                     NodeInput::Edge { bounds, .. } => bounds.admit_anything(),
@@ -609,7 +609,7 @@ impl Placed<'_> {
             && self.no_sink_is_fed_from_both_sides()
     }
 
-    /// A reservation-shaped source feeding a total sink has no core node
+    /// A reservation-shaped source feeding a deposit sink has no core node
     /// at all, and nothing then names a shard for a refusal, a departure
     /// or an absence to be taken against. An escrow issued under such a
     /// shape would have no reclaim path.
@@ -829,8 +829,8 @@ mod tests {
     use crate::rule::{RuleExpr, RuleLeaf};
     use crate::signature::{Issuance, Issued, MethodSignature, Totality};
     use crate::test_worlds::{
-        instance_of, issued_by, meta_of, method, payer_payee_world, pkg, resolver, self_point,
-        star_world,
+        core_sink, deposit_sink, instance_of, issued_by, meta_of, method, payer_payee_world, pkg,
+        resolver, self_point, star_world,
     };
     use crate::types::{EdgeContent, SlotId, Value};
 
@@ -838,7 +838,7 @@ mod tests {
     ///
     /// The hand-built manifests here carry no injected entry and no
     /// stored gate, so this states the fixture's own premise rather than
-    /// standing in for admission — a test about the totality half says so
+    /// standing in for admission — a test about the later-verdict half says so
     /// where a permissive default would have hidden it.
     fn answered(manifest: &Manifest) -> Vec<bool> {
         vec![true; manifest.nodes.len()]
@@ -941,7 +941,7 @@ mod tests {
         method: &str,
         signature: &MethodSignature,
     ) -> (Records, Manifest) {
-        let (base, manifest) = star_world(Totality::Total);
+        let (base, manifest) = star_world(deposit_sink());
         let mut chain = Records::new();
         for name in ["vault", "venue", "sink"] {
             let mut metadata =
@@ -987,7 +987,7 @@ mod tests {
     /// nobody claims.
     #[test]
     fn the_star_answers_who_runs_each_node() {
-        let (chain, manifest) = star_world(Totality::Total);
+        let (chain, manifest) = star_world(deposit_sink());
         let star = placed(&legs(&manifest, &chain));
         assert!(
             star.decomposes,
@@ -1060,8 +1060,8 @@ mod tests {
     }
 
     /// A value edge is a dependency like a call is: the consumer cannot
-    /// run until the producer's output exists, so a total consumer on
-    /// another shard is a boundary even though neither node calls the
+    /// run until the producer's output exists, so a deposit on another
+    /// shard is a boundary even though neither node calls the
     /// other. The edge names both cells: the record under the producer,
     /// the claim under the consumer.
     #[test]
@@ -1081,17 +1081,9 @@ mod tests {
             },
         );
         let mut consuming = PackageMetadata::default();
-        consuming.methods.insert(
-            Name::declared("take"),
-            MethodSignature {
-                totality: Totality::Total,
-                effects: vec![self_point(
-                    SlotId(2),
-                    ModeExpr::Delta { moves: Moves::Both },
-                )],
-                ..MethodSignature::default()
-            },
-        );
+        consuming
+            .methods
+            .insert(Name::declared("take"), deposit_sink());
         chain.packages.publish_unchecked(pkg("producer"), producing);
         chain.packages.publish_unchecked(pkg("consumer"), consuming);
         chain.instances.create(&TestHasher, meta_of("producer"));
@@ -1150,29 +1142,61 @@ mod tests {
     /// reserve is what lets its refusal release rather than abort.
     #[test]
     fn a_reservation_shaped_source_is_an_inbound_leg() {
-        let (chain, manifest) = star_world(Totality::Fallible);
+        let (chain, manifest) = star_world(core_sink());
         let star = placed(&legs(&manifest, &chain));
         assert_eq!(star.roles[0], LegRole::Inbound);
         assert_eq!(star.roles[1], LegRole::Core, "the venue is the core");
     }
 
-    /// A sink whose method carries the verified mark is the outbound leg.
-    /// Without the mark the same node is core — the shape alone never
-    /// earns it, because what the core needs is the guarantee that
-    /// nothing comes back, and only the checker can give that.
+    /// A sink is the outbound leg exactly when it is a vault deposit,
+    /// which the kernel performs and which cannot refuse. The same sink
+    /// with anything beside the credit is core, whatever its mark.
     #[test]
-    fn only_a_marked_sink_is_an_outbound_leg() {
-        for (totality, expected) in [
-            (Totality::Fallible, LegRole::Core),
-            (Totality::Infallible, LegRole::Core),
-            (Totality::Total, LegRole::Outbound),
+    fn only_a_deposit_sink_is_an_outbound_leg() {
+        let deposit = deposit_sink();
+        let beside = |edit: fn(&mut MethodSignature)| {
+            let mut signature = deposit_sink();
+            edit(&mut signature);
+            signature
+        };
+        for (name, sink, expected) in [
+            ("a deposit", deposit.clone(), LegRole::Outbound),
+            (
+                "a deposit marked total",
+                MethodSignature {
+                    totality: Totality::Total,
+                    ..deposit
+                },
+                LegRole::Outbound,
+            ),
+            ("a delta on another slot", core_sink(), LegRole::Core),
+            (
+                "a deposit with an error arm",
+                beside(|s| s.totality = Totality::Fallible),
+                LegRole::Core,
+            ),
+            (
+                "a deposit beside a second effect",
+                beside(|s| {
+                    s.effects
+                        .push(self_point(SlotId(3), ModeExpr::Delta { moves: Moves::In }));
+                }),
+                LegRole::Core,
+            ),
+            (
+                "a deposit with an output",
+                beside(|s| s.outputs.push(Expr::SelfAddr)),
+                LegRole::Core,
+            ),
+            (
+                "a deposit that answers",
+                beside(|s| s.answers = true),
+                LegRole::Core,
+            ),
         ] {
-            let (chain, manifest) = star_world(totality);
+            let (chain, manifest) = star_world(sink);
             let star = placed(&legs(&manifest, &chain));
-            assert_eq!(
-                star.roles[2], expected,
-                "a {totality:?} sink should be {expected:?}",
-            );
+            assert_eq!(star.roles[2], expected, "{name} should be {expected:?}");
         }
     }
 
@@ -1181,7 +1205,7 @@ mod tests {
     /// before the core runs, which is the whole of L3's test.
     #[test]
     fn a_reservation_fed_by_the_core_joins_it() {
-        let (chain, _) = star_world(Totality::Fallible);
+        let (chain, _) = star_world(core_sink());
         // The venue first, and the same reservation-shaped method after
         // it — its amount now the venue's output rather than a literal.
         let manifest = Manifest {
@@ -1221,27 +1245,17 @@ mod tests {
         );
     }
 
-    /// A gate on a total sink is a refusal the mark does not cover: the
-    /// checker verified the body, and the gate runs before it. A core
-    /// waiting on such a leg was told a verdict could not come from a
-    /// node that can still produce one.
+    /// A gate on a deposit is a refusal ahead of the kernel's credit. A
+    /// core waiting on such a leg was told a verdict could not come from
+    /// a node that can still produce one.
     #[test]
-    fn a_gated_total_sink_is_core() {
-        let (chain, manifest) = star_world_with(
-            "sink",
-            "deposit",
-            &MethodSignature {
-                totality: Totality::Total,
-                effects: vec![
-                    self_point(SlotId(3), ModeExpr::Delta { moves: Moves::Both }),
-                    Clause::Requires {
-                        guard: None,
-                        rule: RuleExpr::Require(RuleLeaf::Claim(Expr::SelfAddr)),
-                    },
-                ],
-                ..MethodSignature::default()
-            },
-        );
+    fn a_gated_deposit_sink_is_core() {
+        let mut gated = deposit_sink();
+        gated.effects.push(Clause::Requires {
+            guard: None,
+            rule: RuleExpr::Require(RuleLeaf::Claim(Expr::SelfAddr)),
+        });
+        let (chain, manifest) = star_world_with("sink", "deposit", &gated);
 
         let star = placed(&legs(&manifest, &chain));
         assert_eq!(
@@ -1252,12 +1266,12 @@ mod tests {
     }
 
     /// A signed bound on the edge a sink consumes is refused by the
-    /// manifest before the callee is reached, so the mark over its body
-    /// says nothing about it. The bound costs the decomposition, never
-    /// the atomicity.
+    /// manifest before the callee is reached, so a deposit behind one can
+    /// still refuse. The bound costs the decomposition, never the
+    /// atomicity.
     #[test]
     fn a_sink_behind_a_declared_bound_is_core() {
-        let (chain, manifest) = star_world(Totality::Total);
+        let (chain, manifest) = star_world(deposit_sink());
         let mut bounded = manifest.clone();
         let NodeInput::Edge { bounds, .. } = &mut bounded.nodes[2].inputs[0] else {
             panic!("the sink consumes the venue's edge");
@@ -1277,7 +1291,7 @@ mod tests {
     /// committed, so the refusal lands on a caller that already did.
     #[test]
     fn a_sink_judged_later_than_admission_is_core() {
-        let (chain, manifest) = star_world(Totality::Total);
+        let (chain, manifest) = star_world(deposit_sink());
         let mut later = answered(&manifest);
         later[2] = false;
 
@@ -1379,12 +1393,12 @@ mod tests {
 
     /// The world the write-free tests share: a component-class instance
     /// with one read-only proving method and a reserve beside it, and a
-    /// total sink elsewhere.
+    /// deposit sink elsewhere.
     ///
     /// One instance for both nodes, so the write-free node and the
     /// reserve are the same party's by construction.
     fn signed_world() -> (Records, Manifest) {
-        let (base, _) = star_world(Totality::Total);
+        let (base, _) = star_world(deposit_sink());
         let mut chain = Records::new();
         for name in ["venue", "sink"] {
             let metadata = (*base.package(pkg(name)).expect("the fixture published it")).clone();
@@ -1871,7 +1885,7 @@ mod tests {
     /// everywhere.
     #[test]
     fn a_declaration_reaching_a_non_participant_does_not_decompose() {
-        let (chain, manifest) = star_world(Totality::Total);
+        let (chain, manifest) = star_world(deposit_sink());
         let (star, mut legs) = star_and_shape(&manifest, &chain);
         assert!(star.decomposes);
 
@@ -2061,7 +2075,7 @@ mod tests {
     /// committed.
     #[test]
     fn a_route_owner_off_every_participant_does_not_decompose() {
-        let (chain, manifest) = star_world(Totality::Total);
+        let (chain, manifest) = star_world(deposit_sink());
         let legs = legs(&manifest, &chain);
         let participant = legs[0].target;
         let over =
@@ -2080,7 +2094,7 @@ mod tests {
     /// being some participant.
     #[test]
     fn a_node_declaring_past_its_own_scope_does_not_decompose() {
-        let (chain, manifest) = star_world(Totality::Total);
+        let (chain, manifest) = star_world(deposit_sink());
         let (star, mut legs) = star_and_shape(&manifest, &chain);
         assert!(star.decomposes);
 
@@ -2120,7 +2134,7 @@ mod tests {
     /// buys, so a shape with one takes it.
     #[test]
     fn a_leg_off_the_core_decomposes() {
-        let (chain, manifest) = star_world(Totality::Total);
+        let (chain, manifest) = star_world(deposit_sink());
         let (star, _) = star_and_shape(&manifest, &chain);
         assert_eq!(star.core.len(), 1, "the venue is the whole core");
         assert!(decomposes(&manifest, &chain));
@@ -2131,7 +2145,7 @@ mod tests {
     /// fabricated one.
     #[test]
     fn a_leg_moving_named_instances_does_not_decompose() {
-        let (chain, manifest) = star_world(Totality::Total);
+        let (chain, manifest) = star_world(deposit_sink());
         assert!(decomposes(&manifest, &chain));
 
         // The identical shape, with the inbound leg's value now named.
@@ -2155,7 +2169,7 @@ mod tests {
     /// anyway.
     #[test]
     fn a_value_edge_with_two_consumers_does_not_decompose() {
-        let (chain, manifest) = star_world(Totality::Total);
+        let (chain, manifest) = star_world(deposit_sink());
         assert!(decomposes(&manifest, &chain));
 
         let mut shared = manifest;

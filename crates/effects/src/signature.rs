@@ -3,13 +3,15 @@
 
 use hyperscale_hbor::{Capped, Hbor};
 use hyperscale_vm_types::{
-    CallTarget, ComponentAddr, MAX_EVENT_TYPES_PER_METHOD, PackageAddr, PrincipalAddr, ResourceAddr,
+    CallTarget, ComponentAddr, MAX_EVENT_TYPES_PER_METHOD, Moves, PackageAddr, PrincipalAddr,
+    ResourceAddr,
 };
 
-use crate::dsl::{Clause, Expr, ModeExpr};
+use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
 use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
 use crate::rule::{RuleExpr, RuleLeaf, StoredRule};
 use crate::types::{MAX_IDS_PER_EDGE, Value};
+use crate::vocabulary::VAULT;
 
 /// A method parameter's admitted kind. Bucket parameters consume a value
 /// edge; every other kind binds a literal or envelope input.
@@ -566,24 +568,41 @@ impl MethodSignature {
                 })
     }
 
-    /// Whether nothing about a call to this method can refuse before its
-    /// body runs, edge bounds aside.
+    /// Whether this method is a vault deposit: one fungible bucket in,
+    /// credited to this instance's own vault for the bucket's resource,
+    /// and nothing else.
     ///
-    /// [`Totality::Total`] covers the body and nothing else, and the
-    /// method's own authority gate runs ahead of it, which nothing stops
-    /// a total method carrying. The signed bounds on the edges a call
-    /// consumes are the other refusal ahead of the body, and they are the
-    /// manifest's rather than the signature's.
-    ///
-    /// This is the conjunction every reader acting on early commit goes
-    /// through, so a mark beside a gate changes nothing any of them sees.
-    /// The SDK refuses that pairing on those grounds, which is an
-    /// ergonomic call rather than a rule this crate enforces: metadata is
-    /// authored as well as derived, and a gated total signature is read
-    /// here the way any other is.
+    /// The kernel performs a call of this shape itself and never invokes
+    /// the body, so the credit is the same cell and amount on every path
+    /// — a local call, or an owed crossing its consumer's fold credits
+    /// at [`vault_cell`](crate::vocabulary::vault_cell). No error arm, no
+    /// guard, no output and no answer, because the kernel's credit has
+    /// none of them to give; and no authority gate, since a gate is a
+    /// clause beside the credit. So nothing about the call can refuse,
+    /// edge bounds aside, and that is what lets a caller commit without
+    /// waiting to hear back.
     #[must_use]
-    pub(crate) fn is_unrefusable(&self) -> bool {
-        self.totality.is_total() && !self.requires_evidence()
+    pub fn is_vault_deposit(&self) -> bool {
+        let bucket = || Expr::ResourceOf(Box::new(Expr::Arg(0)));
+        let credit = Clause::Effect {
+            guard: None,
+            target: TargetExpr::Point(Expr::ChildKey {
+                owner: Box::new(Expr::SelfAddr),
+                slot: SlotRef::Fixed(VAULT),
+                material: vec![bucket()],
+            }),
+            mode: ModeExpr::Delta { moves: Moves::In },
+            denomination: Some(Box::new(bucket())),
+            reach: None,
+        };
+        self.totality != Totality::Fallible
+            && self.params == [ParamType::Bucket]
+            && self.abi == [AbiParam::Handle { clause: 0, site: 0 }, AbiParam::Bucket(0)]
+            && self.effects == [credit]
+            && self.outputs.is_empty()
+            && !self.answers
+            && self.issues.is_empty()
+            && self.destroys.is_empty()
     }
 
     /// Whether admission may inject an authority requirement onto this

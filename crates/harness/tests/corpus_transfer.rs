@@ -283,24 +283,16 @@ fn transfer_executes_end_to_end_on_both_runtimes() {
         100
     );
     assert!(receipt.delta.cells.is_empty());
-    // Both nodes emitted, and each event carries the address of the node
-    // that ran rather than anything the guest could have named — the two
-    // legs of a transfer live on different shards, so this is what decides
-    // which receipt each event lands on.
+    // The withdrawal emitted, stamped with the address of the node that
+    // ran rather than anything the guest could have named. The deposit is
+    // the kernel's and emits nothing.
     assert_eq!(
         receipt.events,
-        vec![
-            Event {
-                emitter: ALICE.address(),
-                event_type: 0,
-                payload: encode_amount(100).to_vec().try_into().unwrap(),
-            },
-            Event {
-                emitter: BOB.address(),
-                event_type: 1,
-                payload: encode_amount(100).to_vec().try_into().unwrap(),
-            },
-        ],
+        vec![Event {
+            emitter: ALICE.address(),
+            event_type: 0,
+            payload: encode_amount(100).to_vec().try_into().unwrap(),
+        }],
     );
     // Nothing on the execution path resolves an index, so the guest's
     // constants and the package's table are two halves of one contract

@@ -11,7 +11,7 @@ use super::AdmissionError;
 use crate::claim::Claim;
 use crate::dsl::{Clause, Declaration, EvalInputs, evaluate_expr, supports};
 use crate::hash::Hasher;
-use crate::invoke::{CallArg, EdgeBound, IssuanceGrant, NodeCall};
+use crate::invoke::{Body, CallArg, EdgeBound, IssuanceGrant, NodeCall};
 use crate::manifest::{JudgedLeaf, NodeInput};
 use crate::metadata::PackageHash;
 use crate::rule::Rule;
@@ -206,6 +206,11 @@ pub(super) fn lower_call(
         issues,
         evidence: evidence.to_vec(),
         requires,
+        body: if signature.is_vault_deposit() {
+            Body::Deposit
+        } else {
+            Body::Guest
+        },
     })
 }
 

@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use hyperscale_hbor::from_slice;
 use hyperscale_vm_effects::{
-    Answered, CallArg, Crossing, CrossingAnswer, CrossingCell, CrossingId, Declaration,
+    Answered, Body, CallArg, Crossing, CrossingAnswer, CrossingCell, CrossingId, Declaration,
     EdgeContent, Hash32, Hasher, IntentHash, Kind, NodeCall, PackageHash, SlotId, Terms,
     TestHasher, child_key,
 };
@@ -194,6 +194,7 @@ fn call(export: &str, edges: usize, outputs: usize) -> NodeCall {
         issues: Vec::new(),
         evidence: Vec::new(),
         requires: Vec::new(),
+        body: Body::Guest,
     }
 }
 

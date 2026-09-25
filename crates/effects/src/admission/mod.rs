@@ -120,9 +120,10 @@ pub struct NodeOrigin {
     /// Whether the method commits nothing at all
     /// ([`MethodSignature::commits_nothing`]).
     pub(crate) commits_nothing: bool,
-    /// Whether nothing about a call can refuse ahead of its body, edge
-    /// bounds aside ([`MethodSignature::is_unrefusable`]).
-    pub(crate) unrefusable: bool,
+    /// Whether the method is a vault deposit, which nothing about a call
+    /// can refuse, edge bounds aside
+    /// ([`MethodSignature::is_vault_deposit`]).
+    pub(crate) vault_deposit: bool,
 }
 
 impl NodeOrigin {
@@ -134,7 +135,7 @@ impl NodeOrigin {
             local,
             reservation_shaped: signature.is_reservation_shaped(),
             commits_nothing: signature.commits_nothing(),
-            unrefusable: signature.is_unrefusable(),
+            vault_deposit: signature.is_vault_deposit(),
         }
     }
 
@@ -148,7 +149,7 @@ impl NodeOrigin {
             local,
             reservation_shaped: false,
             commits_nothing: false,
-            unrefusable: false,
+            vault_deposit: false,
         }
     }
 }
