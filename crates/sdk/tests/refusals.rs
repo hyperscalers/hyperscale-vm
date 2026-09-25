@@ -123,7 +123,6 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/unmarked_mint.rs");
     refuse.compile_fail("tests/refusals/instance_of_undeclared.rs");
     refuse.compile_fail("tests/refusals/overstated_record.rs");
-    refuse.compile_fail("tests/refusals/emitted_record_carries_a_length.rs");
     refuse.compile_fail("tests/refusals/colliding_marks.rs");
     refuse.compile_fail("tests/refusals/duplicate_resource_attr.rs");
     refuse.compile_fail("tests/refusals/rebalanced_across.rs");
@@ -147,20 +146,6 @@ fn the_lowering_refuses_what_it_would_declare_wrongly() {
     refuse.compile_fail("tests/refusals/ungranted_recall.rs");
     refuse.compile_fail("tests/refusals/renamed_state.rs");
     refuse.compile_fail("tests/refusals/unmarked_state.rs");
-}
-
-/// A mark the macro can already tell is unsupportable, refused where the
-/// author wrote it rather than at the publish gate.
-///
-/// The artifact scan belongs to the gate, because it reads compiled code
-/// the macro has not produced yet. What a gate does is not: the attribute
-/// sits right beside the claim, and a refusal that waits for a publish is
-/// one the author meets as a metadata error about a package rather than
-/// as a mistake on a line.
-#[test]
-fn the_lowering_refuses_a_mark_it_can_see_is_wrong() {
-    let refuse = TestCases::new();
-    refuse.compile_fail("tests/refusals/total_gated.rs");
 }
 
 /// A gate names an identity its target names, at every leaf.
@@ -499,8 +484,6 @@ fn the_macro_refuses_a_marker_nothing_reads() {
     let refuse = TestCases::new();
     refuse.compile_fail("tests/refusals/slot_on_config_field.rs");
     refuse.compile_fail("tests/refusals/requires_on_state_struct.rs");
-    refuse.compile_fail("tests/refusals/total_on_private_method.rs");
-    refuse.compile_fail("tests/refusals/total_in_foreign_impl.rs");
     refuse.compile_fail("tests/refusals/proves_on_struct.rs");
     refuse.compile_fail("tests/refusals/requires_on_enum.rs");
     refuse.compile_fail("tests/refusals/marker_on_free_fn.rs");

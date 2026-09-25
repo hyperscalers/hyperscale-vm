@@ -107,8 +107,6 @@
 //! - `#[proves(self)]`, `#[proves(<badge>)]`, `#[proves(<badge>[<id>])]`
 //!   — vouch for the component's own address, or prove possession of a
 //!   badge parameter (an address; the id a `u64`).
-//! - `#[total]` — the method cannot refuse or trap; the gate checks the
-//!   claim against the artifact.
 //!
 //! A method carries at most one gate attribute.
 //!
@@ -364,7 +362,7 @@ fn refused(mut module: syn::ItemMod, role: Role, error: &syn::Error) -> TokenStr
     // A refused module publishes nothing, so nothing it declares is
     // held to a mark: what its items are for here is the diagnostics
     // rustc gives over them.
-    let (records, _) = encode_declared(items, &BTreeSet::new());
+    let (records, _) = encode_declared(items);
     module_allows(&mut module.attrs, role);
     strip_macro_attrs(items, &state_name, role);
     items.extend(records);
@@ -545,7 +543,7 @@ fn method_name(method: &syn::ImplItemFn) -> syn::Result<String> {
 /// emits is ordinary Rust.
 const OWN: &[&str] = &[
     "slot", "holds", "state", "config", "event", "error", "record", "resource", "requires",
-    "proves", "total",
+    "proves",
 ];
 
 /// The attributes that name a gate, whose method may have no body of
@@ -596,7 +594,7 @@ fn own_attr<'a>(
 ///
 /// The readers are kind- and place-filtered and `strip` is not, so a
 /// misplaced attribute — `#[error]` on a struct, `#[slot]` on a config
-/// field, `#[total]` on a helper function — would otherwise vanish
+/// field, `#[proves]` on a helper function — would otherwise vanish
 /// without declaring anything. Every refusal names where the attribute
 /// is read.
 fn check_marker_kinds(
@@ -831,7 +829,7 @@ fn check_reserved_locals(items: &[syn::Item], state_name: &syn::Ident) -> syn::R
 /// shapes is still one codec, and the other markers read fields a struct
 /// has.
 const ON_A_STRUCT: &[&str] = &["state", "config", "event", "resource"];
-const ON_A_METHOD: &[&str] = &["proves", "total"];
+const ON_A_METHOD: &[&str] = &["proves"];
 const ON_A_STATE_FIELD: &[&str] = &["slot", "holds"];
 
 fn marker_kinds_on_struct(
@@ -907,10 +905,7 @@ fn marker_kinds_on_enum(item: &syn::ItemEnum) -> syn::Result<()> {
             ));
         }
     }
-    if let Some((attr, name)) = own_attr(
-        &item.attrs,
-        &["requires", "proves", "total", "slot", "holds"],
-    ) {
+    if let Some((attr, name)) = own_attr(&item.attrs, &["requires", "proves", "slot", "holds"]) {
         return Err(syn::Error::new_spanned(
             attr,
             format!("nothing reads `#[{name}]` on an enum"),
@@ -1108,20 +1103,6 @@ fn check_decline_arm(arm: &syn::Type, declines: &BTreeSet<String>) -> syn::Resul
     ))
 }
 
-/// The `#[total]` attribute, where a method claims the mark the publish
-/// gate then checks against the artifact the claim rides on.
-///
-/// Returned rather than reduced to a flag so a refusal can point at the
-/// claim: the mark is one attribute an author adds or removes, and an
-/// error on the method's name asks them to work out which of the lines
-/// above it is the one being complained about.
-fn total_attr(method: &syn::ImplItemFn) -> Option<&syn::Attribute> {
-    method
-        .attrs
-        .iter()
-        .find(|attr| attr.path().is_ident("total"))
-}
-
 /// The type a method answers with, at the tail position the lowering
 /// took it from.
 ///
@@ -1196,8 +1177,8 @@ fn check_edges_visible(method: &syn::ImplItemFn, lowered: &lower::Lowered) -> sy
     ))
 }
 
-/// The error arm a method's return type carries, which is the whole of
-/// what its totality mark is judged against.
+/// The error arm a method's return type carries, which is what the
+/// signature's `Fallible` is judged against.
 ///
 /// The type rather than the fact of one, because both halves run the
 /// author's body inside a closure and a body that only ever propagates —
@@ -1230,9 +1211,6 @@ struct Lowered {
     /// The events the body emits, by the name the package publishes them
     /// under, read off the body itself.
     emits: BTreeSet<String>,
-    /// Whether the method carries the totality mark, which is what makes
-    /// the events it emits ones no length may reach.
-    total: bool,
     /// The `.method(…)` builder call.
     declaration: TokenStream2,
     /// The export and the `impl Guest` body behind it.
@@ -1282,8 +1260,7 @@ fn lower_method(
     let gate = parse_gate(method, declared, &params, serves)?;
     client::check_names(&idents, serves)?;
     let yields = Yields::of(&method.sig.output);
-    let claims_total = total_attr(method).is_some();
-    let lowered = Lowerer::new(declared, &params, yields, claims_total, seal)
+    let lowered = Lowerer::new(declared, &params, yields, seal)
         .run(&method.block)
         .map_err(|errors| {
             errors
@@ -1324,39 +1301,6 @@ fn lower_method(
              package's error arm and decline the paths that should not vouch",
         ));
     }
-    let claim = total_attr(method);
-    // What the mark promises is that a caller committing against this
-    // method has nothing to hear back. Three things could break that, and
-    // the macro can see two of them: an error arm the method declines
-    // through, and a gate that turns callers away before the body runs.
-    // The third is a trap, which is a property of compiled code the macro
-    // has not emitted yet — so that one is the publish gate's, read off
-    // the artifact.
-    //
-    // The two verdicts differ in kind. An error arm beside the mark is a
-    // contradiction and the metadata is refused for it wherever it was
-    // authored. A gate beside the mark is consistent and inert — every
-    // reader acting on early commit asks for the mark *and* an open door
-    // — so the refusal here is the one place an author hears that the
-    // three words buy nothing, and it is this macro's rather than the
-    // protocol's.
-    if let Some(claim) = claim {
-        if declining.is_some() {
-            return Err(syn::Error::new_spanned(
-                claim,
-                "a method carrying an error arm can refuse, and a total method cannot: the \
-                 two marks describe the same signature and only one of them is true",
-            ));
-        }
-        if !matches!(gate, Gate::Public) {
-            return Err(syn::Error::new_spanned(
-                claim,
-                "a gate is waited on either way, which leaves the mark buying nothing: \
-                 drop the mark, or drop the gate",
-            ));
-        }
-    }
-    let total = claim.is_some();
     // What the body emits is what a call into the method may carry, and
     // the walk read every `.emit()` off the body — helpers spliced in.
     let emits: Vec<String> = lowered.emits.iter().cloned().collect();
@@ -1364,7 +1308,6 @@ fn lower_method(
         &lowered,
         &gate_calls(&gate, &lowered),
         declining.is_some(),
-        total,
         &emits,
         &grant_registrations(declared.resources),
     );
@@ -1407,7 +1350,6 @@ fn lower_method(
     };
     Ok(Lowered {
         emits: lowered.emits,
-        total,
         declaration,
         guest,
         host,
@@ -2376,23 +2318,9 @@ fn expand(
 
     let (exports, dispatch) = executing(&methods, role);
 
-    // The events a total method emits, by the type declaring each. A
-    // total body may not fault, so what it writes into a stack buffer
-    // carries no length — and the refusal for one that does belongs on
-    // the field rather than in a scan of the compiled body.
-    let under_a_mark: BTreeSet<&str> = methods
-        .iter()
-        .filter(|m| m.total)
-        .flat_map(|m| m.emits.iter().map(String::as_str))
-        .collect();
-    let length_free: BTreeSet<String> = events
-        .iter()
-        .filter(|(_, published)| under_a_mark.contains(published.as_str()))
-        .map(|(ident, _)| ident.to_string())
-        .collect();
     // Before the markers are stripped: `encode_declared` reads them, and
     // what it pushes has to survive the strip that follows.
-    let (records, stored_types) = encode_declared(items, &length_free);
+    let (records, stored_types) = encode_declared(items);
     let stored_table = stored_types
         .iter()
         .map(|ident| quote!(.declares::<#ident>()));

@@ -17,7 +17,6 @@ pub mod admit;
 pub mod exports;
 pub mod frames;
 pub mod profile;
-pub mod totality;
 pub mod validator;
 
 #[cfg(feature = "engine")]
@@ -34,7 +33,6 @@ pub mod imports;
 pub use admit::{admit, admit_core_module};
 pub use exports::{ModuleExport, module_exports};
 pub use hyperscale_vm_embed::abi::CoreType;
-pub use totality::{TotalityError, check_body, check_method, check_reachable};
 pub use validator::{ProfileError, validate_core_module, validate_module};
 #[cfg(feature = "engine")]
 pub use {

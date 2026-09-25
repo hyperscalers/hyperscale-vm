@@ -7,17 +7,15 @@ state
      20  serials — one leaf, holding u64, at most 8 bytes
 events
       0  Withdrawn
-      1  Deposited
-      2  Proposed
-      3  Enacted
-      4  Cancelled
+      1  Proposed
+      2  Enacted
+      3  Cancelled
 errors
       0  NoSuchProposal
       1  Unmatured
       2  Outranked
 types
   Cancelled = { serial: u64 }
-  Deposited = { amount: u128 }
   Enacted = { serial: u64 }
   Proposal = { serial: u64, effective_at_ms: u64, replaces: Replacement }
   Proposed = { serial: u64, effective_at_ms: u64 }
@@ -53,8 +51,7 @@ cancel(u64) — fallible
       4  write self.auth
   exports  handle for clause 2, handle for clause 4, arg0
 
-deposit(bucket) — total
-  emits    Deposited — at most 54 bytes
+deposit(bucket) — infallible
   declares
       0  credit self.vault[resource-of(arg0)]
   exports  handle for clause 0, edge arg0

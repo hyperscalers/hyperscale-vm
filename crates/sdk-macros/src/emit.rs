@@ -349,7 +349,6 @@ pub fn declaration(
     lowered: &Lowered,
     gate: &TokenStream,
     declines: bool,
-    total: bool,
     emits: &[String],
     grants: &TokenStream,
 ) -> TokenStream {
@@ -396,7 +395,6 @@ pub fn declaration(
         .map(|param| quote!(__t.bind_destroyer(#param);));
     let fallible = declines.then(|| quote!(__t.fallible();));
     let answers = lowered.answer.is_some().then(|| quote!(__t.answers();));
-    let total = total.then(|| quote!(__t.total();));
     let emits = emits.iter().map(|event| quote!(__t.emits(#event);));
     quote!(
         |__t: &mut ::hyperscale_vm_sdk::Trace| {
@@ -404,7 +402,6 @@ pub fn declaration(
             #(#fresh)*
             #gate
             #fallible
-            #total
             #answers
             #(#emits)*
             #(#nodes)*

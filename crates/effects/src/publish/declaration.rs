@@ -4,8 +4,8 @@
 //! The largest of the three gates and the one an author meets most,
 //! because it is where the vocabulary's own sentences are enforced —
 //! the per-slot shape table, the agreement two clauses reaching one
-//! cell owe each other, what a total mark may carry, and what a reach
-//! into a foreign prefix pays in shape.
+//! cell owe each other, and what a reach into a foreign prefix pays in
+//! shape.
 
 use std::collections::BTreeMap;
 
@@ -14,7 +14,7 @@ use hyperscale_vm_types::{AddressClass, Moves, Presence, ResourceAddr};
 use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr, slot_of, supports};
 use crate::resource::{GrantedBehaviour, ReachedCell, holdings_entry};
 use crate::rule::{Rule, RuleLeaf};
-use crate::signature::{AbiParam, Issuance, MethodSignature};
+use crate::signature::{Issuance, MethodSignature};
 use crate::types::{SlotId, Value};
 use crate::vocabulary::{AUTH, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 use crate::{KERNEL_SLOT_BASE, PACKAGE_SLOT_BASE};
@@ -29,16 +29,6 @@ pub enum DeclarationError {
         /// effects, `for-each` bodies counted in place.
         clause: u32,
     },
-    /// A method claiming totality over a guarded clause. A total leg
-    /// runs with every declared handle materialized, and a guarded-out
-    /// clause materializes none.
-    #[error("a total method materialises every handle it declares, and a guard leaves one absent")]
-    GuardedTotality,
-    /// A method claiming totality beside a precondition: a condition
-    /// clause, or a reservation. Either is a verdict some caller hears,
-    /// which is exactly what the mark promises cannot happen.
-    #[error("a total method admits every state, and this one declares a precondition")]
-    ConditionalTotality,
     /// Two writes on one target requiring opposite presences.
     ///
     /// Refused here as well as where the set is built, because metadata
@@ -166,12 +156,6 @@ pub enum DeclarationError {
         /// The offending clause.
         clause: u32,
     },
-    /// A total method that brings supply into or out of existence.
-    #[error(
-        "a total method promises a caller has nothing to hear back, and the entry admitting \
-         an issuance or a destruction is a verdict they would"
-    )]
-    SupplyTotality,
     /// A destroyed parameter that carries no value edge, so there is no
     /// resource for the grant to be over.
     #[error("parameter {param} is declared destroyed and carries no value edge")]
@@ -896,8 +880,7 @@ pub fn seals(signature: &MethodSignature) -> bool {
 /// would make custody a credential — the delegation the authority model
 /// forbids. Only the account presents a badge it holds, because only there
 /// is the holder the signer, and only a protocol package is the account —
-/// so the publish gate reads this against provenance the way it reads a
-/// totality claim. `check_declarations` has already held every such
+/// so the publish gate reads this against provenance. `check_declarations` has already held every such
 /// `Proves` to a possession the same method declares, so a claim that is
 /// not the target's own `SelfAddr` here is a held badge.
 #[must_use]
@@ -936,50 +919,6 @@ pub fn seal_clauses() -> Vec<Clause> {
     ]
 }
 
-/// What a total mark cannot stand beside, read off the declaration.
-fn check_totality(signature: &MethodSignature, flat: &[&Clause]) -> Result<(), DeclarationError> {
-    if !signature.totality.is_total() {
-        return Ok(());
-    }
-    // The mark promises a caller may commit without waiting to hear
-    // back, so every verdict the frame carries has to land before any
-    // leg does. Admission answers a rule reading the node's own evidence
-    // and materialization answers one reading committed state, and both
-    // land before anything commits; a rule reaching a *stored* rule
-    // needs the session, which only the declaring node's own walk holds
-    // — after a caller may already have committed.
-    //
-    // A reservation stays refused for a different reason, and it is the
-    // one the mark is actually about: a reservation is a verdict on the
-    // caller's own request. An injected fence is a verdict on the
-    // target's standing state, which the caller was never promised
-    // anything about.
-    if flat.iter().any(|clause| {
-        matches!(clause, Clause::Requires { rule, .. }
-                if rule.leaves().any(|leaf| matches!(leaf, RuleLeaf::Stored { .. })))
-            || matches!(
-                clause,
-                Clause::Effect {
-                    reach: None,
-                    mode: ModeExpr::Reserve(_),
-                    ..
-                }
-            )
-    }) {
-        return Err(DeclarationError::ConditionalTotality);
-    }
-    // Supply is the settlement model's question rather than placement's.
-    // An issuance entry reads the node's own evidence, so admission
-    // answers it before any leg runs and the mark would survive it — but
-    // what a leg nothing waits on may do to a shard's supply
-    // accumulator is attested with that leg, and the answer is owed
-    // there rather than here.
-    if !(signature.issues.is_empty() && signature.destroys.is_empty()) {
-        return Err(DeclarationError::SupplyTotality);
-    }
-    Ok(())
-}
-
 /// Judge a signature's declared effects against the prefix and the cells
 /// they are the signature's to declare.
 ///
@@ -1001,21 +940,6 @@ pub fn check_declarations(signature: &MethodSignature) -> Result<(), Declaration
     // which is the numbering a clause index names.
     let flat: Vec<&Clause> = signature.effects.iter().flat_map(Clause::effects).collect();
     check_agreement(&flat)?;
-    // Trap freedom for a total leg rests on every handle being
-    // materialized from the declared effect set, and an absent
-    // capability is precisely a change to that. Precision is what a
-    // total method trades for the mark, and it trades it in the one
-    // direction that keeps both properties true.
-    if signature.totality.is_total()
-        && (flat.iter().any(|clause| clause.guard().is_some())
-            || signature
-                .abi
-                .iter()
-                .any(|binding| matches!(binding, AbiParam::Guard(_))))
-    {
-        return Err(DeclarationError::GuardedTotality);
-    }
-    check_totality(signature, &flat)?;
     // A denomination is read at the position it indexes, so a list that
     // does not cover the parameters is one whose entries name positions
     // nobody agrees on. An empty list is the method that denominates
@@ -1421,7 +1345,7 @@ mod tests {
     use crate::metadata::PACKAGE_SLOT;
     use crate::resource::{GrantsExpr, ResourceKind};
     use crate::rule::{GrantRuleExpr, GrantSubject, RuleExpr, RuleLeaf};
-    use crate::signature::{AbiParam, Issuance, Issued, MethodSignature, ParamType, Totality};
+    use crate::signature::{Issuance, Issued, MethodSignature, ParamType, Totality};
     use crate::types::{SlotId, package_slot};
     use crate::vocabulary::{AUTH, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
     use crate::{KERNEL_SLOT_BASE, PACKAGE_SLOT_BASE};
@@ -1858,102 +1782,6 @@ mod tests {
         );
     }
 
-    /// What a total mark cannot survive, read off the declaration rather
-    /// than off the code.
-    ///
-    /// A leg reads the mark and commits without waiting, so what it has
-    /// to exclude is every verdict that could still land *inside* its
-    /// own execution. The artifact scan covers the one that leaves the
-    /// type system — a trap — and this is the one it cannot see: a
-    /// condition no earlier stage can answer.
-    ///
-    /// Which conditions those are is the placement's answer rather than
-    /// this check's. A claim reads the node's own signed evidence, so
-    /// admission decides it; a presence reads committed state, so
-    /// materialization does; both land before anything commits. A
-    /// *stored* rule needs the session, and only the declaring node's
-    /// own walk holds one.
-    #[test]
-    fn a_total_mark_survives_every_verdict_reached_before_its_leg() {
-        let total = |signature: MethodSignature| MethodSignature {
-            totality: Totality::Total,
-            ..signature
-        };
-        let leaf = || {
-            TargetExpr::Point(Expr::ChildKey {
-                owner: Box::new(Expr::SelfAddr),
-                slot: SlotRef::Fixed(SlotId(PACKAGE_SLOT_BASE)),
-                material: vec![],
-            })
-        };
-        let requiring = |rule| {
-            total(MethodSignature {
-                effects: vec![
-                    Clause::Effect {
-                        reach: None,
-                        guard: None,
-                        target: leaf(),
-                        mode: ModeExpr::Read,
-                        denomination: None,
-                    },
-                    Clause::Requires { guard: None, rule },
-                ],
-                ..MethodSignature::default()
-            })
-        };
-
-        // The shape that admits: public, and answering for itself.
-        assert_eq!(
-            check_declarations(&total(MethodSignature::default())),
-            Ok(())
-        );
-
-        // A claim admission decides, and a presence materialization
-        // does: both land before this method's leg runs, so the mark
-        // stands beside either.
-        assert_eq!(
-            check_declarations(&requiring(RuleExpr::claim(Expr::SelfAddr))),
-            Ok(())
-        );
-        assert_eq!(
-            check_declarations(&requiring(RuleExpr::Require(RuleLeaf::Presence {
-                target: Box::new(leaf()),
-                expect: Presence::Present,
-            }))),
-            Ok(())
-        );
-
-        // A stored rule needs the session, so the verdict is this
-        // method's own walk's — reached after a caller may already have
-        // committed on the strength of the mark.
-        assert_eq!(
-            check_declarations(&requiring(RuleExpr::Require(RuleLeaf::Stored {
-                cell: Expr::ChildKey {
-                    owner: Box::new(Expr::SelfAddr),
-                    slot: SlotRef::Fixed(SlotId(PACKAGE_SLOT_BASE)),
-                    material: vec![],
-                },
-            }))),
-            Err(DeclarationError::ConditionalTotality),
-        );
-
-        // And a reservation, for the reason the mark is actually about:
-        // it is a verdict on the caller's own request.
-        assert_eq!(
-            check_declarations(&total(MethodSignature {
-                effects: vec![Clause::Effect {
-                    reach: None,
-                    guard: None,
-                    target: leaf(),
-                    mode: ModeExpr::Reserve(Expr::Literal(Value::U128(5))),
-                    denomination: Some(Box::new(Expr::Config(0))),
-                }],
-                ..MethodSignature::default()
-            })),
-            Err(DeclarationError::ConditionalTotality),
-        );
-    }
-
     /// A presence is about whether the state a target names holds
     /// anything, and each of the three shapes answers that: a cell is
     /// there or is not, an entry is there or is not, and an interval
@@ -2222,49 +2050,6 @@ mod tests {
                 Ok(())
             );
         }
-    }
-
-    /// Trap freedom for a total leg rests on every declared handle being
-    /// materialized, and a guarded-out clause materializes none. The
-    /// mark and the precision are the trade.
-    #[test]
-    fn a_total_method_carries_no_guard() {
-        let guarded = Clause::Effect {
-            reach: None,
-            guard: Some(Box::new(Expr::Eq(
-                Box::new(Expr::Arg(0)),
-                Box::new(Expr::Config(0)),
-            ))),
-            target: TargetExpr::Point(Expr::SelfAddr),
-            mode: ModeExpr::Read,
-            denomination: None,
-        };
-        assert_eq!(
-            check_declarations(&MethodSignature {
-                totality: Totality::Total,
-                effects: vec![guarded],
-                ..MethodSignature::default()
-            }),
-            Err(DeclarationError::GuardedTotality)
-        );
-
-        // The binding alone is enough: it is the parameter an absent
-        // capability travels beside.
-        assert_eq!(
-            check_declarations(&MethodSignature {
-                totality: Totality::Total,
-                abi: vec![AbiParam::Guard(0)],
-                effects: vec![Clause::Effect {
-                    reach: None,
-                    guard: None,
-                    target: TargetExpr::Point(Expr::SelfAddr),
-                    mode: ModeExpr::Read,
-                    denomination: None,
-                }],
-                ..MethodSignature::default()
-            }),
-            Err(DeclarationError::GuardedTotality)
-        );
     }
 
     /// Metadata can be authored rather than derived, so the

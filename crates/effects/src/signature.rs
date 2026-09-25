@@ -247,45 +247,19 @@ pub enum AbiParam {
     Derived(Expr),
 }
 
-/// How completely a method can be relied on to return.
+/// Whether a method can fail on its own terms.
 ///
-/// Three states rather than a flag, because the two facts behind them are
-/// not the same fact and one does not imply the other. An error arm is
-/// visible in the signature and says the method can fail on its own terms.
-/// Trap freedom is not visible anywhere — a trap leaves the type system
-/// entirely — so ruling it out takes analysis of the body rather than a
-/// reading of its declaration.
-///
-/// The variants sit weakest first. The default is not the weakest but
-/// the commonest: the mark is a function of the component type rather
-/// than a claim an author may under-shoot, and a method with no error
-/// arm is the shape most methods have.
+/// The error arm is visible in the signature, and the publish gate holds
+/// the mark to the export's own type in both directions. The default is
+/// the commonest shape: a method with no error arm.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hbor)]
 pub enum Totality {
     /// The signature carries an error arm, so the method fails on its own
-    /// terms and every caller has a failure to handle. The publish gate
-    /// admits this mark exactly over an export that carries one.
+    /// terms and every caller has a failure to handle.
     Fallible,
-    /// No error arm, and nothing established about traps. Necessary for
-    /// [`Total`](Self::Total) and not sufficient for it: fuel exhaustion
-    /// and a panicking body are both still reachable from here.
+    /// No error arm.
     #[default]
     Infallible,
-    /// No error arm, and the publish-time checker established the rest:
-    /// no partial operation anywhere in the body, and a static
-    /// fuel bound the transaction pre-charges so exhaustion cannot occur
-    /// at execution. Never authored — a package claims it and the check
-    /// grants it, because a claim a package could simply assert about
-    /// itself would carry no weight for the shards that rely on it.
-    Total,
-}
-
-impl Totality {
-    /// Whether a caller may commit without waiting to hear back.
-    #[must_use]
-    pub const fn is_total(self) -> bool {
-        matches!(self, Self::Total)
-    }
 }
 
 /// The bound on how many resources one method may issue.
@@ -398,12 +372,7 @@ pub struct Issuance {
 /// prefix.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub struct MethodSignature {
-    /// How completely the method returns: whether a caller has a failure
-    /// to handle, and whether anything rules out a trap.
-    ///
-    /// What a leg's decomposition turns on — an outbound leg commits
-    /// locally and offers no veto, so it must be one that cannot come
-    /// back with a refusal or a trap for the core to have to answer.
+    /// Whether a caller has a failure to handle.
     pub totality: Totality,
     /// The resources this method may bring into or out of existence,
     /// in the order a body's own calls name them.

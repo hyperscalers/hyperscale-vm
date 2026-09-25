@@ -38,12 +38,6 @@ pub mod account {
         amount: Quantity,
     }
 
-    /// Funds arrived.
-    #[event]
-    struct Deposited {
-        amount: Quantity,
-    }
-
     /// A replacement was filed — of the factors, or of who may recover
     /// them — and the instant it may be enacted from.
     ///
@@ -207,16 +201,12 @@ pub mod account {
         /// What the issuer forbids is not this question either. A
         /// `Deposit` entry that declines aborts the transfer at
         /// admission, before anything lands here.
-        #[total]
+        ///
+        /// The body is the declaration's source and nothing else: its
+        /// shape is a vault deposit, which the kernel performs itself.
         pub fn deposit(&mut self, funds: Bucket) {
-            // The credit comes last because it consumes the edge: value
-            // is linear, so every read of what crossed — the amount the
-            // event carries, the resource the cell is keyed by — happens
-            // while there is still a bucket to read it from.
-            let credited = funds.quantity();
             let resource = funds.resource();
             self.vault(resource).put(funds);
-            Deposited { amount: credited }.emit();
         }
 
         /// Retire what the caller hands over.

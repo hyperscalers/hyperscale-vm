@@ -1,7 +1,6 @@
-//! An event an ordinary method emits carries whatever its own bound
-//! admits: the payload goes into a stack buffer that bound sizes, and
-//! a length inside it costs the method nothing it claims. The mark is
-//! what makes a length a thing to refuse, and this method has none.
+//! An event carries whatever its own bound admits: the payload goes into
+//! a stack buffer that bound sizes, so a length inside it costs the
+//! method nothing.
 use hyperscale_vm_sdk::blueprint;
 
 #[blueprint]

@@ -14,8 +14,8 @@ use std::sync::LazyLock;
 use hyperscale_hbor::{Bytes, Capped};
 use hyperscale_vm_effects::{
     AdmissionError, GrantedBehaviour, Holding, IntentHeader, IntentTree, Records, ResourceGrants,
-    ResourceKind, ResourceMeta, RuleBytes, StoredRule, TestHasher, Totality, admit_tree,
-    holdings_collection, never,
+    ResourceKind, ResourceMeta, RuleBytes, StoredRule, TestHasher, admit_tree, holdings_collection,
+    never,
 };
 use hyperscale_vm_harness::driver::{Lanes, amount_of, cells, run_lanes, seed_vault, vault};
 use hyperscale_vm_kernel::{BatchOutcome, BatchTx, EnvInputs, MemoryStore};
@@ -471,7 +471,7 @@ fn admitted_tree(entry: RuleBytes, recipient: PrincipalAddr) -> Result<IntentTre
 /// party who does not hold it writes nothing under them.
 ///
 /// The half of the seam that cannot be a gate. A credit lands on
-/// `deposit`, which is `#[total]` and may turn no caller away, so the
+/// `deposit`, a vault deposit that may turn no caller away, so the
 /// requirement is a fact about the recipient judged against committed
 /// state before any body runs — and the transfer aborts whole rather
 /// than landing somewhere for an issuer to sweep afterwards. The sender
@@ -526,18 +526,17 @@ fn a_deposit_credential_governs_who_may_be_credited() -> Result<()> {
     Ok(())
 }
 
-/// Injection does not unmake a total method.
+/// Injection does not unmake a deposit.
 ///
 /// `deposit` carries a condition it never declared, and stays the method
-/// whose mark says it turns no caller away — because a condition is
+/// whose shape says it turns no caller away — because a condition is
 /// judged against committed state before the body runs, where a gate
 /// would refuse a caller for presenting a proof the manifest never
 /// showed them was wanted.
 #[test]
-fn a_credit_requirement_leaves_the_total_mark_standing() {
-    assert_eq!(
-        account::metadata().methods["deposit"].totality,
-        Totality::Total,
-        "the account's deposit is total, and injection is what it has to survive",
+fn a_credit_requirement_leaves_the_deposit_shape_standing() {
+    assert!(
+        account::metadata().methods["deposit"].is_vault_deposit(),
+        "the account's deposit is a vault deposit, and injection is what it has to survive",
     );
 }

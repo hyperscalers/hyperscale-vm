@@ -2029,12 +2029,11 @@ const fn slot_kind(kind: SlotKind) -> &'static str {
     }
 }
 
-/// How completely a method returns.
+/// Whether a method can fail on its own terms.
 const fn returns(totality: Totality) -> &'static str {
     match totality {
         Totality::Fallible => "fallible",
         Totality::Infallible => "infallible",
-        Totality::Total => "total",
     }
 }
 
@@ -2679,13 +2678,13 @@ mod tests {
     fn the_package_rendering_carries_every_table_it_declares() {
         let mut signature = declaring(vec![]);
         signature.params = vec![ParamType::Bucket];
-        signature.totality = Totality::Total;
+        signature.totality = Totality::Fallible;
         let text = explain(&package("deposit", signature));
         assert!(text.contains("     16  entries — an ordered collection, holding u128"));
         assert!(text.contains("      0  x"));
         assert!(text.contains("      0  traded"));
         assert!(text.contains("      0  underfunded"));
-        assert!(text.contains("deposit(bucket) — total"), "{text}");
+        assert!(text.contains("deposit(bucket) — fallible"), "{text}");
     }
 
     #[test]

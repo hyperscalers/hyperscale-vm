@@ -1207,8 +1207,8 @@ fn promote_by(signer: PrincipalAddr) -> ManifestGraph {
 }
 
 /// What Alice's account said about a replacement, at the index the
-/// package's event table fixes: `proposed` is 2, `enacted` 3 and
-/// `cancelled` 4.
+/// package's event table fixes: `proposed` is 1, `enacted` 2 and
+/// `cancelled` 3.
 fn said(event_type: u32, payload: Vec<u8>) -> Event {
     Event {
         emitter: ALICE.address(),
@@ -1257,7 +1257,7 @@ fn a_recovery_proposal_names_its_serial_at_every_transition() {
     );
     assert_eq!(
         completed(&results).events,
-        vec![said(2, proposed(FIRST, t0 + DAY_MS))]
+        vec![said(1, proposed(FIRST, t0 + DAY_MS))]
     );
 
     let (results, _) = run_both_at(
@@ -1267,7 +1267,7 @@ fn a_recovery_proposal_names_its_serial_at_every_transition() {
         Some(TAKER),
         t0 + DAY_MS,
     );
-    assert_eq!(completed(&results).events, vec![said(3, enacted(FIRST))]);
+    assert_eq!(completed(&results).events, vec![said(2, enacted(FIRST))]);
 
     let (results, _) = run_both_signed(
         &world,
@@ -1275,7 +1275,7 @@ fn a_recovery_proposal_names_its_serial_at_every_transition() {
         &[(&cancel_by(BOB), TxHash(Hash32([0xC2; 32])))],
         Some(BOB),
     );
-    assert_eq!(completed(&results).events, vec![said(4, cancelled(FIRST))]);
+    assert_eq!(completed(&results).events, vec![said(3, cancelled(FIRST))]);
 }
 
 /// A freeze and an amendment are filings too, and a veto is a verdict:
@@ -1293,7 +1293,7 @@ fn a_freeze_an_amendment_and_a_veto_speak_the_same_words() {
     );
     assert_eq!(
         completed(&results).events,
-        vec![said(2, proposed(FIRST, t0 + DAY_MS))]
+        vec![said(1, proposed(FIRST, t0 + DAY_MS))]
     );
 
     let (results, _) = run_both_signed(
@@ -1302,7 +1302,7 @@ fn a_freeze_an_amendment_and_a_veto_speak_the_same_words() {
         &[(&veto_by(MAKER), TxHash(Hash32([0xC4; 32])))],
         Some(MAKER),
     );
-    assert_eq!(completed(&results).events, vec![said(4, cancelled(FIRST))]);
+    assert_eq!(completed(&results).events, vec![said(3, cancelled(FIRST))]);
 
     let (results, _) = run_both_signed(
         &world,
@@ -1312,7 +1312,7 @@ fn a_freeze_an_amendment_and_a_veto_speak_the_same_words() {
     );
     assert_eq!(
         completed(&results).events,
-        vec![said(2, proposed(FIRST, t0 + DAY_MS))]
+        vec![said(1, proposed(FIRST, t0 + DAY_MS))]
     );
 }
 

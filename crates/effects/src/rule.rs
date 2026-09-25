@@ -138,8 +138,8 @@ pub enum Rule<L> {
 /// reached there aborts the whole transaction and no caller has
 /// committed on the strength of it. A verdict reached in the walk lands
 /// inside the declaring node's own leg, which a caller may already have
-/// committed without waiting for — which is what a
-/// [`Total`](crate::signature::Totality::Total) frame may not carry.
+/// committed without waiting for — which is what an outbound leg's frame
+/// may not carry.
 ///
 /// That reading holds for admission and it is where the star classifier
 /// parts company on materialization. A node the classifier peels off the

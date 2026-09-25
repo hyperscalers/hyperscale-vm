@@ -161,11 +161,10 @@ pub trait HborDecode: HborWidth + Sized {
 /// arithmetic on a buffer and there is nothing to refuse.
 ///
 /// A marker with no members: what it says is where a length is not,
-/// and the compiler says it on the field. Where that matters is a
-/// contract method marked total, whose events encode into a stack buffer
-/// sized by [`HborBound::MAX_ENCODED_LEN`]; the bound is what sizes the
-/// buffer, and this is what puts a stray collection's diagnosis on the
-/// declaration rather than in a scan of the compiled body.
+/// and the compiler says it on the field. Where that matters is an
+/// encode into a stack buffer sized by [`HborBound::MAX_ENCODED_LEN`];
+/// the bound is what sizes the buffer, and this is what puts a stray
+/// collection's diagnosis on the declaration.
 ///
 /// Granted by `#[derive(Hbor)]` under `#[hbor(length_free)]` to a struct
 /// or enum whose every field carries it, and by hand below to the
@@ -176,8 +175,8 @@ pub trait LengthFree: HborEncode {}
 /// Encode `value` into `out`, returning the bytes written.
 ///
 /// Allocates nothing, so nothing here can fault: this is the path a
-/// contract method marked total encodes on, where growing a heap buffer
-/// would be a failure the totality scan reads as a trap.
+/// contract's events encode on, where growing a heap buffer would be a
+/// failure the body could do nothing about.
 ///
 /// The empty slice is unreachable for a buffer of at least
 /// [`HborBound::MAX_ENCODED_LEN`] bytes — the bound is the statement

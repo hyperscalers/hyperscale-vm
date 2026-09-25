@@ -1160,15 +1160,7 @@ mod tests {
             signature
         };
         for (name, sink, expected) in [
-            ("a deposit", deposit.clone(), LegRole::Outbound),
-            (
-                "a deposit marked total",
-                MethodSignature {
-                    totality: Totality::Total,
-                    ..deposit
-                },
-                LegRole::Outbound,
-            ),
+            ("a deposit", deposit, LegRole::Outbound),
             ("a delta on another slot", core_sink(), LegRole::Core),
             (
                 "a deposit with an error arm",

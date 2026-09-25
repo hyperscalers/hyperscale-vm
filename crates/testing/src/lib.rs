@@ -29,9 +29,8 @@
 //!
 //! # What the fast lane does not answer
 //!
-//! Fuel, the boundary's copy accounting, the deploy-time profile
-//! and the totality scan are all the artifact's, and the native lane has
-//! none of them. What it does answer is whether the bodies are right,
+//! Fuel, the boundary's copy accounting and the deploy-time profile are
+//! all the artifact's, and the native lane has none of them. What it does answer is whether the bodies are right,
 //! and the harness holds that answer to the artifact's.
 //!
 //! It runs under whichever profile the test was built in, and the two

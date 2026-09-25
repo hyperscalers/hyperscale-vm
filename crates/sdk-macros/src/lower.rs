@@ -779,11 +779,6 @@ pub struct Lowerer<'a> {
     /// Everything the package declares by name — the same set the gate
     /// parser reads, so a body and its gate resolve one name one way.
     declared: &'a Declared<'a>,
-    /// Whether the method claims totality, which is what turns a branch
-    /// back into the superset it used to declare: a total leg runs with
-    /// every declared handle materialized, and a guarded-out clause
-    /// materializes none.
-    total: bool,
     params: &'a [(String, syn::Type)],
     /// What the method's return type says its tail hands back. A body
     /// yielding nothing has no tail worth the name: a loop or a
@@ -837,12 +832,10 @@ impl<'a> Lowerer<'a> {
         declared: &'a Declared<'a>,
         params: &'a [(String, syn::Type)],
         yields: Yields,
-        total: bool,
         seal: Option<Range<usize>>,
     ) -> Self {
         Self {
             declared,
-            total,
             params,
             yields,
             seal,
@@ -860,13 +853,7 @@ impl<'a> Lowerer<'a> {
 
     /// A second lowerer over the same inputs, for the survey walk.
     fn twin(&self) -> Self {
-        Self::new(
-            self.declared,
-            self.params,
-            self.yields,
-            self.total,
-            self.seal.clone(),
-        )
+        Self::new(self.declared, self.params, self.yields, self.seal.clone())
     }
 
     /// Record the event a `.emit()` names, which the declaration prices:
@@ -2399,11 +2386,10 @@ impl<'a> Lowerer<'a> {
     /// write.
     ///
     /// `None` where the condition is not a judgment the DSL expresses,
-    /// or where the method claims totality — both fall back to declaring
-    /// the union, which is what keeps a body free to branch on things a
-    /// declaration has no business seeing.
+    /// which falls back to declaring the union — what keeps a body free
+    /// to branch on things a declaration has no business seeing.
     fn guard_scope(&mut self, branch: &syn::ExprIf) -> Option<Eval> {
-        if self.total || matches!(&*branch.cond, syn::Expr::Let(_)) {
+        if matches!(&*branch.cond, syn::Expr::Let(_)) {
             return None;
         }
         let cond = self.expr(&branch.cond);
@@ -4562,7 +4548,7 @@ mod tests {
             declines: &BTreeSet::new(),
             events: &[],
         };
-        Lowerer::new(&declared, &[], Yields::Nothing, false, None)
+        Lowerer::new(&declared, &[], Yields::Nothing, None)
             .run(&block)
             .map_err(|errors| errors.iter().map(ToString::to_string).collect())
     }
@@ -4582,7 +4568,7 @@ mod tests {
             declines: &BTreeSet::new(),
             events: &[],
         };
-        Lowerer::new(&declared, &[], yields, false, None)
+        Lowerer::new(&declared, &[], yields, None)
             .run(&block)
             .map_err(|errors| errors.iter().map(ToString::to_string).collect())
     }

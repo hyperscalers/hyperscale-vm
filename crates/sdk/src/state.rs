@@ -36,8 +36,8 @@
 //! The accessors that do have a guest body are always inlined, because
 //! each is one import behind a match on a mode its call site already
 //! fixed. The `guest` module states the argument; what it turns on is that
-//! an out-of-line dead arm is an `unreachable` the totality scan reads as
-//! a fault, and this vocabulary is what every derived body is written in.
+//! an out-of-line dead arm would be an `unreachable` in every derived
+//! body, since this vocabulary is what each is written in.
 //!
 //! # The deterministic environment
 //!
@@ -602,10 +602,9 @@ impl Cellular for bool {
     /// right for one the kernel builds: a malformed address is a defect
     /// and the trap is the deterministic answer to it. A boolean cell is
     /// written only by a body's own [`to_cell`](Cellular::to_cell), so
-    /// the bytes it could not mean are that package's own bug — and
-    /// trapping on them would cost the vocabulary something it needs
-    /// more, since a `#[total]` method may not trap and would therefore
-    /// be unable to read a stored flag at all.
+    /// the bytes it could not mean are that package's own bug, and a
+    /// reader is better served by a widening than by a trap it can do
+    /// nothing about.
     ///
     /// So the reading is a widening rather than a check: absent and zero
     /// are false, anything else is true.
@@ -2080,7 +2079,7 @@ impl Interval<NfVault> {
     /// instance's id is the entry's own order key — so there is no value
     /// to name. The filing is the kernel's, so a body hands the bucket
     /// over rather than walking it, which is also what keeps it away
-    /// from the allocator and so eligible for the total mark.
+    /// from the allocator.
     #[inline(always)]
     #[allow(clippy::needless_pass_by_value)] // the filing consumes the edge; off host nothing runs
     pub fn file(&mut self, funds: NfBucket) {

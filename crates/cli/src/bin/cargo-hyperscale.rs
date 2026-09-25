@@ -37,7 +37,7 @@ cargo hyperscale — build a package crate into an artifact the chain admits
 
 `dir` defaults to the current directory. Pass `--protocol` to build under
 the gate genesis seeds a package through, which is the only one that
-admits a claim to totality. Pass `--method <name>` to `explain` to print
+admits a package with no seal or one presenting a badge it holds. Pass `--method <name>` to `explain` to print
 one method rather than the whole package, or `--resources` to print what
 every resource it issues says to a holder — with `--config <field>=<addr>`
 for each configuration field those rules read, and `--instance <addr>` for

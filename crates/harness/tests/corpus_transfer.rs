@@ -12,16 +12,13 @@ use hyperscale_vm_effects::{
     Totality, Value, child_key, package_slot,
 };
 use hyperscale_vm_harness::driver::{amount_of, vault};
-use hyperscale_vm_harness::fixtures::build_guest;
 use hyperscale_vm_kernel::MemoryStore;
 use hyperscale_vm_manifest_builder::TypedBuilder;
-use hyperscale_vm_runtime::check_method;
 use hyperscale_vm_stdlib::account;
 use hyperscale_vm_types::{
     Address, EffectSet, EffectTarget, Event, Mode, Moves, Outcome, SubstateKey, TxHash,
     encode_amount,
 };
-use wasmtime::Result;
 
 mod common;
 #[allow(clippy::wildcard_imports)] // the shared world is the binary's prelude
@@ -298,10 +295,7 @@ fn transfer_executes_end_to_end_on_both_runtimes() {
     // constants and the package's table are two halves of one contract
     // that only a test holds together.
     let table = account::metadata().events;
-    assert_eq!(
-        table,
-        vec!["Withdrawn", "Deposited", "Proposed", "Enacted", "Cancelled"]
-    );
+    assert_eq!(table, vec!["Withdrawn", "Proposed", "Enacted", "Cancelled"]);
     for event in &receipt.events {
         assert!(
             table.get(event.event_type as usize).is_some(),
@@ -311,44 +305,4 @@ fn transfer_executes_end_to_end_on_both_runtimes() {
     }
     assert_eq!(amount_of(&final_store, vault(ALICE, RES_X)), 50);
     assert_eq!(amount_of(&final_store, vault(BOB, RES_X)), 100);
-}
-
-/// The stdlib's own total mark, checked against the code that carries it.
-///
-/// `account_metadata` declares `deposit` total, and a claim a package
-/// makes about itself is worth nothing unless something reads the
-/// artifact back. This is that reading: the guest as it deploys, the
-/// method as routing names it, and the same walk a publish-time check
-/// would run.
-///
-/// `withdraw` rides along as the contrast, and the two facts behind the
-/// mark come apart on it. Its export carries no error arm either, so it
-/// is infallible by the same reading — and the checker still refuses it
-/// the upgrade, which is the proof that the scan answers per method
-/// rather than per package: the two live in one module and only one of
-/// them passes.
-#[test]
-fn the_stdlib_deposit_earns_the_mark_it_claims() -> Result<()> {
-    let artifact = build_guest("account")?;
-
-    assert_eq!(
-        account::metadata().methods["deposit"].totality,
-        Totality::Total,
-        "the fixture under test is the claim itself",
-    );
-    assert_eq!(
-        check_method(&artifact, "deposit"),
-        Ok(()),
-        "the claim has to survive the artifact, or it is not a claim",
-    );
-
-    assert_eq!(
-        account::metadata().methods["withdraw_nf"].totality,
-        Totality::Infallible,
-    );
-    assert!(
-        check_method(&artifact, "withdraw_nf").is_err(),
-        "one module, two verdicts — the check is per method",
-    );
-    Ok(())
 }

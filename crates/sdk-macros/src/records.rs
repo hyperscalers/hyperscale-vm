@@ -5,8 +5,6 @@
 //! its own table index, and the shapes both of them name are walked out
 //! of the module so the declaration can carry them.
 
-use std::collections::{BTreeMap, BTreeSet};
-
 use quote::quote;
 use syn::spanned::Spanned as _;
 
@@ -135,14 +133,8 @@ pub fn event_emitters(events: &[(syn::Ident, String)], role: Role) -> Vec<syn::I
                     /// rather than a layout it was told about.
                     ///
                     /// The payload is built on the stack, in a buffer
-                    /// the event's own bound sizes. Nothing here
-                    /// allocates, because a method marked total may not:
-                    /// growing a heap buffer can fail, and the failure
-                    /// is the `unreachable` that costs the mark. So
-                    /// nothing an event names may carry a length — the
-                    /// event itself, and every declaration reachable
-                    /// through its fields — and the widths are the
-                    /// event's to state.
+                    /// the event's own bound sizes, so nothing here
+                    /// allocates.
                     pub fn emit(&self) {
                         let mut buf = [0u8; <Self as ::hyperscale_vm_sdk::hbor::HborBound>
                             ::MAX_ENCODED_LEN];
@@ -154,79 +146,6 @@ pub fn event_emitters(events: &[(syn::Ident, String)], role: Role) -> Vec<syn::I
             )
         })
         .collect()
-}
-
-/// Everything `seeds` reach: the declared structs named through their
-/// fields, and through those in turn.
-///
-/// The property follows the payload rather than the attribute that
-/// declared it. An event composed of a record is the ordinary shape —
-/// the event *is* the thing just stored — so a record one names is
-/// written into the same buffer and is held to the same terms.
-pub fn reached_by(items: &[syn::Item], seeds: &BTreeSet<String>) -> BTreeSet<String> {
-    let mut named: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut frontier: Vec<String> = seeds.iter().cloned().collect();
-    for item in items {
-        let Some(declared) = Declared::of(item) else {
-            continue;
-        };
-        if !declared.marked("record") && !declared.marked("event") && !declared.marked("resource") {
-            continue;
-        }
-        named.insert(
-            declared.ident.to_string(),
-            declared
-                .fields()
-                .iter()
-                .flat_map(|f| type_names(&f.ty))
-                .collect(),
-        );
-    }
-    let mut reached = BTreeSet::new();
-    while let Some(name) = frontier.pop() {
-        if !reached.insert(name.clone()) {
-            continue;
-        }
-        if let Some(fields) = named.get(&name) {
-            frontier.extend(fields.iter().cloned());
-        }
-    }
-    reached
-}
-
-/// Every type name a field's type mentions, generic arguments included.
-///
-/// Names rather than paths, because what this answers against is the
-/// module's own declarations, and a package names those unqualified.
-pub fn type_names(ty: &syn::Type) -> Vec<String> {
-    let mut found = Vec::new();
-    walk_type_names(ty, &mut found);
-    found
-}
-
-pub fn walk_type_names(ty: &syn::Type, found: &mut Vec<String>) {
-    match ty {
-        syn::Type::Path(path) => {
-            for segment in &path.path.segments {
-                found.push(segment.ident.to_string());
-                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    for arg in &args.args {
-                        if let syn::GenericArgument::Type(inner) = arg {
-                            walk_type_names(inner, found);
-                        }
-                    }
-                }
-            }
-        }
-        syn::Type::Array(array) => walk_type_names(&array.elem, found),
-        syn::Type::Tuple(tuple) => {
-            for elem in &tuple.elems {
-                walk_type_names(elem, found);
-            }
-        }
-        syn::Type::Reference(reference) => walk_type_names(&reference.elem, found),
-        _ => {}
-    }
 }
 
 /// A struct or an enum the module declares, read one way.
@@ -278,11 +197,7 @@ impl<'a> Declared<'a> {
 /// terms as every other fact this macro derives: the encoding is the
 /// protocol's, so naming it is the protocol's job. The path routes
 /// through the SDK, which is the one crate a contract depends on.
-pub fn encode_declared(
-    items: &mut [syn::Item],
-    length_free: &BTreeSet<String>,
-) -> (Vec<syn::Item>, Vec<syn::Ident>) {
-    let length_free = reached_by(items, length_free);
+pub fn encode_declared(items: &mut [syn::Item]) -> (Vec<syn::Item>, Vec<syn::Ident>) {
     let mut records = Vec::new();
     let mut stored_types = Vec::new();
     for item in items {
@@ -315,22 +230,7 @@ pub fn encode_declared(
         attrs.push(syn::parse_quote!(
             #[derive(::hyperscale_vm_sdk::hbor::Hbor, ::hyperscale_vm_sdk::hbor::HborShape)]
         ));
-        // A total body may not fault, so what a method under the mark
-        // emits carries no length anywhere: the claim is asked for here
-        // and checked field by field, which puts the refusal on the
-        // field that carries one.
-        //
-        // No other declaration claims it. Every event's payload is
-        // written into a stack buffer its own bound sizes, whatever it
-        // holds, and every cell through an allocating encode — so a
-        // length is a thing to refuse only where the mark is.
-        if length_free.contains(&ident.to_string()) {
-            attrs.push(syn::parse_quote!(
-                #[hbor(crate = ::hyperscale_vm_sdk::hbor, length_free)]
-            ));
-        } else {
-            attrs.push(syn::parse_quote!(#[hbor(crate = ::hyperscale_vm_sdk::hbor)]));
-        }
+        attrs.push(syn::parse_quote!(#[hbor(crate = ::hyperscale_vm_sdk::hbor)]));
         // Named by whoever reads it: a record by the reader of its cell,
         // an event by the decoder of its payload. Both are the package's
         // own surface, so both are open the way the configuration struct

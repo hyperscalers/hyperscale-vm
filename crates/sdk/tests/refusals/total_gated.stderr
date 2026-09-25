@@ -1,5 +1,0 @@
-error: a gate is waited on either way, which leaves the mark buying nothing: drop the mark, or drop the gate
-  --> tests/refusals/total_gated.rs:15:9
-   |
-15 |         #[total]
-   |         ^^^^^^^^

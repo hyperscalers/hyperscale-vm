@@ -40,8 +40,8 @@ fn rust_name(published: &str) -> syn::Ident {
 
 /// One method's export and its executing body.
 ///
-/// `declines` is the export's error arm, which is what the totality mark
-/// is judged against at publish; a body that returns `Err` on it aborts
+/// `declines` is the export's error arm, which is what the signature's
+/// `Fallible` is judged against at publish; a body that returns `Err` on it aborts
 /// its transaction as a declared refusal rather than as a defect, so the
 /// arm is threaded out through the code the package's error table names.
 /// It is the arm's type rather than the fact of one because the closure

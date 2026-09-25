@@ -374,8 +374,7 @@ fn two_chain_frontiers_give_one_classification() {
 ///
 /// Minting an instance and filing it into an account is exactly that
 /// shape — neither node is a leg, since a mint declares no reservation
-/// and `deposit-nf` cannot carry the total mark while filing each id is
-/// a loop. What decides it is that the core spans two shards, which
+/// and `deposit-nf` is not a vault deposit. What decides it is that the core spans two shards, which
 /// replicates; the contrast below is what says so, because the same
 /// shape over a fungible edge reaches the same verdict.
 ///

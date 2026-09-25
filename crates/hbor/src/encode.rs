@@ -6,11 +6,9 @@ use crate::varint;
 /// Where an encoder puts the bytes it writes.
 ///
 /// Two implementations, and the split is by *type* rather than by a
-/// branch inside one. A branch would put both in the same function, and
-/// the deploy-time totality scan walks the call graph rather than the
-/// values flowing through it — so an encode that could only ever fill a
-/// slice would still reach the growing arm, and reaching an allocation
-/// is what costs a contract method its total mark.
+/// branch inside one. A branch would put both in the same function, so
+/// an encode that could only ever fill a slice would still carry the
+/// growing arm and the allocation behind it.
 pub trait Sink {
     /// Append `bytes`.
     fn write(&mut self, bytes: &[u8]);
@@ -18,9 +16,9 @@ pub trait Sink {
     /// Append a payload whose width is known where it is written.
     ///
     /// Split from [`Sink::write`] because a constant width is what lets
-    /// a fixed sink copy without a length check and without a byte loop.
-    /// One of those refuses a total method for a panic it cannot reach,
-    /// the other for a fuel cost nothing bounds.
+    /// a fixed sink copy without a length check and without a byte loop:
+    /// the one a panic the encode cannot reach, the other a fuel cost
+    /// nothing bounds.
     fn write_array<const N: usize>(&mut self, bytes: &[u8; N]) {
         self.write(bytes);
     }

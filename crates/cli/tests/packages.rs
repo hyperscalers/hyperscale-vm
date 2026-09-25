@@ -6,7 +6,7 @@
 //! about whether the *module* beside it will take those arguments.
 //! That is the publish gate's question, and the generator answers to it
 //! here. `check_abi_against_export` and the
-//! totality biconditional stop judging hand-authoring here and start
+//! error-arm biconditional stop judging hand-authoring here and start
 //! judging our own emission, so a disagreement is the generator's bug.
 
 use std::collections::BTreeMap;
@@ -23,9 +23,8 @@ use hyperscale_vm_gate::extract_metadata;
 /// whose whole content is the shapes the grammar admits.
 ///
 /// Each carries the provenance it is really built under. The two the
-/// protocol seeds go through the gate that reads a totality claim against
-/// the code; everything else through the one that refuses the claim
-/// outright, which is what a publisher would meet.
+/// protocol seeds go through the gate genesis uses; everything else
+/// through the one a publisher would meet.
 const PACKAGES: &[(&str, Provenance)] = &[
     ("account", Provenance::Protocol),
     ("staking", Provenance::Protocol),

@@ -237,23 +237,15 @@ fn the_committed_blob_validates_and_transfers_on_both_runtimes() -> Result<()> {
         .get(&recipient)
         .expect("the recipient is credited");
     assert_eq!((credited.credit, credited.debit), (AMOUNT, 0));
-    // Each leg's event carries the account that ran, not the account the
-    // guest could name — and the two legs of a transfer sit on different
-    // shards, which is what the attribution decides.
+    // The withdrawal's event carries the account that ran, not the
+    // account the guest could name. The deposit's body emits nothing.
     assert_eq!(
         blessed_receipt.events,
-        vec![
-            Event {
-                emitter: SENDER,
-                event_type: 0,
-                payload: encode_amount(AMOUNT).to_vec().try_into().unwrap(),
-            },
-            Event {
-                emitter: RECIPIENT,
-                event_type: 1,
-                payload: encode_amount(AMOUNT).to_vec().try_into().unwrap(),
-            },
-        ],
+        vec![Event {
+            emitter: SENDER,
+            event_type: 0,
+            payload: encode_amount(AMOUNT).to_vec().try_into().unwrap(),
+        }],
     );
 
     Ok(())

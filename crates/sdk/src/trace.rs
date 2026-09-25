@@ -737,19 +737,6 @@ impl Trace {
         self.emits.push(Name::declared(event));
     }
 
-    /// Record the total mark: no refusal, and no partial operation
-    /// anywhere the body reaches.
-    ///
-    /// Claimed here and granted elsewhere. The publish gate runs the
-    /// artifact scan against the code the claim is attached to and
-    /// refuses one it cannot support, and refuses the claim outright from
-    /// a published package — so what this records is which methods the
-    /// protocol asks to have checked, never a property a package awards
-    /// itself.
-    pub const fn total(&mut self) {
-        self.totality = Totality::Total;
-    }
-
     /// The requirement that the claim `identity` evaluates to is
     /// presented.
     #[must_use]

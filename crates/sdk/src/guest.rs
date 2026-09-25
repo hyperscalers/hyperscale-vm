@@ -28,8 +28,7 @@
 //! Every accessor below names its site and the element of it the access
 //! covers, whether the declaration behind that site was one clause or a
 //! loop's expansion. What the capability at that element grants is the
-//! kernel's answer, held at the operation — so nothing here refuses, and
-//! there is no arm a totality scan could read as a fault.
+//! kernel's answer, held at the operation — so nothing here refuses.
 
 use hyperscale_vm_types::{Drawn, SEED_BYTES};
 
@@ -169,9 +168,8 @@ const fn count<T>(items: &[T]) -> u32 {
 /// Collects the answer register: `len` bytes the last import left there.
 ///
 /// Never inlined, and neither collector below is: making room for a
-/// register is the boundary's work, and the totality scan sets a
-/// collector aside as the boundary's support — which it can only do
-/// while the collect is a function of its own.
+/// register is the boundary's work, and one out-of-line copy of it
+/// serves every accessor.
 #[inline(never)]
 fn take(len: u32) -> Vec<u8> {
     let mut bytes = vec![0u8; len as usize];

@@ -6,8 +6,7 @@
 //! everything else crosses at a pointer the guest chose, through a
 //! bounds-checked slice of the one memory it exports. The host never
 //! re-enters the guest — no allocator callback, no destructor — which is
-//! what lets a stack bound count one chain and a totality walk read one
-//! module.
+//! what lets a stack bound count one chain.
 //!
 //! Stated once, here, and executed by both engines: the blessed engine
 //! wraps each dispatch below as a host function and the reference

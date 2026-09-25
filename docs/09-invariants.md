@@ -75,7 +75,7 @@ An intent composes intents, and authority only flows down. COMP-1 is the whole o
 
 | ID | Class | Property |
 |---|---|---|
-| **INV-VM-GATE-1** | Safety | **Mark honesty.** A method's totality mark is a function of its artifact: a signature is `Fallible` exactly where its export carries the declared error arm, and `Total` only from protocol provenance and only where the artifact's own scan supports the claim — a published package cannot claim the mark at all. A wrong mark is not a lost optimisation but a torn settlement: an outbound leg the core already committed against, failing. [01 §9](01-effects-and-routing.md) |
+| **INV-VM-GATE-1** | Safety | **Error-arm honesty.** A signature is `Fallible` exactly where its export carries the declared error arm, so every caller that has a refusal to handle is told so, and none is told of one that cannot come. [01 §9](01-effects-and-routing.md) |
 | **INV-VM-GATE-2** | Safety | **Declared production.** A signature's declared value outputs equal the edges its export hands back, so a package cannot describe itself as producing value its code does not hand over, or hand over value its signature never declared. [01 §9](01-effects-and-routing.md) |
 
 **Enforcement map.** The gate's verdict is one pure function of the bytes, reached wherever the bytes are; what the table records is which rule is deliberately judged at more than one door and which has exactly one.
@@ -87,7 +87,7 @@ An intent composes intents, and authority only flows down. COMP-1 is the whole o
 | Composed signature check (`check_signature`) | INV-VM-ACCESS-4 and the signature bounds | Two by design: the gate, and `MetadataCache::publish` — the cache's own door, so no path seeds a record past the judgment |
 | ABI binding vs export type (`check_abi_against_export`) | INV-VM-ACCESS-1's materialization contract | Single point: the gate |
 | Declared outputs vs export edges (`check_outputs_against_export`) | INV-VM-GATE-2 | Single point: the gate |
-| Totality judgment (`judge_totality`) | INV-VM-GATE-1 | Single point: the gate; the scan it reads is `check_method`, whose admission terms are the runtime's `DISCHARGED` allowlist |
+| Error arm vs export type (`judge_declines`) | INV-VM-GATE-1 | Single point: the gate |
 
 ## Host boundary — [08](08-host-integration.md)
 

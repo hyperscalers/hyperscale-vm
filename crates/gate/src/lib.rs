@@ -25,9 +25,7 @@ use hyperscale_vm_effects::{
     attach_metadata as attach_canonical, check_signature, metadata_section, presents_a_held_badge,
     seals, supports,
 };
-use hyperscale_vm_runtime::{
-    CoreType, ModuleExport, admit as admit_module, check_method, module_exports,
-};
+use hyperscale_vm_runtime::{CoreType, ModuleExport, admit as admit_module, module_exports};
 
 pub use crate::section::{MAX_PACKAGE_METADATA_BYTES, decode_metadata, encode_metadata};
 
@@ -147,32 +145,30 @@ pub fn extract_metadata(artifact: &[u8]) -> Result<Option<PackageMetadata>, Gate
 /// [`GateError`] on an artifact outside the profile, an absent or
 /// non-canonical metadata section, a declared method the module does
 /// not export, an ABI binding the export's type cannot honour, or a
-/// claim to totality, which only [`admit_protocol_package`] grants.
+/// claim only [`admit_protocol_package`] grants.
 pub fn admit_package(artifact: &[u8]) -> Result<PackageMetadata, GateError> {
     admit(artifact, Provenance::Published)
 }
 
 /// Admit an artifact the protocol supplies rather than a publisher.
 ///
-/// Identical to [`admit_package`] but for the totality mark, which a
-/// publisher cannot claim and which this one reads against the code
-/// rather than takes on faith. Genesis seeds the stdlib through here;
-/// nothing reachable from a transaction does, so the distinction is a
-/// fact about the caller rather than about the bytes — which is the only
-/// place it can live, since an artifact claiming to be protocol code
-/// looks exactly like one that is.
+/// Identical to [`admit_package`] but for what only the protocol's own
+/// packages may be: seal-free, and able to present a badge they hold.
+/// Genesis seeds the stdlib through here; nothing reachable from a
+/// transaction does, so the distinction is a fact about the caller
+/// rather than about the bytes — which is the only place it can live,
+/// since an artifact claiming to be protocol code looks exactly like one
+/// that is.
 ///
 /// # Errors
 ///
-/// As [`admit_package`], except that a claim to totality is checked
-/// against the artifact instead of refused, and fails admission when the
-/// code does not support it.
+/// As [`admit_package`], less the two refusals provenance lifts.
 pub fn admit_protocol_package(artifact: &[u8]) -> Result<PackageMetadata, GateError> {
     admit(artifact, Provenance::Protocol)
 }
 
-/// Who supplied an artifact, which is what decides whether its claim to
-/// totality is its own to make.
+/// Who supplied an artifact, which is what decides whether it may go
+/// without a seal and present a badge it holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Provenance {
     /// A publisher's, arriving through a transaction.
@@ -201,7 +197,7 @@ fn admit(artifact: &[u8], provenance: Provenance) -> Result<PackageMetadata, Gat
             // refusal names the artifact rather than a call.
             check_signature(signature).map_err(|error| GateError::new(error.to_string()))?;
             check_abi_against_export(signature, &export.params)?;
-            judge_totality(artifact, method, signature, export, provenance)
+            judge_declines(signature, export)
         };
         judged().map_err(|refusal| refusal.about(method))?;
     }
@@ -216,7 +212,7 @@ fn admit(artifact: &[u8], provenance: Provenance) -> Result<PackageMetadata, Gat
 /// presented is a credential, not the asset custody holds. Only the
 /// account may, because only there is the holder the signer, and the
 /// account is a protocol package: so this is a claim only provenance
-/// grants, judged the way a totality mark is. A published package holding
+/// grants. A published package holding
 /// a badge holds an asset; proving it would make authority delegable,
 /// which is the one thing the model forbids of it.
 fn judge_custody(metadata: &PackageMetadata, provenance: Provenance) -> Result<(), GateError> {
@@ -261,67 +257,26 @@ fn judge_seal(metadata: &PackageMetadata, provenance: Provenance) -> Result<(), 
     ))
 }
 
-/// Judge a claim to totality: refused outright from a publisher, and read
-/// against the code when the protocol makes it.
+/// Judge the signature's error arm against the export's.
 ///
-/// The mark says a caller can commit without waiting to hear back, so a
-/// wrong one is not a lost optimisation but a torn settlement: an
-/// outbound leg the core already committed against, failing. Two
-/// different things follow from that, one per provenance.
-///
-/// **A publisher cannot claim it at all.** What stands behind the mark is
-/// a scan with documented gaps — linear memory taken as safe, the register
-/// collectors set aside — and both are open in the direction an author who
-/// wanted the mark would push. Provenance cannot be read off the bytes,
-/// since an artifact claiming to be protocol code looks exactly like one
-/// that is, so it rides the entry point rather than an allowlist. The
-/// refusal costs a published package little: a venue's own code is core,
-/// where no mark is wanted, and the legs around it are the account's
-/// withdraw and deposit that the stdlib supplies.
-///
-/// **The protocol's own claim is checked here rather than trusted.** The
-/// artifact is in hand and the scan is a pure function of it, so a mark
-/// the code cannot support fails admission rather than waiting for a test
-/// to notice — which is what makes the mark verified at deploy instead of
-/// asserted at deploy and audited later.
-fn judge_totality(
-    artifact: &[u8],
-    method: &str,
-    signature: &MethodSignature,
-    export: &ModuleExport,
-    provenance: Provenance,
-) -> Result<(), GateError> {
-    // The weakest state is the one the export's type decides outright,
-    // in both directions. A signature is `Fallible` exactly when its
-    // export returns the decline code: claiming it without one describes
-    // a refusal channel the code does not have, and omitting it with one
-    // hides the channel from every reader that acts on the mark. Neither
-    // is a conservative reading — the mark is a function of the artifact,
-    // so there is one right answer and the gate holds authors to it.
-    if export.declines != (signature.totality == Totality::Fallible) {
-        return Err(GateError::new(if export.declines {
-            format!(
-                "declares {:?} over an export that carries an error arm",
-                signature.totality
-            )
-        } else {
-            "declares Fallible over an export that cannot decline".to_owned()
-        }));
-    }
-    if signature.totality != Totality::Total {
+/// A signature is `Fallible` exactly when its export returns the decline
+/// code: claiming it without one describes a refusal channel the code
+/// does not have, and omitting it with one hides the channel from every
+/// caller that has to handle it. Neither is a conservative reading — the
+/// arm is a function of the artifact, so there is one right answer and
+/// the gate holds authors to it.
+fn judge_declines(signature: &MethodSignature, export: &ModuleExport) -> Result<(), GateError> {
+    if export.declines == (signature.totality == Totality::Fallible) {
         return Ok(());
     }
-    match provenance {
-        Provenance::Published => Err(GateError::new(
-            "claims totality, which a published package cannot: the mark is granted to \
-             protocol code seeded at genesis",
-        )),
-        Provenance::Protocol => check_method(artifact, method).map_err(|error| {
-            GateError::new(format!(
-                "claims totality its artifact does not support: {error}"
-            ))
-        }),
-    }
+    Err(GateError::new(if export.declines {
+        format!(
+            "declares {:?} over an export that carries an error arm",
+            signature.totality
+        )
+    } else {
+        "declares Fallible over an export that cannot decline".to_owned()
+    }))
 }
 
 /// Judge a method's ABI binding against the export that will receive
@@ -495,7 +450,7 @@ mod tests {
     use hyperscale_vm_effects::{
         AbiParam, Clause, Expr, MethodSignature, PackageMetadata, RuleExpr, SlotRef, seal_clauses,
     };
-    use hyperscale_vm_fixtures::{LOTTERY_MODULE, book, lottery};
+    use hyperscale_vm_fixtures::book;
     use hyperscale_vm_stdlib::{account, account_artifact, staking_artifact};
     use hyperscale_vm_types::Moves;
     use wat::parse_str;
@@ -678,15 +633,15 @@ mod tests {
         .expect("the module assembles")
     }
 
-    /// The totality mark is a function of the export's type, and the
-    /// gate holds it to that in both directions.
+    /// The error arm is a function of the export's type, and the gate
+    /// holds the signature to that in both directions.
     ///
     /// Under-claiming is refused as firmly as over-claiming, which is
-    /// what makes the mark canonical: a leg's decomposition reads it, and
-    /// two artifacts with the same code could otherwise describe
-    /// themselves differently and be judged differently.
+    /// what makes the signature canonical: two artifacts with the same
+    /// code could otherwise describe themselves differently and be
+    /// judged differently.
     #[test]
-    fn a_totality_mark_the_export_type_contradicts_refuses_at_publish() {
+    fn an_error_arm_the_export_type_contradicts_refuses_at_publish() {
         let declining = module_declining("swap");
         let mut fallible = PackageMetadata::default();
         fallible
@@ -767,9 +722,9 @@ mod tests {
     }
 
     /// Presenting a badge from custody is the account's alone, because only
-    /// there is the holder the signer — so the gate grants it by provenance
-    /// the way it grants a totality mark, and a published package is
-    /// refused naming the method that would delegate authority.
+    /// there is the holder the signer — so the gate grants it by
+    /// provenance, and a published package is refused naming the method
+    /// that would delegate authority.
     #[test]
     fn a_published_package_cannot_present_a_held_badge() {
         let proving = |claim: Expr| MethodSignature {
@@ -830,64 +785,6 @@ mod tests {
             admit_protocol_package(artifact)
                 .unwrap_or_else(|error| panic!("{name}: the stdlib must admit: {error}"));
         }
-    }
-
-    /// The stdlib's own artifact is what a publisher would have to submit
-    /// to claim totality, and submitting it is exactly what the gate
-    /// refuses: the same bytes admit as protocol code and refuse as a
-    /// publish, because provenance is the caller's and not the artifact's.
-    #[test]
-    fn a_published_package_cannot_claim_totality() {
-        let artifact = account_artifact();
-        assert!(
-            admit_protocol_package(artifact).is_ok(),
-            "the account declares a total method, or this proves nothing",
-        );
-
-        let error = admit_package(artifact).expect_err("a publish cannot carry the mark");
-        assert!(
-            error.to_string().contains("claims totality"),
-            "refused for the wrong reason: {error}",
-        );
-    }
-
-    /// The protocol's own claim is read against its code. Marking a
-    /// method the artifact cannot support fails admission, which is what
-    /// makes the mark verified at deploy rather than asserted at deploy
-    /// and audited somewhere else.
-    #[test]
-    fn a_protocol_claim_its_artifact_refuses_does_not_admit() {
-        // The lottery's settlement is public, so it clears the gate rule
-        // and reaches the artifact. Its declaration carries a
-        // precondition — a round settles once, so the outcome is written
-        // where nothing was — and that no longer stands in the way: the
-        // shard holding the leaf answers it before any leg runs, which
-        // is a stage no caller has committed past. What does stand there
-        // is the export's error arm, since a settlement declines a page
-        // it cannot prove covered the round. The account does not serve
-        // as the example: every body it has is a call or two, and the
-        // kernel does the work the loops used to.
-        let mut metadata = lottery::metadata();
-        metadata
-            .methods
-            .get_mut("settle")
-            .expect("the lottery settles a round")
-            .totality = Totality::Total;
-        let artifact = attach_metadata(LOTTERY_MODULE, &metadata).expect("attaches");
-
-        let error = admit_protocol_package(&artifact)
-            .expect_err("a mark the code cannot support is not admissible");
-        assert!(
-            error.to_string().contains("error arm"),
-            "refused for the wrong reason: {error}",
-        );
-
-        // Behind the declaration stands the refusal it masks on the
-        // admission path: settling walks the entrants, and a walk has no
-        // static fuel ceiling, so the artifact itself refuses the mark
-        // whatever the metadata claims.
-        let honest = attach_metadata(LOTTERY_MODULE, &lottery::metadata()).expect("attaches");
-        check_method(&honest, "settle").expect_err("a walk has no static ceiling");
     }
 
     /// A module whose one export takes a `u64`, for bindings to disagree

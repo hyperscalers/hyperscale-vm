@@ -99,7 +99,3 @@ pub const MAX_CALL_CHAIN_BYTES: usize = MAX_WASM_STACK_BYTES - HOST_FRAME_RESERV
 /// than as a divergence to excuse. `vm-harness` asserts the ordering at
 /// compile time — it is the only crate that can see both constants.
 pub const MAX_CALL_CHAIN_FRAMES: usize = 256;
-
-/// The prefix every kernel import module carries: `kernel/state`,
-/// `kernel/env`, and so on.
-pub(crate) const KERNEL_IMPORT_PREFIX: &str = "kernel/";

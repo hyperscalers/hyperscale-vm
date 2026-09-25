@@ -614,60 +614,6 @@ fn a_denomination_from_one_arm_is_recorded_unconditionally() {
     );
 }
 
-/// Precision is what a total method trades for the mark. A total leg
-/// runs with every declared handle materialized, and a guarded-out
-/// clause materializes none — so the branch declares the union it used
-/// to, binds no verdict, and both handles arrive.
-#[blueprint]
-mod always {
-    use hyperscale_vm_sdk::state::{Cell, Quantity};
-
-    #[state]
-    struct Always {
-        left: Cell<Quantity>,
-        right: Cell<Quantity>,
-    }
-
-    impl Always {
-        #[total]
-        pub fn bump(&mut self, to_left: u64) {
-            if to_left == 1 {
-                self.left.set(self.left.get());
-            } else {
-                self.right.set(self.right.get());
-            }
-        }
-    }
-}
-
-#[test]
-fn a_total_method_declares_the_union_and_binds_no_verdict() {
-    use hyperscale_vm_effects::{AbiParam, Totality};
-
-    let metadata = always::blueprint().metadata();
-    let bump = &metadata.methods["bump"];
-    assert_eq!(bump.totality, Totality::Total);
-    assert_eq!(bump.effects.len(), 2, "both arms are declared");
-    assert!(
-        bump.effects.iter().all(|clause| clause.guard().is_none()),
-        "and neither under a condition, because a total leg materialises every handle"
-    );
-    assert!(
-        !bump
-            .abi
-            .iter()
-            .any(|binding| matches!(binding, AbiParam::Guard(_))),
-    );
-    assert_eq!(
-        bump.abi
-            .iter()
-            .filter(|binding| matches!(binding, AbiParam::Handle { clause: _, site: 0 }))
-            .count(),
-        2,
-        "both handles arrive"
-    );
-}
-
 /// The superset stays the fallback: a condition the DSL cannot express
 /// declares both arms, which is what keeps a body free to branch on
 /// things a declaration has no business seeing.

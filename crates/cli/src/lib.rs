@@ -377,11 +377,11 @@ pub fn artifact(dir: &Path, provenance: Provenance) -> Result<Vec<u8>, BuildErro
     // disagreement between the declaration and the code it describes is
     // this package's defect and it is cheaper to hear here.
     //
-    // Which gate is which provenance's: a publisher may not claim the
-    // total mark at all, and the protocol's own claim is read against the
-    // code. Building a protocol package under the publisher's gate would
-    // refuse an artifact genesis seeds, so the command has to know which
-    // it is making.
+    // Which gate is which provenance's: a publisher may not go without a
+    // seal or present a badge it holds, and the protocol's own packages
+    // do both. Building a protocol package under the publisher's gate
+    // would refuse an artifact genesis seeds, so the command has to know
+    // which it is making.
     match provenance {
         Provenance::Published => admit_package(&artifact),
         Provenance::Protocol => admit_protocol_package(&artifact),

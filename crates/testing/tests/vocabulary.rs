@@ -261,11 +261,8 @@ fn a_boolean_is_a_cell_the_vocabulary_admits() {
 /// Every other cell type traps on bytes it cannot mean, and that is
 /// right for one the kernel builds. A boolean cell is written only by a
 /// body's own `to_cell`, so the bytes it could not mean are that
-/// package's own bug — and trapping on them would cost the vocabulary
-/// something it needs more, since a `#[total]` method may not trap and
-/// would therefore be unable to read a stored flag at all. The account's
-/// deposit reads one to pick a destination, which is what makes the
-/// widening load-bearing rather than a convenience.
+/// package's own bug, and a reader is better served by a widening than
+/// by a trap it can do nothing about.
 #[test]
 fn a_boolean_cell_holding_neither_byte_reads_as_set() {
     let flag = key(6);
