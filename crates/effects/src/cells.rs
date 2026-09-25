@@ -188,11 +188,15 @@ pub fn nullifier_key(
 /// cell always names the transaction that created it: a block carries
 /// no transaction whose committed key is present in its parent state or
 /// named by another transaction in the same block, refused at
-/// validation and deferred by the proposer, so a retraction keyed by an
-/// attested outcome deletes that transaction's cell and no other, and a
-/// leaf read absent was never written for the transaction asked about.
-/// A composer who grinds a collision defers only his own second
-/// transaction.
+/// validation and deferred by the proposer, so a leaf read absent was
+/// never written for the transaction asked about. A composer who grinds
+/// a collision defers only his own second transaction.
+///
+/// Presence at this key is also how a chain refuses a transaction it
+/// already committed, and it refuses the transaction whose key it is.
+/// Aiming a collision at another composer's transaction is a 96-bit
+/// second preimage, and since presence is read and the value never is, a
+/// collision cannot make a marker read absent.
 #[must_use]
 pub fn committed_tx_key(
     hasher: &dyn Hasher,
