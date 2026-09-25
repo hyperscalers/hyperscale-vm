@@ -12,7 +12,7 @@ use crate::metadata::{PackageHash, PackageMetadata};
 use crate::records::Records;
 use crate::resource::{GrantsExpr, ResourceKind};
 use crate::route::PrefixShardResolver;
-use crate::signature::{AbiParam, MethodSignature, ParamType, Totality};
+use crate::signature::{AbiParam, MethodSignature, ParamType};
 use crate::types::{EdgeContent, SlotId, Value, resource_address};
 use crate::vocabulary::VAULT;
 
@@ -74,7 +74,7 @@ pub fn self_point(slot: SlotId, mode: ModeExpr) -> Clause {
 
 pub fn method(effects: Vec<Clause>) -> MethodSignature {
     MethodSignature {
-        totality: Totality::Fallible,
+        declines: true,
         effects,
         ..MethodSignature::default()
     }
@@ -203,7 +203,7 @@ pub fn payer_payee_world() -> (Records, Manifest) {
     sender_pkg.methods.insert(
         Name::declared("pay"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             params: vec![ParamType::Address, ParamType::U128],
             outputs: vec![Expr::Literal(Value::Address(resource(0xE1).address()))],
             effects: vec![self_point(
@@ -217,7 +217,7 @@ pub fn payer_payee_world() -> (Records, Manifest) {
     receiver_pkg.methods.insert(
         Name::declared("recv"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             params: vec![ParamType::Bucket],
             effects: vec![Clause::Effect {
                 reach: None,

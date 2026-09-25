@@ -290,7 +290,7 @@ mod tests {
     use super::*;
     use crate::dsl::{Clause, Expr, ModeExpr, TargetExpr};
     use crate::rule::{Rule, RuleLeaf};
-    use crate::signature::{AbiParam, MethodSignature, ParamType, Totality};
+    use crate::signature::{AbiParam, MethodSignature, ParamType};
 
     /// One ordinary effect clause, for the bindings that are about the
     /// parameter rather than about what it points at.
@@ -306,7 +306,7 @@ mod tests {
 
     fn signature(params: Vec<ParamType>, abi: Vec<AbiParam>) -> MethodSignature {
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             params,
             abi,
             effects: vec![clause()],
@@ -365,7 +365,7 @@ mod tests {
 
         // A clause that declares no capability at all, at any site.
         let conditional = MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             abi: vec![AbiParam::Handle { clause: 0, site: 0 }],
             effects: vec![Clause::Requires {
                 guard: None,

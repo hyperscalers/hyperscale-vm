@@ -11,8 +11,8 @@ use hyperscale_vm_effects::{
     InstanceMeta, InstanceRegistry, Intent, IntentHeader, IntentTree, ManifestGraph, ManifestHash,
     MetadataCache, MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType,
     PrefixShardResolver, Records, ResourceGrants, ResourceKind, ResourceMeta, RuleBytes, ShardId,
-    ShardResolver, SlotId, SlotRef, StoredRule, TargetExpr, TestHasher, Totality, Value,
-    admit_tree, child_key, nullifier_expiry_ms, nullifier_key, package_slot,
+    ShardResolver, SlotId, SlotRef, StoredRule, TargetExpr, TestHasher, Value, admit_tree,
+    child_key, nullifier_expiry_ms, nullifier_key, package_slot,
 };
 pub use hyperscale_vm_fixtures::book::{ASKS, FILL_CAP};
 pub use hyperscale_vm_fixtures::{amm, book, payouts};
@@ -278,7 +278,7 @@ pub fn wide_account_metadata() -> PackageMetadata {
     methods.methods.insert(
         Name::declared("withdraw_wide"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             params: vec![ParamType::Address, ParamType::U128],
             abi: Vec::new(),
             outputs: vec![Expr::Arg(0)],

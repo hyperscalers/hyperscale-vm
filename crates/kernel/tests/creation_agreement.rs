@@ -8,7 +8,7 @@ use hyperscale_vm_effects::{
     AdmissionError, Admitted, ChainRecords, Clause, Expr, GraphNode, Hash32, Hasher, InstanceMeta,
     Intent, IntentHeader, IntentTree, ManifestGraph, MethodSignature, ModeExpr, PackageHash,
     PackageMetadata, PrefixShardResolver, Records, ShardResolver, SlotId, SlotRef, TargetExpr,
-    TestHasher, Totality, Value, admit_tree, collection_id, fresh_id, fresh_local,
+    TestHasher, Value, admit_tree, collection_id, fresh_id, fresh_local,
 };
 use hyperscale_vm_kernel::MemoryStore;
 use hyperscale_vm_types::{
@@ -42,7 +42,7 @@ fn spawner() -> PackageMetadata {
     package.methods.insert(
         Name::declared("spawn"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects: vec![
                 Clause::Effect {
                     reach: None,

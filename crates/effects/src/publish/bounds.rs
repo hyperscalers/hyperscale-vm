@@ -393,13 +393,13 @@ mod tests {
     use crate::publish::package::check_metadata;
     use crate::resource::{GrantedBehaviour, GrantsExpr};
     use crate::rule::{GrantRuleExpr, MAX_RULE_BRANCHES, MAX_RULE_DEPTH, RuleExpr};
-    use crate::signature::{AbiParam, MethodSignature, Totality};
+    use crate::signature::{AbiParam, MethodSignature};
     use crate::types::{MAX_VALUE_BYTES, MAX_VALUE_DEPTH, MAX_VALUE_ITEMS, SlotId, Value};
 
     /// A signature whose only effect points at `expr`.
     fn signature_over(expr: Expr) -> MethodSignature {
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects: vec![Clause::Effect {
                 reach: None,
                 guard: None,
@@ -519,7 +519,7 @@ mod tests {
     #[test]
     fn abi_expressions_are_bounded_like_every_other_walk() {
         let derived = |depth: usize| MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             abi: vec![AbiParam::Derived(nested_projection(depth))],
             ..MethodSignature::default()
         };
@@ -533,12 +533,12 @@ mod tests {
     fn clause_nesting_is_bounded_where_the_evaluator_bounds_it() {
         assert_bounded(
             &one_method(MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 effects: vec![nested_foreach(MAX_CLAUSE_DEPTH)],
                 ..MethodSignature::default()
             }),
             &one_method(MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 effects: vec![nested_foreach(MAX_CLAUSE_DEPTH + 1)],
                 ..MethodSignature::default()
             }),
@@ -552,7 +552,7 @@ mod tests {
         // walks the same structural bounds as the bounds beside it.
         let capped = |cap: Expr| {
             one_method(MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 effects: vec![Clause::Effect {
                     reach: None,
                     guard: None,
@@ -609,7 +609,7 @@ mod tests {
         };
         let with = |count: usize| {
             one_method(MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 effects: vec![effect.clone(); count],
                 ..MethodSignature::default()
             })
@@ -632,7 +632,7 @@ mod tests {
         };
         let with = |count: usize| {
             one_method(MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 effects: vec![proves.clone(); count],
                 ..MethodSignature::default()
             })
@@ -655,7 +655,7 @@ mod tests {
         };
         let with = |count: usize| {
             one_method(MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 effects: vec![proves.clone(); count],
                 ..MethodSignature::default()
             })

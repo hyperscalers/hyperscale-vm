@@ -210,7 +210,7 @@ impl Builder {
 
         let method = Method {
             signature: MethodSignature {
-                totality: recorded.totality,
+                declines: recorded.declines,
                 issues: recorded.issues.try_into().unwrap_or_else(|_| {
                     panic!("`{name}` issues more than {MAX_ISSUANCES_PER_SIGNATURE} resources")
                 }),

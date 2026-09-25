@@ -1178,7 +1178,7 @@ fn check_edges_visible(method: &syn::ImplItemFn, lowered: &lower::Lowered) -> sy
 }
 
 /// The error arm a method's return type carries, which is what the
-/// signature's `Fallible` is judged against.
+/// signature's `declines` is judged against.
 ///
 /// The type rather than the fact of one, because both halves run the
 /// author's body inside a closure and a body that only ever propagates —

@@ -1345,7 +1345,7 @@ mod tests {
     use crate::metadata::PACKAGE_SLOT;
     use crate::resource::{GrantsExpr, ResourceKind};
     use crate::rule::{GrantRuleExpr, GrantSubject, RuleExpr, RuleLeaf};
-    use crate::signature::{Issuance, Issued, MethodSignature, ParamType, Totality};
+    use crate::signature::{Issuance, Issued, MethodSignature, ParamType};
     use crate::types::{SlotId, package_slot};
     use crate::vocabulary::{AUTH, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
     use crate::{KERNEL_SLOT_BASE, PACKAGE_SLOT_BASE};
@@ -2295,7 +2295,7 @@ mod tests {
         // A write that creates: the access, and the one-way door beside
         // it as the condition it now is.
         let creating = |target: TargetExpr, denomination: Option<Expr>| MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects: vec![
                 Clause::Effect {
                     reach: None,
@@ -2569,7 +2569,7 @@ mod tests {
 
         assert_eq!(
             check_declarations(&MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 params: vec![ParamType::Bucket],
                 denominations: vec![Some(restricted())],
                 ..MethodSignature::default()
@@ -2580,7 +2580,7 @@ mod tests {
 
         assert_eq!(
             check_declarations(&MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 outputs: vec![restricted()],
                 ..MethodSignature::default()
             }),
@@ -2608,7 +2608,7 @@ mod tests {
         };
 
         let denominated = |expr: Expr| MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             params: vec![ParamType::Bucket],
             denominations: vec![Some(expr)],
             ..MethodSignature::default()
@@ -2623,7 +2623,7 @@ mod tests {
         assert_eq!(check_declarations(&denominated(resource())), Ok(()));
 
         let projecting = |expr: Expr| MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             outputs: vec![expr],
             ..MethodSignature::default()
         };
@@ -2804,7 +2804,7 @@ mod tests {
     #[test]
     fn a_slot_the_protocol_assigns_no_cell_is_not_a_signature_to_name() {
         let declaring = |slot| MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects: vec![Clause::Effect {
                 reach: None,
                 guard: None,
@@ -2874,7 +2874,7 @@ mod tests {
         // Each target in a mode it has a handle for: value moves through
         // a leaf, and an entry of a collection is rewritten.
         let declaring = |target: TargetExpr, mode: ModeExpr| MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects: vec![Clause::Effect {
                 reach: None,
                 guard: None,
@@ -2937,7 +2937,7 @@ mod tests {
 
         // And inside a `for-each` body, where the element is the owner.
         let looped = MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects: vec![Clause::ForEach {
                 guard: None,
                 list: Expr::Arg(0),
@@ -2965,7 +2965,7 @@ mod tests {
         denomination: Option<Expr>,
     ) -> MethodSignature {
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects: vec![Clause::Effect {
                 reach: Some(behaviour),
                 guard: None,
@@ -3292,7 +3292,7 @@ mod tests {
         // nothing: everywhere but a reach the shape table has a constant
         // to dispatch on.
         let untold = MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects: vec![Clause::Effect {
                 reach: None,
                 guard: None,

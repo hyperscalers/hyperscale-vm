@@ -21,7 +21,7 @@ use std::fmt;
 
 pub use hyperscale_vm_effects::METADATA_SECTION;
 use hyperscale_vm_effects::{
-    AbiParam, Clause, Expr, MethodSignature, PackageMetadata, ParamType, Totality, Value,
+    AbiParam, Clause, Expr, MethodSignature, PackageMetadata, ParamType, Value,
     attach_metadata as attach_canonical, check_signature, metadata_section, presents_a_held_badge,
     seals, supports,
 };
@@ -259,23 +259,20 @@ fn judge_seal(metadata: &PackageMetadata, provenance: Provenance) -> Result<(), 
 
 /// Judge the signature's error arm against the export's.
 ///
-/// A signature is `Fallible` exactly when its export returns the decline
+/// A signature declines exactly when its export returns the decline
 /// code: claiming it without one describes a refusal channel the code
 /// does not have, and omitting it with one hides the channel from every
 /// caller that has to handle it. Neither is a conservative reading — the
 /// arm is a function of the artifact, so there is one right answer and
 /// the gate holds authors to it.
 fn judge_declines(signature: &MethodSignature, export: &ModuleExport) -> Result<(), GateError> {
-    if export.declines == (signature.totality == Totality::Fallible) {
+    if export.declines == signature.declines {
         return Ok(());
     }
     Err(GateError::new(if export.declines {
-        format!(
-            "declares {:?} over an export that carries an error arm",
-            signature.totality
-        )
+        "declares no error arm, over an export that carries an error arm"
     } else {
-        "declares Fallible over an export that cannot decline".to_owned()
+        "declares an error arm over an export that cannot decline"
     }))
 }
 
@@ -622,8 +619,8 @@ mod tests {
     }
 
     /// A module whose one export declines: the refusal channel over a
-    /// method producing nothing, which is the shape a `Fallible` mark is
-    /// judged against.
+    /// method producing nothing, which is the shape a declining signature
+    /// is judged against.
     fn module_declining(name: &str) -> Vec<u8> {
         parse_str(&*format!(
             "(module\n  (memory (export \"memory\") 1 1)\n  \
@@ -650,13 +647,13 @@ mod tests {
         fallible.methods.insert(
             Name::declared("swap"),
             MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 ..MethodSignature::default()
             },
         );
         assert!(
             admit_package(&attach_metadata(&declining, &fallible).expect("attaches")).is_ok(),
-            "an error arm is what a Fallible mark describes"
+            "an error arm is what a declining signature describes"
         );
 
         // The same code, marked as if it could not decline.

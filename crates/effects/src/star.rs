@@ -827,7 +827,7 @@ mod tests {
     use crate::resource::{GrantsExpr, ResourceKind};
     use crate::route::ShardResolver;
     use crate::rule::{RuleExpr, RuleLeaf};
-    use crate::signature::{Issuance, Issued, MethodSignature, Totality};
+    use crate::signature::{Issuance, Issued, MethodSignature};
     use crate::test_worlds::{
         core_sink, deposit_sink, instance_of, issued_by, meta_of, method, payer_payee_world, pkg,
         resolver, self_point, star_world,
@@ -1071,7 +1071,7 @@ mod tests {
         producing.methods.insert(
             Name::declared("make"),
             MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 outputs: vec![Expr::SelfAddr],
                 effects: vec![self_point(
                     SlotId(1),
@@ -1164,7 +1164,7 @@ mod tests {
             ("a delta on another slot", core_sink(), LegRole::Core),
             (
                 "a deposit with an error arm",
-                beside(|s| s.totality = Totality::Fallible),
+                beside(|s| s.declines = true),
                 LegRole::Core,
             ),
             (

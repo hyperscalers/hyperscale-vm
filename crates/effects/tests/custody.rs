@@ -404,7 +404,7 @@ fn a_resource_granting_no_freeze_reads_no_halt_leaf() {
 fn a_credit_is_asked_only_what_a_recipient_is_asked() {
     use hyperscale_vm_effects::vocabulary::VAULT;
     use hyperscale_vm_effects::{
-        Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, TargetExpr, Totality,
+        Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, TargetExpr,
     };
 
     const CREDIT: ModeExpr = ModeExpr::Delta { moves: Moves::In };
@@ -423,7 +423,7 @@ fn a_credit_is_asked_only_what_a_recipient_is_asked() {
         package.methods.insert(
             Name::declared("receive"),
             MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 effects: vec![Clause::Effect {
                     reach: None,
                     guard: None,

@@ -12,7 +12,7 @@ use hyperscale_vm_effects::vocabulary::INSTANCE;
 use hyperscale_vm_effects::{
     AbiParam, Expr, GrantSubject, GrantRuleExpr, GrantedBehaviour, GrantsExpr, Hasher, Issuance,
     Issued, MethodSignature, PackageMetadata, ParamType, ResourceKind, RuleExpr, RuleLeaf, SlotRef,
-    Totality, Value, granting_issued_resource, holdings_range,
+    Value, granting_issued_resource, holdings_range,
 };
 use hyperscale_vm_manifest_builder::{Bucket, BucketArg, Proof, TypedBuilder, TypedError};
 use hyperscale_vm_types::{Address, ComponentAddr, Moves, Presence, ResourceAddr};
@@ -120,7 +120,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         Name::declared("mint"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             // The pool's own resource, by the mark that separates it from
             // the instance's others — which is what the grant is for and
             // what makes another issuer's inexpressible here.
@@ -146,7 +146,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         Name::declared("deposit"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             issues: Capped::empty(),
             params: vec![ParamType::NfBucket],
             abi: vec![AbiParam::Handle { clause: 0, site: 0 }, AbiParam::Bucket(0)],
@@ -170,7 +170,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         Name::declared("withdraw"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             issues: Capped::empty(),
             params: vec![ParamType::Address, ParamType::Ids],
             abi: vec![
@@ -194,7 +194,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         Name::declared("burn"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             // Bringing value out of existence is as declared as bringing
             // it in, and under the same grant.
             issues: Capped::from_array([Issuance {
@@ -214,7 +214,7 @@ pub fn metadata() -> PackageMetadata {
         methods.methods.insert(
             Name::declared(name),
             MethodSignature {
-                totality: Totality::Infallible,
+                declines: false,
                 effects: vec![Clause::Requires { guard: None, rule }],
                 issues: Capped::empty(),
                 ..MethodSignature::default()

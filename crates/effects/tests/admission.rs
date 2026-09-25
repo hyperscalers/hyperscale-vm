@@ -18,8 +18,8 @@ use hyperscale_vm_effects::{
     Expr, GrantedBehaviour, GraphArg, GraphNode, Hash32, InstanceMeta, JudgedLeaf, MAX_VALUE_DEPTH,
     ManifestGraph, MethodSignature, ModeExpr, PackageMetadata, ParamType, Records, ResourceGrants,
     ResourceKind, ResourceMeta, Rule, RuleBytes, RuleExpr, RuleLeaf, SlotRef, StoredRule,
-    TargetExpr, TestHasher, Totality, Value, child_key, explain_admission, fresh_id,
-    holdings_entry, per_shard,
+    TargetExpr, TestHasher, Value, child_key, explain_admission, fresh_id, holdings_entry,
+    per_shard,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, ComponentAddr, Effect, EffectTarget, Mode, Moves, Presence,
@@ -62,7 +62,7 @@ fn sorter_metadata() -> PackageMetadata {
     package.methods.insert(
         Name::declared("sort"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             params: vec![ParamType::Bucket, ParamType::Address],
             abi: vec![AbiParam::Bucket(0), AbiParam::Derived(Expr::Arg(1))],
             denominations: vec![Some(Expr::Arg(1)), None],
@@ -343,7 +343,7 @@ fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, Com
     package.methods.insert(
         Name::declared("present"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects,
             ..MethodSignature::default()
         },
@@ -360,7 +360,7 @@ fn custodian_world(presenting: &Presenting, config: Vec<Value>) -> (Records, Com
     package.methods.insert(
         Name::declared("operate"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects: vec![Clause::Requires {
                 guard: None,
                 rule: RuleExpr::claim(gated),
@@ -611,7 +611,7 @@ fn an_unsatisfied_gate_reads_back_leaf_by_leaf() {
     package.methods.insert(
         Name::declared("operate"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects: vec![Clause::Requires {
                 guard: None,
                 rule: RuleExpr::CountOf {
@@ -1038,7 +1038,7 @@ fn a_refusal_names_the_listed_clause_that_declared_it() {
     package.methods.insert(
         Name::declared("grab"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects: vec![
                 Clause::Requires {
                     guard: None,
@@ -1119,7 +1119,7 @@ fn an_unbindable_abi_param_is_explained_as_a_binding() {
     package.methods.insert(
         Name::declared("poke"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             params: vec![ParamType::U64],
             // A guard naming a clause the signature does not have: the
             // shape publish refuses, arriving as chain-served metadata
@@ -1277,7 +1277,7 @@ fn a_double_destruction_asks_the_burn_question_once() {
     package.methods.insert(
         Name::declared("shred"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             params: vec![ParamType::Bucket, ParamType::Bucket],
             destroys: Capped::new(vec![0, 1]).unwrap(),
             ..MethodSignature::default()
@@ -1410,7 +1410,7 @@ fn the_injection_dedup_scan_is_charged_work() {
     package.methods.insert(
         Name::declared("drain"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects,
             ..MethodSignature::default()
         },
@@ -1527,7 +1527,7 @@ fn conditional_component(chain: &mut Records) -> ComponentAddr {
     package.methods.insert(
         Name::declared("act"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects: vec![
                 Clause::Effect {
                     reach: None,
@@ -1682,7 +1682,7 @@ fn evidence_follows_the_conditions_this_call_evaluated() {
     package.methods.insert(
         Name::declared("settle"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             params: vec![ParamType::U64],
             effects: vec![Clause::Requires {
                 guard: Some(Box::new(Expr::Eq(
@@ -1780,7 +1780,7 @@ fn bailiff_world() -> (Records, ComponentAddr) {
     package.methods.insert(
         Name::declared("seize"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             params: vec![ParamType::Address, ParamType::U64, ParamType::Resource],
             abi: vec![AbiParam::Handle { clause: 0, site: 0 }],
             outputs: vec![Expr::Arg(2)],
@@ -1962,7 +1962,7 @@ fn keeper_metadata() -> PackageMetadata {
     package.methods.insert(
         Name::declared("file"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             params: vec![ParamType::BytesExact(4)],
             abi: vec![AbiParam::Derived(Expr::Arg(0))],
             denominations: vec![None],

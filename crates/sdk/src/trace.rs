@@ -35,7 +35,7 @@ use hyperscale_hbor::{Capped, Name};
 use hyperscale_vm_effects::{
     AbiParam, Clause, Expr, GrantedBehaviour, GrantsExpr, Issuance, Issued, MAX_CLAUSE_DEPTH,
     MAX_EXPR_DEPTH, MAX_FOREACH_ELEMENTS, MAX_RULE_DEPTH, ModeExpr, ParamType, ResourceKind,
-    RuleExpr, RuleLeaf, SlotId, SlotRef, TargetExpr, Totality, Value, well_formed,
+    RuleExpr, RuleLeaf, SlotId, SlotRef, TargetExpr, Value, well_formed,
 };
 use hyperscale_vm_types::{Moves, Presence};
 
@@ -100,7 +100,7 @@ pub struct Trace {
     issues: Vec<Issuance>,
     destroys: Vec<u32>,
     /// Whether the method carries an error arm.
-    totality: Totality,
+    declines: bool,
     /// Whether the method hands back a value beside its edges.
     answers: bool,
     emits: Vec<Name>,
@@ -126,7 +126,7 @@ impl Trace {
             pending_governed: None,
             issues: Vec::new(),
             destroys: Vec::new(),
-            totality: Totality::Infallible,
+            declines: false,
             answers: false,
             emits: Vec::new(),
         }
@@ -716,7 +716,7 @@ impl Trace {
     /// Record that this method carries an error arm, and may therefore
     /// decline.
     pub const fn fallible(&mut self) {
-        self.totality = Totality::Fallible;
+        self.declines = true;
     }
 
     /// Record that this method hands back a value beside its edges.
@@ -1031,7 +1031,7 @@ impl Trace {
             abi,
             issues: self.issues,
             destroys: self.destroys,
-            totality: self.totality,
+            declines: self.declines,
         }
     }
 }
@@ -1288,7 +1288,7 @@ pub(crate) struct Recorded {
     pub(crate) abi: Vec<AbiParam>,
     pub(crate) issues: Vec<Issuance>,
     pub(crate) destroys: Vec<u32>,
-    pub(crate) totality: Totality,
+    pub(crate) declines: bool,
 }
 
 /// Binders are recorded at `u32::MAX - depth` so that a lowered index —

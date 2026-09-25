@@ -81,7 +81,7 @@ mod tests {
     use hyperscale_vm_effects::{
         AbiParam, Clause, EdgeContent, Expr, MAX_CLAUSE_DEPTH, MAX_EFFECTS_PER_SIGNATURE,
         MAX_EXPR_DEPTH, MAX_VALUE_DEPTH, METADATA_WIRE_DEPTH, MethodSignature, ModeExpr, ParamType,
-        SlotId, SlotRef, SlotShape, TargetExpr, Totality, Value, package_slot,
+        SlotId, SlotRef, SlotShape, TargetExpr, Value, package_slot,
     };
     use hyperscale_vm_fixtures::{amm, book};
     use hyperscale_vm_stdlib::account;
@@ -198,7 +198,7 @@ mod tests {
     #[allow(clippy::too_many_lines)] // one arm per shape the vocabulary admits
     fn every_authored_shape() -> MethodSignature {
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             issues: Capped::empty(),
             destroys: Capped::empty(),
             abi: vec![AbiParam::Guard(0)],

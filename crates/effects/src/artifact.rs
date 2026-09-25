@@ -282,7 +282,7 @@ mod tests {
     use crate::dsl::{Clause, Expr, MAX_EXPR_DEPTH, ModeExpr, TargetExpr};
     use crate::hash::TestHasher;
     use crate::metadata::{PackageMetadata, package_hash};
-    use crate::signature::{MethodSignature, Totality};
+    use crate::signature::MethodSignature;
 
     /// The wire depth admits every shape the door admits, so a package
     /// cannot pass the checks and then fail to be written down.
@@ -352,7 +352,7 @@ mod tests {
         metadata.methods.insert(
             Name::declared("swap"),
             MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 ..MethodSignature::default()
             },
         );
@@ -449,7 +449,7 @@ mod tests {
         metadata.methods.insert(
             Name::declared("m"),
             MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 effects: vec![Clause::Effect {
                     reach: None,
                     guard: None,

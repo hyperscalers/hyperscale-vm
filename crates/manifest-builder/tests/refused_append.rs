@@ -14,8 +14,7 @@ use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
     ChainRecords, Claim, Clause, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta,
     MethodSignature, ModeExpr, PackageHash, PackageMetadata, ResourceGrants, ResourceKind,
-    ResourceMeta, RuleBytes, RuleExpr, SlotRef, StoredRule, TargetExpr, TestHasher, Totality,
-    Value,
+    ResourceMeta, RuleBytes, RuleExpr, SlotRef, StoredRule, TargetExpr, TestHasher, Value,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_types::{CallTarget, Moves, PrincipalAddr, ResourceAddr};
@@ -95,7 +94,7 @@ fn account() -> PackageMetadata {
     package.methods.insert(
         Name::declared("authorize"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects: vec![Clause::Proves {
                 guard: None,
                 claim: Expr::SelfAddr,
@@ -109,7 +108,7 @@ fn account() -> PackageMetadata {
     package.methods.insert(
         Name::declared("grab"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects: vec![
                 Clause::Requires {
                     guard: None,
@@ -125,7 +124,7 @@ fn account() -> PackageMetadata {
     package.methods.insert(
         Name::declared("stash"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects: vec![
                 Clause::Proves {
                     guard: None,

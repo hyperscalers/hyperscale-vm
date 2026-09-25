@@ -8,7 +8,7 @@
 //! not so held, and this is the walk holding it.
 
 use hyperscale_hbor::Name;
-use hyperscale_vm_effects::{MethodSignature, PackageMetadata, Totality};
+use hyperscale_vm_effects::{MethodSignature, PackageMetadata};
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
 use hyperscale_vm_testing::{Chain, Code, Package, PrincipalAddr, principal};
 use hyperscale_vm_types::{AbortReason, ComponentAddr, MAX_ANSWER_BYTES, Outcome};
@@ -21,7 +21,7 @@ fn answering() -> PackageMetadata {
     metadata.methods.insert(
         Name::declared("say"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             answers: true,
             ..MethodSignature::default()
         },

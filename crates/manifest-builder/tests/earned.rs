@@ -15,7 +15,7 @@ use hyperscale_vm_effects::{
     ChainRecords, Claim, ClaimRef, Clause, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta,
     MethodSignature, ModeExpr, PackageHash, PackageMetadata, ResourceGrants, ResourceKind,
     ResourceMeta, RuleBytes, RuleExpr, RuleLeaf, SlotRef, StoredRule, TargetExpr, TestHasher,
-    Totality, Value,
+    Value,
 };
 use hyperscale_vm_manifest_builder::TypedBuilder;
 use hyperscale_vm_types::{CallTarget, Moves, PrincipalAddr, ResourceAddr};
@@ -99,7 +99,7 @@ fn account() -> PackageMetadata {
     package.methods.insert(
         Name::declared("authorize"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects: vec![Clause::Proves {
                 guard: None,
                 claim: Expr::SelfAddr,
@@ -112,7 +112,7 @@ fn account() -> PackageMetadata {
     package.methods.insert(
         Name::declared("spend"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects: vec![
                 Clause::Effect {
                     reach: None,

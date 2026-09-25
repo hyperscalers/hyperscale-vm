@@ -247,21 +247,6 @@ pub enum AbiParam {
     Derived(Expr),
 }
 
-/// Whether a method can fail on its own terms.
-///
-/// The error arm is visible in the signature, and the publish gate holds
-/// the mark to the export's own type in both directions. The default is
-/// the commonest shape: a method with no error arm.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hbor)]
-pub enum Totality {
-    /// The signature carries an error arm, so the method fails on its own
-    /// terms and every caller has a failure to handle.
-    Fallible,
-    /// No error arm.
-    #[default]
-    Infallible,
-}
-
 /// The bound on how many resources one method may issue.
 ///
 /// A component founds every resource it declares in the one call that
@@ -372,8 +357,10 @@ pub struct Issuance {
 /// prefix.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hbor)]
 pub struct MethodSignature {
-    /// Whether a caller has a failure to handle.
-    pub totality: Totality,
+    /// Whether the method carries an error arm: it can fail on its own
+    /// terms, and every caller has a failure to handle. The publish gate
+    /// holds this to the export's own type in both directions.
+    pub declines: bool,
     /// The resources this method may bring into or out of existence,
     /// in the order a body's own calls name them.
     ///
@@ -564,7 +551,7 @@ impl MethodSignature {
             denomination: Some(Box::new(bucket())),
             reach: None,
         };
-        self.totality != Totality::Fallible
+        !self.declines
             && self.params == [ParamType::Bucket]
             && self.abi == [AbiParam::Handle { clause: 0, site: 0 }, AbiParam::Bucket(0)]
             && self.effects == [credit]

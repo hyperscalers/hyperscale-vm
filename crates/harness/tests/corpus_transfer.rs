@@ -8,8 +8,8 @@ use hyperscale_hbor::{Capped, Name};
 use hyperscale_vm_effects::vocabulary::VAULT;
 use hyperscale_vm_effects::{
     AbiParam, Clause, Constraint, Expr, Hash32, InstanceMeta, ManifestGraph, MethodSignature,
-    ModeExpr, PackageMetadata, ParamType, ShardId, SlotId, SlotRef, TargetExpr, TestHasher,
-    Totality, Value, child_key, package_slot,
+    ModeExpr, PackageMetadata, ParamType, ShardId, SlotId, SlotRef, TargetExpr, TestHasher, Value,
+    child_key, package_slot,
 };
 use hyperscale_vm_harness::driver::{amount_of, vault};
 use hyperscale_vm_kernel::MemoryStore;
@@ -70,7 +70,7 @@ fn mirror_metadata() -> PackageMetadata {
     metadata.methods.insert(
         Name::declared("deposit"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             params: vec![ParamType::Bucket],
             // The binding names its clause on purpose: the export's one
             // site is what the body credits, and this says that site is

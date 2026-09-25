@@ -75,7 +75,7 @@ An intent composes intents, and authority only flows down. COMP-1 is the whole o
 
 | ID | Class | Property |
 |---|---|---|
-| **INV-VM-GATE-1** | Safety | **Error-arm honesty.** A signature is `Fallible` exactly where its export carries the declared error arm, so every caller that has a refusal to handle is told so, and none is told of one that cannot come. [01 §9](01-effects-and-routing.md) |
+| **INV-VM-GATE-1** | Safety | **Error-arm honesty.** A signature `declines` exactly where its export carries the declared error arm, so every caller that has a refusal to handle is told so, and none is told of one that cannot come. [01 §9](01-effects-and-routing.md) |
 | **INV-VM-GATE-2** | Safety | **Declared production.** A signature's declared value outputs equal the edges its export hands back, so a package cannot describe itself as producing value its code does not hand over, or hand over value its signature never declared. [01 §9](01-effects-and-routing.md) |
 
 **Enforcement map.** The gate's verdict is one pure function of the bytes, reached wherever the bytes are; what the table records is which rule is deliberately judged at more than one door and which has exactly one.

@@ -24,8 +24,8 @@ use hyperscale_vm_effects::{
     ChainRecords, Clause, Declaration, DeclarationError, ESCROW_RECORD_SLOT, EvalError, Expr,
     GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, Intent, IntentHeader, IntentTree,
     ManifestGraph, MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType,
-    READ_FRONTIER_SLOT, Records, SlotId, SlotRef, TargetExpr, TestHasher, Totality, Value,
-    admit_tree, check_declarations, child_key,
+    READ_FRONTIER_SLOT, Records, SlotId, SlotRef, TargetExpr, TestHasher, Value, admit_tree,
+    check_declarations, child_key,
 };
 use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_types::{
@@ -88,7 +88,7 @@ fn predator() -> PackageMetadata {
     methods.methods.insert(
         Name::declared("drain"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             params: vec![ParamType::Address],
             effects: vec![Clause::Effect {
                 reach: None,
@@ -224,7 +224,7 @@ fn a_capability_on_a_strangers_vault_cannot_spend_it() {
 /// A signature writing `slot` under the package's own prefix.
 fn writing(slot: SlotId) -> MethodSignature {
     MethodSignature {
-        totality: Totality::Fallible,
+        declines: true,
         effects: vec![Clause::Effect {
             reach: None,
             guard: None,
@@ -247,7 +247,7 @@ fn reaching() -> PackageMetadata {
     methods.methods.insert(
         Name::declared("reach"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             params: vec![ParamType::U64],
             effects: vec![Clause::Effect {
                 reach: None,

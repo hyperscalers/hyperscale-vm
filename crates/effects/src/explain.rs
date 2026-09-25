@@ -70,7 +70,7 @@ use crate::rule::{
     GrantRuleExpr, GrantSubject, Holding, Judged, Rule, RuleExpr, RuleLeaf, SealedLeaf, StoredRule,
     always, never,
 };
-use crate::signature::{AbiParam, Issuance, Issued, MethodSignature, ParamType, Totality};
+use crate::signature::{AbiParam, Issuance, Issued, MethodSignature, ParamType};
 use crate::types::{EdgeContent, SlotId, Value, u256_decimal};
 use crate::vocabulary::{AUTH, CONFIG, HALT, INSTANCE, NF_VAULT, RESOURCE, VAULT};
 
@@ -1030,7 +1030,7 @@ impl<'a> Names<'a> {
     /// back.
     fn method(&self, name: &str, signature: &MethodSignature, out: &mut String) {
         let MethodSignature {
-            totality,
+            declines,
             issues,
             destroys,
             params,
@@ -1051,7 +1051,7 @@ impl<'a> Names<'a> {
                 _ => param.name().to_owned(),
             })
             .collect();
-        let _ = write!(out, "{name}({}) — {}", kinds.join(", "), returns(*totality));
+        let _ = write!(out, "{name}({}) — {}", kinds.join(", "), returns(*declines));
         if *answers {
             out.push_str(", answers");
         }
@@ -1673,7 +1673,7 @@ impl<'a> Names<'a> {
 /// rather than quietly escaping the census.
 fn signature_exprs(signature: &MethodSignature) -> Vec<&Expr> {
     let MethodSignature {
-        totality: _,
+        declines: _,
         issues: _,
         destroys: _,
         params: _,
@@ -2030,11 +2030,8 @@ const fn slot_kind(kind: SlotKind) -> &'static str {
 }
 
 /// Whether a method can fail on its own terms.
-const fn returns(totality: Totality) -> &'static str {
-    match totality {
-        Totality::Fallible => "fallible",
-        Totality::Infallible => "infallible",
-    }
+const fn returns(declines: bool) -> &'static str {
+    if declines { "fallible" } else { "infallible" }
 }
 
 /// What a resource is, folded into its derivation.
@@ -2102,7 +2099,7 @@ mod tests {
     use crate::metadata::{PackageMetadata, SlotKind, SlotShape};
     use crate::resource::{GrantedBehaviour, GrantsExpr, ResourceKind};
     use crate::rule::{GrantRuleExpr, GrantSubject, Rule, RuleLeaf};
-    use crate::signature::{AbiParam, MethodSignature, ParamType, Totality};
+    use crate::signature::{AbiParam, MethodSignature, ParamType};
     use crate::types::{SlotId, Value, package_slot};
     use crate::vocabulary::VAULT;
 
@@ -2678,7 +2675,7 @@ mod tests {
     fn the_package_rendering_carries_every_table_it_declares() {
         let mut signature = declaring(vec![]);
         signature.params = vec![ParamType::Bucket];
-        signature.totality = Totality::Fallible;
+        signature.declines = true;
         let text = explain(&package("deposit", signature));
         assert!(text.contains("     16  entries — an ordered collection, holding u128"));
         assert!(text.contains("      0  x"));

@@ -9,7 +9,7 @@ use hyperscale_hbor::{Capped, Name, TypeShape};
 use hyperscale_vm_effects::dsl::{Clause, ModeExpr, TargetExpr};
 use hyperscale_vm_effects::{
     AbiParam, Expr, MethodSignature, PackageMetadata, ParamType, SlotId, SlotKind,
-    SlotRef, SlotShape, Totality, Value, package_slot,
+    SlotRef, SlotShape, Value, package_slot,
 };
 use hyperscale_vm_manifest_builder::{TypedBuilder, TypedError};
 use hyperscale_vm_types::{ComponentAddr, Moves};
@@ -68,7 +68,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         Name::declared("bind"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             issues: Capped::empty(),
             params: vec![ParamType::U64, ParamType::U128],
             abi: vec![
@@ -90,7 +90,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         Name::declared("check"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             issues: Capped::empty(),
             params: vec![ParamType::U64, ParamType::U128],
             abi: vec![
@@ -110,7 +110,7 @@ pub fn metadata() -> PackageMetadata {
     methods.methods.insert(
         Name::declared("drain"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             issues: Capped::empty(),
             params: vec![ParamType::U128],
             abi: vec![AbiParam::Handle { clause: 0, site: 0 }],

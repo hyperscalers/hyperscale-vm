@@ -11,7 +11,7 @@
 use hyperscale_hbor::{Capped, Name};
 use hyperscale_vm_effects::{
     Expr, GrantRuleExpr, GrantSubject, GrantedBehaviour, GrantsExpr, Issuance, Issued,
-    MethodSignature, PackageMetadata, ResourceKind, Totality, Value,
+    MethodSignature, PackageMetadata, ResourceKind, Value,
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
 use hyperscale_vm_testing::{Chain, Code, Package, PrincipalAddr, account, principal};
@@ -43,7 +43,7 @@ fn issuer() -> PackageMetadata {
     metadata.methods.insert(
         Name::declared("mint"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             issues: Capped::new(vec![Issuance {
                 mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,
@@ -77,7 +77,7 @@ fn miscast_issuer() -> PackageMetadata {
     metadata.methods.insert(
         Name::declared("mint"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             issues: Capped::new(vec![Issuance {
                 mark: BADGE.to_vec(),
                 kind: ResourceKind::NonFungible,

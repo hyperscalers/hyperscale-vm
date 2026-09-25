@@ -15,7 +15,7 @@ use hyperscale_vm_effects::{
     Claim, Clause, Constraint, Expr, GrantedBehaviour, Hash32, Hasher, InstanceMeta, Intent,
     IntentHeader, IntentTree, ManifestGraph, MethodSignature, PackageHash, PackageMetadata,
     PrefixShardResolver, PrincipalRule, Records, ResourceGrants, ResourceKind, ResourceMeta,
-    RuleBytes, ShardResolver, StoredRule, TestHasher, Totality, Value, admit_tree, footprint,
+    RuleBytes, ShardResolver, StoredRule, TestHasher, Value, admit_tree, footprint,
 };
 use hyperscale_vm_manifest_builder::{
     Authority, IntentBuilder, Interface, PreflightError, Report, TypedBuilder, preflight_tree,
@@ -705,7 +705,7 @@ fn venue_metadata() -> PackageMetadata {
     package.methods.insert(
         Name::declared("approve"),
         MethodSignature {
-            totality: Totality::Fallible,
+            declines: true,
             effects: vec![Clause::Proves {
                 guard: None,
                 claim: Expr::SelfAddr,

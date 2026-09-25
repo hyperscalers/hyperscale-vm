@@ -14,7 +14,7 @@
 use hyperscale_hbor::Name;
 use hyperscale_vm_effects::{
     AbiParam, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType, SlotId, SlotRef,
-    TargetExpr, Totality, Value,
+    TargetExpr, Value,
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
 use hyperscale_vm_testing::{Chain, Code, Package, account, principal, resource};
@@ -54,7 +54,7 @@ fn mixer() -> PackageMetadata {
     metadata.methods.insert(
         Name::declared("fill"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             params: vec![ParamType::Bucket],
             abi: vec![AbiParam::Handle { clause: 0, site: 0 }, AbiParam::Bucket(0)],
             effects: vec![holding(CHEAP, ModeExpr::Delta { moves: Moves::Both })],
@@ -64,7 +64,7 @@ fn mixer() -> PackageMetadata {
     metadata.methods.insert(
         Name::declared("drain"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             params: vec![ParamType::U64],
             outputs: vec![Expr::Literal(Value::Address(DEAR.address()))],
             abi: vec![

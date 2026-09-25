@@ -9,7 +9,7 @@
 use hyperscale_vm_types::{Address, AddressClass};
 
 use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
-use crate::signature::{MethodSignature, Totality};
+use crate::signature::MethodSignature;
 use crate::types::{SlotId, Value};
 
 /// A resource address, for a value cell to be keyed by.
@@ -50,7 +50,7 @@ pub(super) fn one_clause(
     denomination: Option<Expr>,
 ) -> MethodSignature {
     MethodSignature {
-        totality: Totality::Fallible,
+        declines: true,
         effects: vec![Clause::Effect {
             reach: None,
             guard: None,

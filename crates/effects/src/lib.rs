@@ -121,7 +121,7 @@ pub use rule::{
 };
 pub use signature::{
     AbiParam, Issuance, Issued, MAX_ISSUANCES_PER_SIGNATURE, MAX_PROVEN_PER_SIGNATURE,
-    MethodSignature, ParamType, Totality,
+    MethodSignature, ParamType,
 };
 pub use star::{CrossingEdge, Star, legs_of, running_at, star_at};
 pub use types::{

@@ -119,7 +119,7 @@ mod tests {
     use crate::metadata::{MetadataCache, PackageMetadata, PublishRefusal};
     use crate::publish::{AbiError, SignatureError};
     use crate::records::{ChainRecords, Records};
-    use crate::signature::{AbiParam, MethodSignature, ParamType, Totality};
+    use crate::signature::{AbiParam, MethodSignature, ParamType};
     use crate::test_worlds::{
         addr, instance_of, meta_of, method, payer_payee_world, pkg, resolver, resource, self_point,
     };
@@ -432,7 +432,7 @@ mod tests {
         meta.methods.insert(
             Name::declared("take"),
             MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 params: vec![ParamType::U128],
                 effects: vec![Clause::Effect {
                     reach: None,
@@ -534,7 +534,7 @@ mod tests {
         package.methods.insert(
             Name::declared("m"),
             MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 abi,
                 effects: vec![
                     Clause::ForEach {
@@ -584,7 +584,7 @@ mod tests {
         package.methods.insert(
             Name::declared("m"),
             MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 abi: vec![AbiParam::Handle { clause: 0, site: 0 }],
                 effects: vec![Clause::ForEach {
                     guard: Some(Box::new(Expr::Config(1))),
@@ -678,7 +678,7 @@ mod tests {
         package.methods.insert(
             Name::declared("m"),
             MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 abi,
                 effects: vec![Clause::Effect {
                     reach: None,
@@ -782,7 +782,7 @@ mod tests {
         package.methods.insert(
             Name::declared("m"),
             MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 effects: vec![Clause::ForEach {
                     guard: None,
                     list: Expr::Config(0),
@@ -913,7 +913,7 @@ mod tests {
         package.methods.insert(
             Name::declared("take"),
             MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 params: vec![ParamType::NfBucket],
                 abi: vec![AbiParam::Bucket(0)],
                 effects: vec![self_point(
@@ -926,7 +926,7 @@ mod tests {
         package.methods.insert(
             Name::declared("make"),
             MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 outputs: vec![Expr::Literal(Value::Bucket {
                     resource: resource(0xE1),
                     content: EdgeContent::NonFungible {
@@ -963,7 +963,7 @@ mod tests {
         package.methods.insert(
             Name::declared("take"),
             MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 params: vec![ParamType::Bucket, ParamType::Bucket],
                 abi: vec![AbiParam::Bucket(1)],
                 effects: vec![self_point(
@@ -976,7 +976,7 @@ mod tests {
         package.methods.insert(
             Name::declared("make"),
             MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 outputs: vec![
                     Expr::Literal(Value::Address(resource(0xE1).address())),
                     Expr::Literal(Value::Address(resource(0xE1).address())),
@@ -1033,7 +1033,7 @@ mod tests {
         router.methods.insert(
             Name::declared("forward"),
             MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 params: vec![ParamType::Bucket],
                 // Nothing in the ABI carries the bucket: the method
                 // consumes the edge without reading what crossed.
@@ -1048,7 +1048,7 @@ mod tests {
         router.methods.insert(
             Name::declared("make"),
             MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 outputs: vec![Expr::Literal(Value::Address(resource(0xE1).address()))],
                 ..MethodSignature::default()
             },
@@ -1111,7 +1111,7 @@ mod tests {
             package.methods.insert(
                 Name::declared("reach"),
                 MethodSignature {
-                    totality: Totality::Fallible,
+                    declines: true,
                     params: vec![ParamType::Address],
                     effects: vec![Clause::Effect {
                         reach: None,
@@ -1168,7 +1168,7 @@ mod tests {
         package.methods.insert(
             Name::declared("m"),
             MethodSignature {
-                totality: Totality::Fallible,
+                declines: true,
                 params: vec![ParamType::Bucket],
                 abi: vec![AbiParam::Bucket(0), AbiParam::Bucket(0)],
                 effects: vec![self_point(

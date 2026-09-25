@@ -26,8 +26,8 @@ use hyperscale_hbor::Name;
 use hyperscale_vm_effects::vocabulary::{AUTH, VAULT};
 use hyperscale_vm_effects::{
     AbiParam, Claim, Clause, Expr, MethodSignature, ModeExpr, PackageMetadata, ParamType,
-    RuleBytes, RuleExpr, RuleLeaf, SlotId, SlotRef, StoredRule, TargetExpr, TestHasher, Totality,
-    Value, protocol_resource,
+    RuleBytes, RuleExpr, RuleLeaf, SlotId, SlotRef, StoredRule, TargetExpr, TestHasher, Value,
+    protocol_resource,
 };
 use hyperscale_vm_kernel::{GuestArg, Invoked, KernelSession};
 use hyperscale_vm_testing::{Chain, Code, Package, account, principal, resource};
@@ -87,7 +87,7 @@ fn counterfeiter() -> PackageMetadata {
     metadata.methods.insert(
         Name::declared("forge"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             params: vec![ParamType::U64],
             outputs: vec![Expr::Literal(Value::Address(protocol()))],
             abi: vec![
@@ -174,7 +174,7 @@ fn aliased() -> PackageMetadata {
     metadata.methods.insert(
         Name::declared("forge"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             params: vec![ParamType::U64],
             outputs: vec![held()],
             abi: vec![
@@ -249,7 +249,7 @@ fn two_faced() -> PackageMetadata {
     metadata.methods.insert(
         Name::declared("fill"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             params: vec![ParamType::U64],
             abi: vec![
                 AbiParam::Handle { clause: 0, site: 0 },
@@ -262,7 +262,7 @@ fn two_faced() -> PackageMetadata {
     metadata.methods.insert(
         Name::declared("drain"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             params: vec![ParamType::U64],
             outputs: vec![held()],
             abi: vec![
@@ -332,7 +332,7 @@ fn impostor() -> PackageMetadata {
     metadata.methods.insert(
         Name::declared("arm"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             params: vec![ParamType::Address],
             abi: vec![
                 AbiParam::Handle { clause: 0, site: 0 },
@@ -348,7 +348,7 @@ fn impostor() -> PackageMetadata {
     metadata.methods.insert(
         Name::declared("present"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             params: vec![ParamType::Address],
             abi: vec![],
             effects: vec![
@@ -435,7 +435,7 @@ fn treasury() -> PackageMetadata {
     metadata.methods.insert(
         Name::declared("payout"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             params: vec![ParamType::U64],
             outputs: vec![Expr::Config(1)],
             abi: vec![
@@ -542,7 +542,7 @@ fn silent() -> PackageMetadata {
     metadata.methods.insert(
         Name::declared("fill"),
         MethodSignature {
-            totality: Totality::Infallible,
+            declines: false,
             params: vec![ParamType::Bucket],
             abi: vec![AbiParam::Handle { clause: 0, site: 0 }, AbiParam::Bucket(0)],
             effects: vec![cell()],
