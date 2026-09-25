@@ -606,6 +606,7 @@ dependencies = [
 name = "hyperscale-vm-gate"
 version = "0.1.0"
 dependencies = [
+ "hyperscale-hbor",
  "hyperscale-vm-effects",
  "hyperscale-vm-runtime",
  "hyperscale-vm-types",
@@ -632,6 +633,7 @@ dependencies = [
 name = "hyperscale-vm-kernel"
 version = "0.1.0"
 dependencies = [
+ "hyperscale-hbor",
  "hyperscale-vm-effects",
  "hyperscale-vm-embed",
  "hyperscale-vm-types",
@@ -696,6 +698,7 @@ dependencies = [
 name = "hyperscale-vm-sdk-macros"
 version = "0.1.0"
 dependencies = [
+ "hyperscale-hbor",
  "hyperscale-vm-effects",
  "proc-macro2",
  "quote",
@@ -717,6 +720,7 @@ dependencies = [
 name = "hyperscale-vm-testing"
 version = "0.1.0"
 dependencies = [
+ "hyperscale-hbor",
  "hyperscale-vm-cli",
  "hyperscale-vm-effects",
  "hyperscale-vm-kernel",

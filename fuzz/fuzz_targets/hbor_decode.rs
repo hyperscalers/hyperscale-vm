@@ -14,7 +14,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 
-use hyperscale_hbor::{Hbor, HborDecode, HborEncode, from_slice, from_slice_with_depth, to_vec};
+use hyperscale_hbor::{
+    Bytes, Hbor, HborDecode, HborEncode, from_slice, from_slice_with_depth, to_vec,
+};
 use libfuzzer_sys::fuzz_target;
 
 /// One shape per wire mechanism: discriminants (pinned and positional),
@@ -25,8 +27,7 @@ enum Zoo {
     Unit,
     Scalars(u8, u32, u128, i64, bool),
     Bytes {
-        #[hbor(max = 64)]
-        data: Vec<u8>,
+        data: Bytes<64>,
         tail: u16,
     },
     Text(String),

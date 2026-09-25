@@ -223,7 +223,7 @@ fn a_recall_reaches_past_every_rule_the_resource_carries(chain: &mut Chain) {
 #[blueprint]
 mod sovereign {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Bucket, Quantity, halt, recall};
+    use hyperscale_vm_sdk::state::{Bucket, Quantity};
 
     /// A note whose `halt` and `recall` entries name the issuing
     /// instance rather than a party outside its code.
@@ -247,11 +247,11 @@ mod sovereign {
         }
 
         pub fn halt(&mut self, holder: Address) {
-            halt(holder, Note::address());
+            Note::halt(holder);
         }
 
         pub fn recall(&mut self, holder: Address, slot: u64, amount: Quantity) -> Bucket {
-            recall(holder, slot, Note::address(), amount)
+            Note::recall(holder, slot, amount)
         }
     }
 }

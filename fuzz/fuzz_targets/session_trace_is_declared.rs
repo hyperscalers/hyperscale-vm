@@ -461,7 +461,11 @@ fuzz_target!(|data: &[u8]| {
         .map(|value| {
             vec![Answer {
                 node: 0,
-                value: value.to_le_bytes().to_vec(),
+                value: value
+                    .to_le_bytes()
+                    .as_slice()
+                    .try_into()
+                    .expect("eight bytes fit the cap"),
             }]
         })
         .unwrap_or_default();

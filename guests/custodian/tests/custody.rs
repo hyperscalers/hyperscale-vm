@@ -11,6 +11,8 @@ use custodian_guest::custodian;
 // The module takes an alias so the bare crate path stays what
 // `package!` names.
 use grammar_guest::grammar as shapes;
+use hyperscale_vm_sdk::hbor::Capped;
+use hyperscale_vm_sdk::state::Table;
 use hyperscale_vm_testing::{
     AdmissionError, Chain, PrincipalAddr, Refused, ResourceAddr, Worlds, account, package,
     principal, resource,
@@ -25,12 +27,12 @@ const HOLDER: PrincipalAddr = principal(0xC2);
 /// here: what a custodian holds is any instance an issuer can move.
 fn shape_terms() -> shapes::client::Terms {
     shapes::client::Terms {
-        tiers: hyperscale_vm_sdk::state::Table::new(vec![(1, 10), (2, 20)]),
+        tiers: Table::from_rows([(1, 10), (2, 20)]),
         fallback: 7,
-        sides: vec![principal(0x51).into(), principal(0x52).into()],
-        windows: vec![1, 2],
-        assets: vec![resource(0xE1), resource(0xE2)],
-        marks: Vec::new(),
+        sides: Capped::from_array([principal(0x51).into(), principal(0x52).into()]),
+        windows: Capped::from_array([1, 2]),
+        assets: Capped::from_array([resource(0xE1), resource(0xE2)]),
+        marks: Capped::empty(),
     }
 }
 

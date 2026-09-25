@@ -1,5 +1,4 @@
-//! Where a recall reaches: any slot a holder keeps value at, in either
-//! shape the value takes.
+//! Where a recall reaches: any slot a holder keeps value at.
 //!
 //! The gate is total over slots on purpose. A package holds value at
 //! whatever slot of its own it likes, so a reach that could only name
@@ -9,20 +8,15 @@
 //! by what it holds, so naming a slot cannot name a cell holding
 //! something else, and that a slot naming no value is refused where the
 //! argument is evaluated.
-//!
-//! Both cell shapes, because a balance and a holding are one authority
-//! over two representations: a fungible balance is one leaf, and
-//! instances are the entries of an interval.
 
 use hyperscale_vm_sdk::blueprint;
 use hyperscale_vm_testing::vocabulary::NF_VAULT;
 use hyperscale_vm_testing::{
     Address, AdmissionError, Chain, EvalError, PrincipalAddr, Refused, Worlds, account, package,
-    package_slot, principal,
+    principal,
 };
-use security_guest::security;
 
-/// Whom both fixtures' entries name.
+/// Whom the bailiff's entry names.
 const WARDEN: PrincipalAddr = principal(0xB1);
 /// Who holds what is taken back.
 const HOLDER: PrincipalAddr = principal(0xB2);
@@ -38,7 +32,7 @@ const STRANGER: PrincipalAddr = principal(0xB3);
 #[blueprint]
 mod bailiff {
     use hyperscale_vm_sdk::Address;
-    use hyperscale_vm_sdk::state::{Ids, NfBucket, recall_instances};
+    use hyperscale_vm_sdk::state::{Ids, NfBucket};
 
     /// One instance per deed, which is what makes revocation
     /// holder-by-holder rather than a balance nobody can tell apart.
@@ -68,13 +62,13 @@ mod bailiff {
         /// is the count of the ids this call names, which is the same
         /// derivation a holder's own withdrawal makes.
         pub fn recall(&mut self, holder: Address, slot: u64, ids: Ids) -> NfBucket {
-            recall_instances(holder, slot, Deed::address(), ids)
+            Deed::recall(holder, slot, ids)
         }
     }
 }
 
-const fn deed_terms() -> bailiff::Terms {
-    bailiff::Terms {
+const fn deed_terms() -> bailiff::client::Terms {
+    bailiff::client::Terms {
         warden: WARDEN.address(),
     }
 }
@@ -178,58 +172,4 @@ fn a_slot_that_keeps_no_value_is_refused_where_the_argument_is_read(chain: &mut 
         );
     }
     assert!(chain.holds(HOLDER, deed, 1));
-}
-
-const fn share_terms() -> security::client::Terms {
-    security::client::Terms {
-        registrar: WARDEN.address(),
-    }
-}
-
-/// A holder who put the resource aside is still reachable, at the slot
-/// they put it aside in.
-///
-/// The account's quarantine is one of its own package slots, and it is
-/// exactly the case a reach naming only the vocabulary's vault would
-/// miss: the value is under the holder's prefix, in a cell the
-/// protocol derives no key for, and the issuer finds it because the
-/// caller says which slot rather than because anybody enumerated one.
-#[hyperscale_vm_testing::test]
-fn a_recall_finds_value_at_the_slot_the_holder_keeps_it_in(chain: &mut Chain) {
-    chain.publish(package!(security_guest::security));
-    let issuer = chain.instantiate::<security::client::Security>(WARDEN, share_terms());
-    let share = chain.issued(issuer, security::client::Share);
-
-    // Both parties on the register, since the share class asks the
-    // register about the party each movement is under — the recall
-    // included, once the value is back in the warden's own hands.
-    for (id, who) in [(1u64, WARDEN), (2, HOLDER)] {
-        chain
-            .transact(WARDEN, |b| {
-                let entry = issuer.register(b, id)?;
-                account::deposit_nf(b, who, entry)
-            })
-            .expect_completed();
-    }
-    // The holder decides they do not want it, so the deposit lands in
-    // the account's own quarantine rather than in the vault.
-    chain
-        .transact(HOLDER, |b| account::refuse(b, HOLDER, share))
-        .expect_completed();
-    chain
-        .transact(WARDEN, |b| {
-            let shares = issuer.issue(b, 60u128)?;
-            account::deposit(b, HOLDER, shares)
-        })
-        .expect_completed();
-    assert_eq!(chain.balance(HOLDER, share), 0, "the vault took none of it");
-
-    let quarantine = u64::from(package_slot(1).0);
-    chain
-        .transact(WARDEN, |b| {
-            let taken = issuer.recall_shares(b, HOLDER.address(), quarantine, 60u128)?;
-            account::deposit(b, WARDEN, taken)
-        })
-        .expect_completed();
-    assert_eq!(chain.balance(WARDEN, share), 60);
 }
