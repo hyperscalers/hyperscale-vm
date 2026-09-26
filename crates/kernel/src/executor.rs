@@ -39,7 +39,7 @@ use hyperscale_vm_types::{
     MAX_EVENT_BYTES_PER_TX, Mode, ModeKind, Moves, Outcome, SubstateKey, TxHash, UnmetCondition,
 };
 
-use crate::escrow::{Departure, Disposal, EscrowDelta, LegPlan};
+use crate::escrow::{Disposal, EscrowDelta, LegPlan};
 use crate::ledger::AmountLedger;
 use crate::locality::OwnerSet;
 use crate::overlay::OverlayStore;
@@ -369,18 +369,6 @@ pub enum Job {
     },
     /// Take back the records named, in order, invoking nothing.
     Records(Vec<Disposal>),
-}
-
-impl Job {
-    /// The record cell an edge leaving a walked manifest writes; nothing
-    /// for a settlement, which issues nothing.
-    #[must_use]
-    pub fn departure(&self, node: u32, output: u32) -> Option<Departure> {
-        match self {
-            Self::Manifest { legs, .. } => legs.departure(node, output),
-            Self::Records(_) => None,
-        }
-    }
 }
 
 /// The seam between the executor's per-transaction bookkeeping and the

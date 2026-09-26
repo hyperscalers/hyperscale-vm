@@ -88,9 +88,9 @@ impl EscrowDelta {
 
     /// What each departing edge carried, in `(node, output)` order.
     ///
-    /// This is what a certificate attests. Per edge and not per resource,
-    /// because a sum leaves two edges carrying one resource with no way
-    /// to say which value fed which consumer.
+    /// Per edge and not per resource, because a sum leaves two edges
+    /// carrying one resource with no way to say which value fed which
+    /// consumer.
     pub fn issues(&self) -> impl Iterator<Item = ((u32, u32), Crossed)> + '_ {
         self.issued_at
             .iter()
