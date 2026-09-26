@@ -2612,7 +2612,7 @@ mod tests {
     };
     use crate::cells::{
         COMMITTED_TX_SLOT, CROSSING_CLAIM_SLOT, CROSSING_DECLINE_SLOT, ESCROW_RECORD_SLOT,
-        READ_FRONTIER_SLOT, TICK_MEMBER_SLOT,
+        FEE_HOLD_SLOT, FEE_HOLD_TOTAL_SLOT, READ_FRONTIER_SLOT, TICK_MEMBER_SLOT,
     };
     use crate::hash::{Hash32, TestHasher};
     use crate::instance::InstanceMeta;
@@ -2849,6 +2849,8 @@ mod tests {
         }
         for slot in [
             u64::from(KERNEL_SLOT_BASE),
+            u64::from(FEE_HOLD_TOTAL_SLOT.0),
+            u64::from(FEE_HOLD_SLOT.0),
             u64::from(TICK_MEMBER_SLOT.0),
             u64::from(READ_FRONTIER_SLOT.0),
             0xFFF9,

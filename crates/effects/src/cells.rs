@@ -10,7 +10,7 @@
 
 use hyperscale_hbor::{Hbor, from_slice, to_vec};
 use hyperscale_vm_types::{
-    ARTIFACT_GRACE_MS, Address, COMMITTED_GRACE_MS, IntentHash, LegShape, ResourceAddr,
+    ARTIFACT_GRACE_MS, Address, COMMITTED_GRACE_MS, IntentHash, LegShape, LocalKey, ResourceAddr,
     SubstateKey, SweepBucket, TxHash,
 };
 
@@ -103,6 +103,21 @@ pub const READ_FRONTIER_SLOT: SlotId = SlotId(0xFFF8);
 /// writes it.
 pub const TICK_MEMBER_SLOT: SlotId = SlotId(0xFFF7);
 
+/// The reserved role of a fee hold under a vault's owner, in the kernel
+/// band.
+///
+/// One cell per committed transaction whose fee the vault reserves,
+/// from the block that commits it to the one that burns its price.
+/// Written and deleted by the commit fold; no kernel writes it. Under
+/// the vault's own owner, so a cut puts the vault and its holds on one
+/// side.
+pub const FEE_HOLD_SLOT: SlotId = SlotId(0xFFF6);
+
+/// The reserved role of a vault's held total under its owner, in the
+/// kernel band: the sum of the fees its standing holds reserve, in the
+/// vault's own amount encoding, and absent at zero.
+pub const FEE_HOLD_TOTAL_SLOT: SlotId = SlotId(0xFFF5);
+
 /// The most bytes a [`Marker`] cell holds.
 ///
 /// A nullifier or a committed cell: a transaction hash, an expiry and
@@ -121,6 +136,9 @@ pub const CROSSING_CELL_BYTES: u32 = 256;
 /// holding only its own answer could never derive.
 pub const CROSSING_ANSWER_CELL_BYTES: u32 = 160;
 
+/// The most bytes a [`FeeHold`] holds, on [`MARKER_CELL_BYTES`]'s terms.
+pub const FEE_HOLD_CELL_BYTES: u32 = MARKER_CELL_BYTES;
+
 // Held at compile time rather than by a test: every side is a constant,
 // so a kernel cell outside the kernel band — where a package could name
 // it — or colliding with another kernel family is a thing the build can
@@ -133,6 +151,8 @@ const _: () = assert!(CROSSING_DECLINE_SLOT.0 >= KERNEL_SLOT_BASE);
 const _: () = assert!(COMMITTED_TX_SLOT.0 >= KERNEL_SLOT_BASE);
 const _: () = assert!(READ_FRONTIER_SLOT.0 >= KERNEL_SLOT_BASE);
 const _: () = assert!(TICK_MEMBER_SLOT.0 >= KERNEL_SLOT_BASE);
+const _: () = assert!(FEE_HOLD_SLOT.0 >= KERNEL_SLOT_BASE);
+const _: () = assert!(FEE_HOLD_TOTAL_SLOT.0 >= KERNEL_SLOT_BASE);
 const _: () = assert!(NULLIFIER_SLOT.0 != ESCROW_RECORD_SLOT.0);
 const _: () = assert!(NULLIFIER_SLOT.0 != CROSSING_CLAIM_SLOT.0);
 const _: () = assert!(ESCROW_RECORD_SLOT.0 != CROSSING_CLAIM_SLOT.0);
@@ -154,6 +174,8 @@ const _: () = assert!(TICK_MEMBER_SLOT.0 != CROSSING_CLAIM_SLOT.0);
 const _: () = assert!(TICK_MEMBER_SLOT.0 != CROSSING_DECLINE_SLOT.0);
 const _: () = assert!(TICK_MEMBER_SLOT.0 != COMMITTED_TX_SLOT.0);
 const _: () = assert!(TICK_MEMBER_SLOT.0 != READ_FRONTIER_SLOT.0);
+const _: () = assert!(FEE_HOLD_SLOT.0 < TICK_MEMBER_SLOT.0);
+const _: () = assert!(FEE_HOLD_TOTAL_SLOT.0 < FEE_HOLD_SLOT.0);
 
 /// The canonical nullifier key for a signed intent under one of its
 /// accounts:
@@ -889,6 +911,84 @@ impl CrossingLeaf {
             }
         }
         None
+    }
+}
+
+/// The fee hold key for `tx` against `vault`: under the vault's owner,
+/// keyed by the vault's local half and the transaction.
+///
+/// Unbucketed, since no clock ends a hold: the burn of its price does.
+/// The material is the payer's own signed transaction, so a collision
+/// ground on it buys nothing the payer could not already do by not
+/// signing.
+#[must_use]
+pub fn fee_hold_key(hasher: &dyn Hasher, vault: SubstateKey, tx: TxHash) -> SubstateKey {
+    child_key(
+        hasher,
+        vault.owner,
+        FEE_HOLD_SLOT,
+        &[vault.local.0.to_vec(), tx.0.0.to_vec()],
+    )
+}
+
+/// The key of `vault`'s held total, under the vault's owner.
+#[must_use]
+pub fn fee_hold_total_key(hasher: &dyn Hasher, vault: SubstateKey) -> SubstateKey {
+    child_key(
+        hasher,
+        vault.owner,
+        FEE_HOLD_TOTAL_SLOT,
+        &[vault.local.0.to_vec()],
+    )
+}
+
+/// What a fee hold cell holds: the vault's local half, the transaction
+/// whose fee it reserves, and the fee reserved.
+///
+/// Self-describing on [`Marker`]'s terms: with the leaf's owner the
+/// value re-derives its key, so a reader holding the leaf alone knows
+/// which vault and which transaction it reserves for, and by how much.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
+pub struct FeeHold {
+    /// The vault's local half; its owner is the leaf's.
+    pub vault: LocalKey,
+    /// The transaction whose fee it reserves.
+    pub tx: TxHash,
+    /// The signed ceiling reserved.
+    pub fee: u128,
+}
+
+impl FeeHold {
+    /// The vault it reserves against, under `owner`.
+    #[must_use]
+    pub fn vault(&self, owner: impl Into<Address>) -> SubstateKey {
+        SubstateKey {
+            owner: owner.into(),
+            local: self.vault,
+        }
+    }
+
+    /// The cell this hold sits at under `owner`.
+    #[must_use]
+    pub fn key(&self, hasher: &dyn Hasher, owner: impl Into<Address>) -> SubstateKey {
+        fee_hold_key(hasher, self.vault(owner), self.tx)
+    }
+
+    /// The cell's committed bytes.
+    ///
+    /// # Panics
+    ///
+    /// Never: the value is scalars.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        to_vec(self).expect("a fee hold is scalars")
+    }
+
+    /// A hold read back off the leaf, or nothing for bytes that are not
+    /// one.
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        from_slice(bytes).ok()
     }
 }
 

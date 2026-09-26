@@ -2568,7 +2568,9 @@ fn a_tree_round_trips_its_encoding() {
 mod cell_widths {
     use hyperscale_hbor::Hash32;
     use hyperscale_vm_effects::{
-        CROSSING_CELL_BYTES, CrossingCell, MARKER_CELL_BYTES, Marked, Marker, Terms,
+        CROSSING_CELL_BYTES, CrossingCell, FEE_HOLD_CELL_BYTES, FEE_HOLD_SLOT, FEE_HOLD_TOTAL_SLOT,
+        FeeHold, MARKER_CELL_BYTES, Marked, Marker, Terms, TestHasher, child_key, fee_hold_key,
+        fee_hold_total_key,
     };
     use hyperscale_vm_types::{
         Address, AddressClass, IntentHash, LocalKey, ResourceAddr, SubstateKey, TxHash,
@@ -2619,5 +2621,58 @@ mod cell_widths {
             "a crossing cell encodes to {} bytes",
             cell.to_bytes().len()
         );
+    }
+
+    #[test]
+    fn a_fee_hold_encodes_under_its_width() {
+        let hold = FeeHold {
+            vault: LocalKey([0xFF; 16]),
+            tx: TxHash(hash32()),
+            fee: u128::MAX,
+        };
+        assert!(
+            hold.to_bytes().len() <= FEE_HOLD_CELL_BYTES as usize,
+            "a fee hold encodes to {} bytes",
+            hold.to_bytes().len()
+        );
+        assert_eq!(FeeHold::from_bytes(&hold.to_bytes()), Some(hold));
+    }
+
+    /// Both keys sit under the vault's owner, so a cut puts a vault, its
+    /// holds and its total on one side; a hold re-derives its key from
+    /// the leaf's owner.
+    #[test]
+    fn fee_hold_keys_sit_under_the_vault_owner() {
+        let vault = key();
+        let tx = TxHash(hash32());
+        let hold_key = fee_hold_key(&TestHasher, vault, tx);
+        let total_key = fee_hold_total_key(&TestHasher, vault);
+        assert_eq!(hold_key.owner, vault.owner);
+        assert_eq!(total_key.owner, vault.owner);
+        assert_eq!(
+            hold_key,
+            child_key(
+                &TestHasher,
+                vault.owner,
+                FEE_HOLD_SLOT,
+                &[vault.local.0.to_vec(), tx.0.0.to_vec()]
+            )
+        );
+        assert_eq!(
+            total_key,
+            child_key(
+                &TestHasher,
+                vault.owner,
+                FEE_HOLD_TOTAL_SLOT,
+                &[vault.local.0.to_vec()]
+            )
+        );
+        let hold = FeeHold {
+            vault: vault.local,
+            tx,
+            fee: 7,
+        };
+        assert_eq!(hold.key(&TestHasher, vault.owner), hold_key);
+        assert_eq!(hold.vault(vault.owner), vault);
     }
 }

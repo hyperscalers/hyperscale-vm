@@ -22,10 +22,10 @@ use hyperscale_hbor::{Capped, Name};
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, COMMITTED_TX_SLOT, CROSSING_CLAIM_SLOT, CROSSING_DECLINE_SLOT,
     ChainRecords, Clause, Declaration, DeclarationError, ESCROW_RECORD_SLOT, EvalError, Expr,
-    GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, Intent, IntentHeader, IntentTree,
-    ManifestGraph, MethodSignature, ModeExpr, PackageHash, PackageMetadata, ParamType,
-    READ_FRONTIER_SLOT, Records, SlotId, SlotRef, TargetExpr, TestHasher, Value, admit_tree,
-    check_declarations, child_key,
+    FEE_HOLD_SLOT, FEE_HOLD_TOTAL_SLOT, GraphArg, GraphNode, Hash32, Hasher, InstanceMeta, Intent,
+    IntentHeader, IntentTree, ManifestGraph, MethodSignature, ModeExpr, PackageHash,
+    PackageMetadata, ParamType, READ_FRONTIER_SLOT, Records, SlotId, SlotRef, TargetExpr,
+    TestHasher, Value, admit_tree, check_declarations, child_key,
 };
 use hyperscale_vm_kernel::{Capability, EnvInputs, KernelSession, MemoryStore, OverlayStore};
 use hyperscale_vm_types::{
@@ -349,4 +349,14 @@ fn the_retired_slot_is_refused_under_a_packages_prefix() {
 #[test]
 fn the_read_frontier_slot_is_refused_under_a_packages_prefix() {
     a_marker_slot_is_refused(READ_FRONTIER_SLOT);
+}
+
+#[test]
+fn the_fee_hold_slot_is_refused_under_a_packages_prefix() {
+    a_marker_slot_is_refused(FEE_HOLD_SLOT);
+}
+
+#[test]
+fn the_fee_hold_total_slot_is_refused_under_a_packages_prefix() {
+    a_marker_slot_is_refused(FEE_HOLD_TOTAL_SLOT);
 }

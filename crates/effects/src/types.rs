@@ -50,9 +50,9 @@ pub struct ShardId(pub u64);
 ///
 /// - the kernel's own, at the top, from [`KERNEL_SLOT_BASE`] up: the
 ///   nullifier, the package, the crossing record, claim and decline,
-///   the committed-transaction marker and the read frontier. Written by
-///   the kernel, the publish path and the commit path, and declared by
-///   no signature;
+///   the committed-transaction marker, the read frontier, tick
+///   membership, the fee hold and the held total. Written by the kernel,
+///   the publish path and the commit path, and declared by no signature;
 /// - the protocol vocabulary, counting up from one — the cells an engine
 ///   derives keys for without consulting any metadata, so their values
 ///   are protocol facts rather than one package's business;
@@ -93,8 +93,9 @@ pub const PACKAGE_SLOT_BASE: u16 = 16;
 /// `0xFFFE`, the crossing record at `0xFFFD`, the committed-transaction
 /// marker at `0xFFFC`, the crossing claim at `0xFFFB`, the crossing
 /// decline at `0xFFFA`, `0xFFF9` retired and never reused, the read
-/// frontier at `0xFFF8`, and tick membership at `0xFFF7`.
-pub const KERNEL_SLOT_BASE: u16 = 0xFFF7;
+/// frontier at `0xFFF8`, tick membership at `0xFFF7`, the fee hold at
+/// `0xFFF6` and a vault's held total at `0xFFF5`.
+pub const KERNEL_SLOT_BASE: u16 = 0xFFF5;
 
 // The three bands in order, held at compile time: all three are
 // constants, so a base that swallowed the band below it is a thing the

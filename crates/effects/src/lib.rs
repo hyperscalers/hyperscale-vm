@@ -56,9 +56,10 @@ pub use auth::{Authority, PrincipalRule, RuleBytes, auth_cell_admits};
 pub use cells::{
     Answered, COMMITTED_TX_SLOT, CROSSING_ANSWER_CELL_BYTES, CROSSING_CELL_BYTES,
     CROSSING_CLAIM_SLOT, CROSSING_DECLINE_SLOT, Crossing, CrossingAnswer, CrossingCell, CrossingId,
-    CrossingLeaf, ESCROW_RECORD_SLOT, Kind, MARKER_CELL_BYTES, Marked, Marker, NULLIFIER_SLOT,
-    READ_FRONTIER_SLOT, TICK_MEMBER_SLOT, Terms, committed_tx_key, nullifier_expiry_ms,
-    nullifier_key,
+    CrossingLeaf, ESCROW_RECORD_SLOT, FEE_HOLD_CELL_BYTES, FEE_HOLD_SLOT, FEE_HOLD_TOTAL_SLOT,
+    FeeHold, Kind, MARKER_CELL_BYTES, Marked, Marker, NULLIFIER_SLOT, READ_FRONTIER_SLOT,
+    TICK_MEMBER_SLOT, Terms, committed_tx_key, fee_hold_key, fee_hold_total_key,
+    nullifier_expiry_ms, nullifier_key,
 };
 pub use claim::Claim;
 pub use dsl::{
