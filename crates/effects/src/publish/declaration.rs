@@ -1339,7 +1339,7 @@ mod tests {
     use super::*;
     use crate::cells::{
         COMMITTED_TX_SLOT, CROSSING_CLAIM_SLOT, CROSSING_DECLINE_SLOT, ESCROW_RECORD_SLOT,
-        NULLIFIER_SLOT, READ_FRONTIER_SLOT,
+        NULLIFIER_SLOT, READ_FRONTIER_SLOT, TICK_MEMBER_SLOT,
     };
     use crate::dsl::{Clause, Expr, ModeExpr, SlotRef, TargetExpr};
     use crate::metadata::PACKAGE_SLOT;
@@ -2834,9 +2834,9 @@ mod tests {
             );
         }
         // The kernel's own band: the publish path's cell, the envelope's,
-        // the crossing cells under a node's target, the committed marker
-        // and the read frontier under a shard's own owner and the
-        // retired slot between them, none of which any signature
+        // the crossing cells under a node's target, the committed marker,
+        // the read frontier and tick membership under a shard's own owner
+        // and the retired slot between them, none of which any signature
         // declares.
         for slot in [
             PACKAGE_SLOT,
@@ -2847,6 +2847,7 @@ mod tests {
             CROSSING_DECLINE_SLOT,
             SlotId(0xFFF9),
             READ_FRONTIER_SLOT,
+            TICK_MEMBER_SLOT,
             SlotId(KERNEL_SLOT_BASE),
         ] {
             assert_eq!(

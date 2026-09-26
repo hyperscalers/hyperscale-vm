@@ -11,7 +11,7 @@
 use hyperscale_hbor::Hbor;
 
 /// An access mode with its statically evaluated parameters.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Hbor)]
 pub enum Mode {
     /// Fresh coherent read of committed state.
     Read,

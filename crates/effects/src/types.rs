@@ -92,9 +92,9 @@ pub const PACKAGE_SLOT_BASE: u16 = 16;
 /// holds, from the top: the nullifier at `0xFFFF`, the package at
 /// `0xFFFE`, the crossing record at `0xFFFD`, the committed-transaction
 /// marker at `0xFFFC`, the crossing claim at `0xFFFB`, the crossing
-/// decline at `0xFFFA`, `0xFFF9` retired and never reused, and the read
-/// frontier at `0xFFF8`.
-pub const KERNEL_SLOT_BASE: u16 = 0xFFF8;
+/// decline at `0xFFFA`, `0xFFF9` retired and never reused, the read
+/// frontier at `0xFFF8`, and tick membership at `0xFFF7`.
+pub const KERNEL_SLOT_BASE: u16 = 0xFFF7;
 
 // The three bands in order, held at compile time: all three are
 // constants, so a base that swallowed the band below it is a thing the

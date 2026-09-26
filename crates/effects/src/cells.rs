@@ -93,6 +93,16 @@ pub const COMMITTED_TX_SLOT: SlotId = SlotId(0xFFFC);
 /// presence the chain ever committed.
 pub const READ_FRONTIER_SLOT: SlotId = SlotId(0xFFF8);
 
+/// The reserved role of tick membership under a shard's own owner, in
+/// the kernel band.
+///
+/// Two ordered collections per shard, told apart by their material: one
+/// row per member this chain has committed and not yet resolved, and one
+/// row per tick holding any. Written by the commit fold off the block's
+/// tick manifest and read by the vote path and every seat; no kernel
+/// writes it.
+pub const TICK_MEMBER_SLOT: SlotId = SlotId(0xFFF7);
+
 /// The most bytes a [`Marker`] cell holds.
 ///
 /// A nullifier or a committed cell: a transaction hash, an expiry and
@@ -122,6 +132,7 @@ const _: () = assert!(CROSSING_CLAIM_SLOT.0 >= KERNEL_SLOT_BASE);
 const _: () = assert!(CROSSING_DECLINE_SLOT.0 >= KERNEL_SLOT_BASE);
 const _: () = assert!(COMMITTED_TX_SLOT.0 >= KERNEL_SLOT_BASE);
 const _: () = assert!(READ_FRONTIER_SLOT.0 >= KERNEL_SLOT_BASE);
+const _: () = assert!(TICK_MEMBER_SLOT.0 >= KERNEL_SLOT_BASE);
 const _: () = assert!(NULLIFIER_SLOT.0 != ESCROW_RECORD_SLOT.0);
 const _: () = assert!(NULLIFIER_SLOT.0 != CROSSING_CLAIM_SLOT.0);
 const _: () = assert!(ESCROW_RECORD_SLOT.0 != CROSSING_CLAIM_SLOT.0);
@@ -137,6 +148,12 @@ const _: () = assert!(READ_FRONTIER_SLOT.0 != ESCROW_RECORD_SLOT.0);
 const _: () = assert!(READ_FRONTIER_SLOT.0 != CROSSING_CLAIM_SLOT.0);
 const _: () = assert!(READ_FRONTIER_SLOT.0 != CROSSING_DECLINE_SLOT.0);
 const _: () = assert!(READ_FRONTIER_SLOT.0 != COMMITTED_TX_SLOT.0);
+const _: () = assert!(TICK_MEMBER_SLOT.0 != NULLIFIER_SLOT.0);
+const _: () = assert!(TICK_MEMBER_SLOT.0 != ESCROW_RECORD_SLOT.0);
+const _: () = assert!(TICK_MEMBER_SLOT.0 != CROSSING_CLAIM_SLOT.0);
+const _: () = assert!(TICK_MEMBER_SLOT.0 != CROSSING_DECLINE_SLOT.0);
+const _: () = assert!(TICK_MEMBER_SLOT.0 != COMMITTED_TX_SLOT.0);
+const _: () = assert!(TICK_MEMBER_SLOT.0 != READ_FRONTIER_SLOT.0);
 
 /// The canonical nullifier key for a signed intent under one of its
 /// accounts:

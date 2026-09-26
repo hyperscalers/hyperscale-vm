@@ -129,6 +129,7 @@ fn a_slot_no_cell_is_assigned_does_not_publish() {
         SlotId(0xFFFA),
         SlotId(0xFFF9),
         SlotId(0xFFF8),
+        SlotId(0xFFF7),
     ] {
         let refused = verdict(&writing(slot, vec![]))
             .expect_err("the kernel's own band is not a signature's to name");

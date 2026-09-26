@@ -153,7 +153,7 @@ fn a_slot_that_keeps_no_value_is_refused_where_the_argument_is_read(chain: &mut 
     let (issuer, deed) = deeds(chain);
 
     for slot in [
-        0u64, 2, 3, 4, 6, 7, 0xFFF8, 0xFFF9, 0xFFFA, 0xFFFB, 0xFFFC, 0xFFFD, 0xFFFE,
+        0u64, 2, 3, 4, 6, 7, 0xFFF7, 0xFFF8, 0xFFF9, 0xFFFA, 0xFFFB, 0xFFFC, 0xFFFD, 0xFFFE,
     ] {
         let refused = chain.try_transact(WARDEN, |b| {
             let taken = issuer.recall(b, HOLDER.address(), slot, &[1])?;
