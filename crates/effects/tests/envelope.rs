@@ -915,6 +915,7 @@ fn a_crossing_cell_carries_what_a_reclaim_needs() {
             producer: BOB.into(),
             answered: Answered::Taken,
             validity_end_ms: TEST_HEADER.validity_end_ms,
+            seen: true,
         }
     );
     assert_eq!(
@@ -965,6 +966,7 @@ fn a_claim_names_its_record_and_no_sweep_reaches_it() {
             producer: BOB.into(),
             answered: Answered::Taken,
             validity_end_ms: TEST_HEADER.validity_end_ms,
+            seen: true,
         }
     );
     assert_eq!(
@@ -987,12 +989,28 @@ fn a_claim_names_its_record_and_no_sweep_reaches_it() {
         producer: BOB.into(),
         answered: Answered::Never,
         validity_end_ms: u64::MAX,
+        seen: true,
     };
     assert!(
         widest.to_bytes().len() <= CROSSING_ANSWER_CELL_BYTES as usize,
         "and so does the widest answer: {} bytes",
         widest.to_bytes().len(),
     );
+
+    // Whether the consumer read the record is not in the key: a seen and
+    // an unseen decline sit at one cell, and both read as its answer.
+    let id = CrossingId::of_answer(ALICE.into(), &claim);
+    let key = id.answer_key(&TestHasher, Answered::Never);
+    let seen = id.answer(tx, Answered::Never, TEST_HEADER.validity_end_ms);
+    let unseen = id.unseen_never(tx, TEST_HEADER.validity_end_ms);
+    assert!(seen.seen && !unseen.seen);
+    assert_eq!(unseen.seen_now(), seen);
+    for answer in [seen, unseen] {
+        assert!(matches!(
+            CrossingLeaf::read(&TestHasher, key, &answer.to_bytes()),
+            Some(CrossingLeaf::Answer { answer: read, .. }) if read == answer
+        ));
+    }
 
     // Its key carries no expiry bucket, which is what keeps every sweep
     // off it — the record's own property, for the record's own reason.

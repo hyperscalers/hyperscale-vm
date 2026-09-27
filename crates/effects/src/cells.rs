@@ -655,9 +655,23 @@ pub struct CrossingAnswer {
     /// this answers for states: what dates a consumer's question about
     /// that record as the producer's is dated.
     pub validity_end_ms: u64,
+    /// Whether the consumer's chain carried the record present before
+    /// the answer stood: always for a take, and for a decline its member
+    /// ran on. A decline an abandonment wrote for a member that never
+    /// read the record is unseen until a block carries the record
+    /// present, and while unseen no absence of the record deletes it,
+    /// since that absence may predate the record's write.
+    pub seen: bool,
 }
 
 impl CrossingAnswer {
+    /// This answer, with its consumer's chain having carried the record
+    /// present.
+    #[must_use]
+    pub const fn seen_now(self) -> Self {
+        Self { seen: true, ..self }
+    }
+
     /// The cell's committed bytes.
     ///
     /// # Panics
@@ -819,7 +833,8 @@ impl CrossingId {
         }
     }
 
-    /// The answer's value, for either verdict: which transaction
+    /// The answer's value, for either verdict, written by a consumer
+    /// whose chain carried the record present: which transaction
     /// answered the crossing, on this edge, which way, and the producer
     /// whose record it answers for.
     #[must_use]
@@ -837,6 +852,17 @@ impl CrossingId {
             producer: self.producer,
             answered,
             validity_end_ms,
+            seen: true,
+        }
+    }
+
+    /// A decline written by an abandonment, whose member never read the
+    /// record: unseen until a block carries the record present.
+    #[must_use]
+    pub const fn unseen_never(self, tx: TxHash, validity_end_ms: u64) -> CrossingAnswer {
+        CrossingAnswer {
+            seen: false,
+            ..self.answer(tx, Answered::Never, validity_end_ms)
         }
     }
 }
