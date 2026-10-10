@@ -20,7 +20,7 @@ use hyperscale_vm_types::{
 
 use crate::ledger::{AmountLedger, amount_bytes};
 use crate::modes::DeltaOp;
-use crate::store::{Access, Baseline, MemoryStore, StoreError, Substates, WorkingStore};
+use crate::store::{Access, Baseline, FeeHolds, MemoryStore, StoreError, Substates, WorkingStore};
 
 /// A collection's layered entry changes: `None` values are tombstones.
 type EntryChanges = BTreeMap<u128, Option<Vec<u8>>>;
@@ -49,6 +49,25 @@ struct Layer {
     entries: BTreeMap<(Address, CollectionId), EntryChanges>,
     pending_deltas: BTreeMap<SubstateKey, Vec<DeltaOp>>,
     held: BTreeMap<SubstateKey, BTreeMap<TxHash, Option<u128>>>,
+    fee_held: BTreeMap<SubstateKey, BTreeMap<TxHash, Option<u128>>>,
+}
+
+/// Apply one layer's per-transaction hold changes onto `holds`: an
+/// amount stands, a tombstone ends whatever stood beneath it.
+fn apply_hold_changes(
+    holds: &mut BTreeMap<TxHash, u128>,
+    changes: &BTreeMap<TxHash, Option<u128>>,
+) {
+    for (tx, change) in changes {
+        match change {
+            Some(amount) => {
+                holds.insert(*tx, *amount);
+            }
+            None => {
+                holds.remove(tx);
+            }
+        }
+    }
 }
 
 /// Layered state over a shared committed base.
@@ -193,16 +212,20 @@ impl OverlayStore {
         let mut holds = self.base.holds(key);
         for layer in [self.committed.as_ref(), &self.active] {
             if let Some(changes) = layer.held.get(&key) {
-                for (tx, change) in changes {
-                    match change {
-                        Some(amount) => {
-                            holds.insert(*tx, *amount);
-                        }
-                        None => {
-                            holds.remove(tx);
-                        }
-                    }
-                }
+                apply_hold_changes(&mut holds, changes);
+            }
+        }
+        holds
+    }
+
+    /// The effective fee holds on a cell: the base's with both layers'
+    /// member changes applied. No layer moves `rest`, which names holds
+    /// no member of the batch can end.
+    fn effective_fee_holds(&self, key: SubstateKey) -> FeeHolds {
+        let mut holds = self.base.fee_holds(key);
+        for layer in [self.committed.as_ref(), &self.active] {
+            if let Some(changes) = layer.fee_held.get(&key) {
+                apply_hold_changes(&mut holds.members, changes);
             }
         }
         holds
@@ -347,6 +370,9 @@ impl OverlayStore {
         for (key, holds) in active.held {
             committed.held.entry(key).or_default().extend(holds);
         }
+        for (key, holds) in active.fee_held {
+            committed.fee_held.entry(key).or_default().extend(holds);
+        }
     }
 
     /// Drop the active layer: the transaction never happened. The
@@ -410,16 +436,12 @@ impl OverlayStore {
             }
             for (key, holds) in &layer.held {
                 for (tx, change) in holds {
-                    match change {
-                        Some(amount) => {
-                            store.held.entry(*key).or_default().insert(*tx, *amount);
-                        }
-                        None => {
-                            if let Some(existing) = store.held.get_mut(key) {
-                                existing.remove(tx);
-                            }
-                        }
-                    }
+                    store.set_hold(*key, *tx, *change);
+                }
+            }
+            for (key, holds) in &layer.fee_held {
+                for (tx, change) in holds {
+                    store.set_fee_hold(*key, *tx, *change);
                 }
             }
         }
@@ -537,6 +559,16 @@ impl AmountLedger for OverlayStore {
         self.active.held.entry(key).or_default().insert(tx, amount);
     }
 
+    fn set_fee_hold(&mut self, key: SubstateKey, tx: TxHash, amount: Option<u128>) {
+        // Tombstoned for the reason a dropped hold is, and so a hold a
+        // member's burn ended stays ended for every member after it.
+        self.active
+            .fee_held
+            .entry(key)
+            .or_default()
+            .insert(tx, amount);
+    }
+
     fn note(&mut self, target: EffectTarget, kind: ModeKind) {
         self.record(target, kind);
     }
@@ -575,6 +607,10 @@ impl Baseline for OverlayStore {
         self.effective_holds(key)
     }
 
+    fn fee_holds(&self, key: SubstateKey) -> FeeHolds {
+        self.effective_fee_holds(key)
+    }
+
     fn held_reservation(&self, key: SubstateKey, tx: TxHash) -> Option<u128> {
         Self::held_reservation(self, key, tx)
     }
@@ -582,6 +618,7 @@ impl Baseline for OverlayStore {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::sync::Arc;
 
     use hyperscale_vm_effects::{Hash32, SlotId, TestHasher, child_key};
@@ -592,7 +629,7 @@ mod tests {
     use super::OverlayStore;
     use crate::ledger::AmountLedger;
     use crate::modes::{DeltaOp, ModeError, decode_amount};
-    use crate::store::{MemoryStore, StoreError, Substates, WorkingStore};
+    use crate::store::{Baseline, FeeHolds, MemoryStore, StoreError, Substates, WorkingStore};
 
     fn key(byte: u8) -> SubstateKey {
         child_key(
@@ -796,6 +833,52 @@ mod tests {
         );
         assert_eq!(overlay.held_reservation(vault, tx(1)), Some(100));
         assert_eq!(overlay.release(vault, tx(1)), Ok(100));
+    }
+
+    #[test]
+    fn an_ended_fee_hold_stays_ended_through_the_layers() {
+        let mut base = MemoryStore::new();
+        let vault = key(8);
+        let standing = FeeHolds {
+            members: [(tx(1), 30), (tx(2), 40)].into(),
+            rest: 5,
+        };
+        base.hold_fees(vault, standing.clone());
+        let mut overlay = OverlayStore::new(Arc::new(base.clone()));
+        assert_eq!(overlay.fee_holds(vault), standing);
+
+        // Ended in the active layer, and back with the layer.
+        overlay.set_fee_hold(vault, tx(1), None);
+        assert_eq!(
+            overlay.fee_holds(vault),
+            FeeHolds {
+                members: [(tx(2), 40)].into(),
+                rest: 5,
+            }
+        );
+        overlay.discard_active();
+        assert_eq!(overlay.fee_holds(vault), standing);
+
+        // Merged, the end outlives a later member's rollback: the
+        // tombstone shadows the hold the base still carries.
+        overlay.set_fee_hold(vault, tx(1), None);
+        overlay.merge_active();
+        overlay.set_fee_hold(vault, tx(2), None);
+        assert_eq!(
+            overlay.fee_holds(vault),
+            FeeHolds {
+                members: BTreeMap::new(),
+                rest: 5,
+            }
+        );
+        overlay.discard_active();
+        let left = FeeHolds {
+            members: [(tx(2), 40)].into(),
+            rest: 5,
+        };
+        assert_eq!(overlay.fee_holds(vault), left);
+        assert_eq!(overlay.base().fee_holds(vault), standing);
+        assert_eq!(overlay.collapse_onto(base).fee_holds(vault), left);
     }
 
     #[test]

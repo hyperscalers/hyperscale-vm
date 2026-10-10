@@ -5,9 +5,9 @@
 //! content — point cells and ordered-collection entries, what a state
 //! backend serves. [`Baseline`] is committed state as an overlay reads
 //! it: substates plus the execution context standing over them —
-//! permanent locks and outstanding reservations. [`WorkingStore`] is the
-//! mutable surface capability handles drive: mode-specific operations
-//! over cells and entries.
+//! permanent locks, outstanding reservations and standing fee holds.
+//! [`WorkingStore`] is the mutable surface capability handles drive:
+//! mode-specific operations over cells and entries.
 //!
 //! The [`MemoryStore`] implements all three and records every access as
 //! an [`Access`] — the substrate the trace-subset oracle asserts against.
@@ -266,9 +266,37 @@ impl<T: Substates + ?Sized> Substates for &T {
     }
 }
 
+/// What a cell has promised to fees: the ceilings standing on it.
+///
+/// A kind of its own beside the reservations [`Baseline::holds`] answers.
+/// A reservation is a debit its transaction was granted, so it settles
+/// or releases and the cell must cover it. A fee hold is a floor under
+/// everything else the cell is asked for: nothing settles it, and only
+/// its member's burn ends it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FeeHolds {
+    /// The holds of the batch's own members, by transaction: each stands
+    /// until that member's burn is judged.
+    pub members: BTreeMap<TxHash, u128>,
+    /// Every other hold standing on the cell, summed. No member of the
+    /// batch ends any of it.
+    pub rest: u128,
+}
+
+impl FeeHolds {
+    /// Everything held, saturating: a floor past `u128` leaves nothing,
+    /// which is what a floor past the cell leaves.
+    #[must_use]
+    pub fn total(&self) -> u128 {
+        self.members
+            .values()
+            .fold(self.rest, |total, held| total.saturating_add(*held))
+    }
+}
+
 /// Committed state as an overlay's baseline reads it: durable content
 /// plus the execution context standing over it — the reservations
-/// outstanding on each cell.
+/// outstanding on each cell, and the fee holds standing on it.
 ///
 /// Holds are execution context, not backend state, which is why the
 /// composite is a separate trait: [`MemoryStore`] implements it whole
@@ -278,6 +306,9 @@ impl<T: Substates + ?Sized> Substates for &T {
 pub trait Baseline: Substates + std::fmt::Debug {
     /// Every outstanding reservation on `key`.
     fn holds(&self, key: SubstateKey) -> BTreeMap<TxHash, u128>;
+
+    /// Every fee hold standing on `key`.
+    fn fee_holds(&self, key: SubstateKey) -> FeeHolds;
 
     /// The reservation `tx` holds on `key`, if any.
     fn held_reservation(&self, key: SubstateKey, tx: TxHash) -> Option<u128> {
@@ -316,6 +347,10 @@ impl Baseline for MemoryStore {
         self.held.get(&key).cloned().unwrap_or_default()
     }
 
+    fn fee_holds(&self, key: SubstateKey) -> FeeHolds {
+        self.fee_held.get(&key).cloned().unwrap_or_default()
+    }
+
     fn held_reservation(&self, key: SubstateKey, tx: TxHash) -> Option<u128> {
         Self::held_reservation(self, key, tx)
     }
@@ -333,6 +368,7 @@ pub struct MemoryStore {
     pub(crate) entries: BTreeMap<(Address, CollectionId), BTreeMap<u128, Vec<u8>>>,
     pub(crate) pending_deltas: BTreeMap<SubstateKey, Vec<DeltaOp>>,
     pub(crate) held: BTreeMap<SubstateKey, BTreeMap<TxHash, u128>>,
+    pub(crate) fee_held: BTreeMap<SubstateKey, FeeHolds>,
 }
 
 impl MemoryStore {
@@ -344,6 +380,7 @@ impl MemoryStore {
             entries: BTreeMap::new(),
             pending_deltas: BTreeMap::new(),
             held: BTreeMap::new(),
+            fee_held: BTreeMap::new(),
         }
     }
 
@@ -412,6 +449,23 @@ impl AmountLedger for MemoryStore {
         }
     }
 
+    fn set_fee_hold(&mut self, key: SubstateKey, tx: TxHash, amount: Option<u128>) {
+        match amount {
+            Some(amount) => {
+                self.fee_held
+                    .entry(key)
+                    .or_default()
+                    .members
+                    .insert(tx, amount);
+            }
+            None => {
+                if let Some(holds) = self.fee_held.get_mut(&key) {
+                    holds.members.remove(&tx);
+                }
+            }
+        }
+    }
+
     fn note(&mut self, _target: EffectTarget, _kind: ModeKind) {}
 
     fn queued(&self) -> BTreeMap<SubstateKey, Vec<DeltaOp>> {
@@ -445,6 +499,12 @@ impl MemoryStore {
             .or_default()
             .insert(order, value);
     }
+
+    /// Seed the fee holds standing on a cell, in place of any already
+    /// there.
+    pub fn hold_fees(&mut self, key: SubstateKey, holds: FeeHolds) {
+        self.fee_held.insert(key, holds);
+    }
 }
 
 #[cfg(test)]
@@ -457,7 +517,7 @@ mod tests {
         encode_amount,
     };
 
-    use super::{Access, Baseline, MemoryStore, StoreError, Substates, WorkingStore};
+    use super::{Access, Baseline, FeeHolds, MemoryStore, StoreError, Substates, WorkingStore};
     use crate::ledger::AmountLedger;
     use crate::modes::{DeltaOp, Feasibility, ModeError, decode_amount};
     use crate::overlay::OverlayStore;
@@ -586,6 +646,83 @@ mod tests {
         assert_eq!(decode_amount(&store.cell(vault).unwrap()), Ok(10));
         // And the hold is still releasable, which is the point.
         assert_eq!(store.release(vault, tx(1)), Ok(100));
+    }
+
+    #[test]
+    fn leg_holds_past_the_cell_still_stop_the_batch() {
+        // Reservations the cell cannot cover are a ledger that no longer
+        // adds up, whatever stands on the cell for fees: the judge
+        // errors rather than answering.
+        let mut store = MemoryStore::new();
+        let vault = key(7);
+        store.write(vault, encode_amount(100).to_vec());
+        store.judge_and_hold(&[(tx(1), vault, 100)]).unwrap();
+        store.write(vault, encode_amount(10).to_vec());
+
+        for fees in [
+            FeeHolds::default(),
+            FeeHolds {
+                members: [(tx(2), 4)].into(),
+                rest: 3,
+            },
+            FeeHolds {
+                members: [(tx(2), u128::MAX)].into(),
+                rest: u128::MAX,
+            },
+        ] {
+            store.hold_fees(vault, fees);
+            assert_eq!(
+                store.judge_and_hold(&[(tx(2), vault, 1)]),
+                Err(StoreError::HeldExceedsCommitted(vault))
+            );
+            assert_eq!(
+                store.spendable(vault, 0),
+                Err(StoreError::HeldExceedsCommitted(vault))
+            );
+        }
+    }
+
+    #[test]
+    fn fee_holds_past_the_cell_leave_nothing() {
+        // A fee hold is a floor, not a debit already granted: holds the
+        // cell cannot cover leave nothing to spend and nothing wrong.
+        let mut store = MemoryStore::new();
+        let vault = key(8);
+        store.write(vault, encode_amount(50).to_vec());
+        store.judge_and_hold(&[(tx(1), vault, 20)]).unwrap();
+        store.hold_fees(
+            vault,
+            FeeHolds {
+                members: [(tx(2), 25)].into(),
+                rest: 6,
+            },
+        );
+
+        assert_eq!(store.spendable(vault, 0), Ok(0));
+        // A credit is spendable only past what the holds still lack.
+        assert_eq!(store.spendable(vault, 1), Ok(0));
+        assert_eq!(store.spendable(vault, 5), Ok(4));
+        let verdicts = store.judge_and_hold(&[(tx(3), vault, 1)]).unwrap();
+        assert_eq!(verdicts[&(tx(3), vault)], Feasibility::Infeasible);
+        assert_eq!(
+            store.judge_movement(vault, 0, 1),
+            Err(StoreError::Mode(ModeError::CellUnderflow))
+        );
+        assert_eq!(store.judge_movement(vault, 0, 0), Ok(50));
+
+        // Past `u128` is past the cell.
+        store.hold_fees(
+            vault,
+            FeeHolds {
+                members: [(tx(2), u128::MAX)].into(),
+                rest: u128::MAX,
+            },
+        );
+        assert_eq!(store.spendable(vault, 0), Ok(0));
+
+        // The reservation settles what it held, fee holds or no.
+        assert_eq!(store.settle(vault, tx(1)), Ok(20));
+        assert_eq!(decode_amount(&store.cell(vault).unwrap()), Ok(30));
     }
 
     #[test]

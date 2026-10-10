@@ -582,20 +582,29 @@ impl KernelSession {
         Ok(Phase::Produced(movements))
     }
 
-    /// Fold the fee into the movements and the supply record, for a
-    /// session the executing shard stated one to and whose vault it
-    /// holds. A fee of nothing records nothing.
+    /// Judge the fee, for a session the executing shard stated one to
+    /// and whose vault it applies: end the member's fee hold, then burn
+    /// the price against everything else the vault has promised, and
+    /// fold it into the movements and the supply record.
+    ///
+    /// The hold stood under the body at what it was held for, and ending
+    /// it first is what lets the burn come out of it. Both land in the
+    /// active layer, so a refusal here or after it discards the burn and
+    /// restores the hold together, and a completion threads both to the
+    /// members that follow. A fee of nothing ends its hold and records
+    /// nothing.
     fn burn_fee(
         &mut self,
         mut movements: BTreeMap<SubstateKey, Movement>,
     ) -> Result<Phase<BTreeMap<SubstateKey, Movement>>, FinishError> {
-        let Some(fee) = self.fee.filter(|fee| fee.amount > 0) else {
+        let Some(fee) = self.fee.filter(|fee| fee.ends_hold(&self.applies)) else {
             return Ok(Phase::Produced(movements));
         };
-        if !self.applies.covers(fee.vault.owner) {
+        self.store.set_fee_hold(fee.vault, self.tx, None);
+        if fee.amount == 0 {
             return Ok(Phase::Produced(movements));
         }
-        if let Err(defect) = self.store.judge_movement(fee.vault, 0, fee.amount) {
+        if let Err(defect) = self.store.apply_movement(fee.vault, 0, fee.amount) {
             return match defect.fault() {
                 Fault::Floor => Ok(Phase::Aborted(Outcome::Infeasible {
                     key: fee.vault,
@@ -697,8 +706,10 @@ impl KernelSession {
         // the shard after the fold, so the fold weighs it — a debit with
         // no burn against it would be value leaving the world for
         // nowhere. Judged against the vault as it stands once every
-        // declared movement has folded, so a payer that cannot cover the
-        // price loses the transaction rather than a balance.
+        // declared movement has folded and every reservation has
+        // settled, with the member's own fee hold ended, so a payer that
+        // cannot cover the price loses the transaction rather than a
+        // balance.
         let movements = match self.burn_fee(movements)? {
             Phase::Produced(movements) => movements,
             Phase::Aborted(refusal) => return Ok(abort_with(self.store, refusal, fuel_by_node)),

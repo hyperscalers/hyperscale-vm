@@ -12,8 +12,8 @@ use hyperscale_vm_effects::{
     child_key,
 };
 use hyperscale_vm_kernel::{
-    Baseline, BatchTx, EnvInputs, ExecutionMode, GuestBackend, GuestCall, InvokeResult, Invoked,
-    KernelSession, ManifestWalk, MemoryStore, OwnerSet, Substates, execute_batch,
+    Baseline, BatchTx, EnvInputs, ExecutionMode, FeeHolds, GuestBackend, GuestCall, InvokeResult,
+    Invoked, KernelSession, ManifestWalk, MemoryStore, OwnerSet, Substates, execute_batch,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, Outcome, Presence,
@@ -445,6 +445,10 @@ impl Substates for Counting {
 impl Baseline for Counting {
     fn holds(&self, key: SubstateKey) -> BTreeMap<TxHash, u128> {
         self.inner.holds(key)
+    }
+
+    fn fee_holds(&self, key: SubstateKey) -> FeeHolds {
+        self.inner.fee_holds(key)
     }
 }
 

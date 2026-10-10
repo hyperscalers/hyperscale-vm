@@ -406,6 +406,458 @@ mod through_the_session {
     }
 }
 
+/// What a vault has promised to fees, through the session that judges
+/// under it and the replay that applies what the session produced.
+mod under_fee_holds {
+    use std::sync::{Arc, Mutex};
+
+    use hyperscale_vm_effects::{Declaration, DeclaredAccess, Hasher};
+    use hyperscale_vm_kernel::{
+        Baseline, BatchOutcome, BatchTx, EnvInputs, ExecutionMode, FeeBurn, FeeHolds,
+        KernelSession, OverlayStore, OwnerSet, Receipt, RunResult, Substates, decode_amount,
+        execute_batch,
+    };
+    use hyperscale_vm_types::{
+        AbortReason, Effect, EffectSet, EffectTarget, Mode, Moves, Outcome, ResourceAddr,
+        SubstateKey,
+    };
+    use proptest::prelude::{prop_assert_eq, proptest};
+
+    use super::{Hash32, MemoryStore, TestHasher, TxHash, encode_amount, vault};
+
+    const UNIT: ResourceAddr = ResourceAddr::new([0xA1; 31]);
+
+    fn hash(data: &[u8]) -> [u8; 32] {
+        TestHasher.hash(b"crypto", &[data]).0
+    }
+
+    const fn tx(byte: u8) -> TxHash {
+        TxHash(Hash32([byte; 32]))
+    }
+
+    /// The payer's vault, which every fee here burns from.
+    fn payer() -> SubstateKey {
+        vault(2, UNIT.address())
+    }
+
+    /// Where a body files what it took.
+    fn sink() -> SubstateKey {
+        vault(3, UNIT.address())
+    }
+
+    /// A store whose payer holds `balance`.
+    fn funded(balance: u128) -> MemoryStore {
+        let mut store = MemoryStore::new();
+        store.write(payer(), encode_amount(balance).to_vec());
+        store
+    }
+
+    /// `store` with fee holds standing on the payer's vault: one per
+    /// member named, and `rest` no member ends.
+    fn holding(mut store: MemoryStore, members: &[(TxHash, u128)], rest: u128) -> MemoryStore {
+        store.hold_fees(payer(), standing(members, rest));
+        store
+    }
+
+    fn standing(members: &[(TxHash, u128)], rest: u128) -> FeeHolds {
+        FeeHolds {
+            members: members.iter().copied().collect(),
+            rest,
+        }
+    }
+
+    fn fee(amount: u128) -> FeeBurn {
+        FeeBurn {
+            vault: payer(),
+            resource: UNIT,
+            amount,
+        }
+    }
+
+    /// A member that may move the payer's vault into the sink, burning
+    /// `burn` from the vault.
+    fn member(tx: TxHash, burn: FeeBurn) -> BatchTx {
+        let declaration = declaring(&[
+            (payer(), Mode::Delta { moves: Moves::Both }),
+            (sink(), Mode::Delta { moves: Moves::Both }),
+        ]);
+        BatchTx::new(tx, declaration, EnvInputs::unsealed(0)).with_fee(Some(burn))
+    }
+
+    const fn completed(session: KernelSession) -> RunResult {
+        RunResult::Completed {
+            session,
+            answers: vec![],
+            spent: vec![],
+        }
+    }
+
+    /// A [`member`]'s body: what `amount` names for it out of the vault
+    /// and into the sink, or nothing at all where that is zero.
+    fn spend(
+        amount: impl Fn(TxHash) -> u128 + Sync,
+    ) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
+        move |entry, mut session| {
+            let amount = amount(entry.tx);
+            if amount > 0 {
+                let taken = session.cell_take(0, 0, amount).expect("the debit queues");
+                session.cell_put(1, 0, taken).expect("into the sink");
+            }
+            completed(session)
+        }
+    }
+
+    /// A declaration of value cells in clause order, folded to its set.
+    fn declaring(clauses: &[(SubstateKey, Mode)]) -> Declaration {
+        let ordered: Vec<DeclaredAccess> = clauses
+            .iter()
+            .map(|(key, mode)| DeclaredAccess {
+                reach: None,
+                effect: Effect {
+                    target: EffectTarget::Point(*key),
+                    mode: *mode,
+                },
+                holds: Some(UNIT),
+                clause: None,
+            })
+            .collect();
+        let mut set = EffectSet::new();
+        for declared in &ordered {
+            set.insert_at_cap(declared.effect)
+                .expect("the clauses fold");
+        }
+        Declaration {
+            set,
+            ordered,
+            ..Declaration::default()
+        }
+    }
+
+    /// What the store holds at `key`, an absent cell being zero.
+    fn amount_at(store: &impl Substates, key: SubstateKey) -> u128 {
+        store
+            .cell(key)
+            .map_or(0, |cell| decode_amount(&cell).expect("an amount cell"))
+    }
+
+    fn run(
+        base: MemoryStore,
+        batch: &[BatchTx],
+        body: impl Fn(&BatchTx, KernelSession) -> RunResult + Sync,
+    ) -> BatchOutcome {
+        execute_batch(Arc::new(base), batch, &body, hash, ExecutionMode::Serial)
+            .expect("no member fails the batch")
+    }
+
+    /// One member through a session of its own over `store`: its receipt
+    /// and the store the session threads on.
+    fn in_session(
+        store: MemoryStore,
+        entry: &BatchTx,
+        body: &impl Fn(&BatchTx, KernelSession) -> RunResult,
+    ) -> (Receipt, OverlayStore) {
+        let session = KernelSession::materialize(
+            OverlayStore::new(Arc::new(store)),
+            &entry.declaration,
+            entry.tx,
+            entry.env.clone(),
+            hash,
+        )
+        .expect("the store covers what the member reserves")
+        .with_fee(entry.fee);
+        let RunResult::Completed {
+            session,
+            answers,
+            spent,
+        } = body(entry, session)
+        else {
+            unreachable!("a body that declines has no session to finish");
+        };
+        session.finish(answers, spent).expect("the oracle stands")
+    }
+
+    /// One member alone over `base`, through a session and through a
+    /// batch, which agree: its outcome, what the payer's vault holds
+    /// after it, and the fee holds left standing there.
+    fn alone(
+        base: MemoryStore,
+        entry: BatchTx,
+        body: impl Fn(&BatchTx, KernelSession) -> RunResult + Sync,
+    ) -> (Outcome, u128, FeeHolds) {
+        let tx = entry.tx;
+        let (receipt, threaded) = in_session(base.clone(), &entry, &body);
+        let outcome = run(base, &[entry], body);
+        assert_eq!(
+            outcome.receipts[&tx], receipt,
+            "the replay applies what the session judged"
+        );
+        let left = amount_at(&threaded, payer());
+        let holds = threaded.fee_holds(payer());
+        assert_eq!(amount_at(&outcome.store, payer()), left);
+        assert_eq!(outcome.store.fee_holds(payer()), holds);
+        (receipt.outcome, left, holds)
+    }
+
+    /// The burn comes out of the hold it was held for: a vault holding
+    /// exactly its member's hold covers the burn only because judging
+    /// the burn ends that hold first.
+    #[test]
+    fn a_fee_burn_ends_its_members_hold() {
+        let base = holding(funded(21), &[(tx(1), 21)], 0);
+        let (outcome, left, holds) = alone(base, member(tx(1), fee(21)), spend(|_| 0));
+        assert!(matches!(outcome, Outcome::Completed { .. }), "{outcome:?}");
+        assert_eq!(left, 0);
+        assert_eq!(holds, FeeHolds::default());
+    }
+
+    /// A fee of nothing is still the judgement its hold was waiting on.
+    #[test]
+    fn a_burn_of_nothing_ends_its_members_hold() {
+        let base = holding(funded(10), &[(tx(1), 10)], 0);
+        let entry = member(tx(1), fee(0));
+        let (receipt, _) = in_session(base.clone(), &entry, &spend(|_| 0));
+        assert!(
+            !receipt.delta.movements.contains_key(&payer()),
+            "nothing moved, so the receipt carries no movement"
+        );
+        assert!(receipt.supply.is_empty());
+
+        let (outcome, left, holds) = alone(base, entry, spend(|_| 0));
+        assert!(matches!(outcome, Outcome::Completed { .. }), "{outcome:?}");
+        assert_eq!(left, 10);
+        assert_eq!(holds, FeeHolds::default());
+    }
+
+    /// The shard that applies the vault judges the burn, so it is the
+    /// one that ends the hold: anywhere else the fee is neither burned
+    /// nor answered.
+    #[test]
+    fn a_fee_on_a_vault_held_elsewhere_ends_nothing() {
+        let elsewhere = payer().owner;
+        let base = holding(funded(10), &[(tx(1), 10)], 0);
+        let entry =
+            member(tx(1), fee(5)).with_applies(OwnerSet::of(move |owner| owner != elsewhere));
+        let outcome = run(base, &[entry], spend(|_| 0));
+
+        let receipt = &outcome.receipts[&tx(1)];
+        assert!(matches!(receipt.outcome, Outcome::Completed { .. }));
+        assert!(!receipt.delta.movements.contains_key(&payer()));
+        assert!(receipt.supply.is_empty());
+        assert_eq!(amount_at(&outcome.store, payer()), 10);
+        assert_eq!(
+            outcome.store.fee_holds(payer()),
+            standing(&[(tx(1), 10)], 0)
+        );
+    }
+
+    /// Ending its own hold frees the burn nothing else: what stands for
+    /// another member and what stands for nobody in the batch both stay
+    /// under it, and both are standing afterwards.
+    #[test]
+    fn a_fee_burn_leaves_every_other_hold() {
+        for (balance, other, rest) in [(100, 40, 30), (99, 39, 30), (99, 40, 29)] {
+            let base = holding(funded(balance), &[(tx(1), 30), (tx(2), other)], rest);
+            let (outcome, left, holds) = alone(base, member(tx(1), fee(30)), spend(|_| 0));
+            assert!(matches!(outcome, Outcome::Completed { .. }), "{outcome:?}");
+            assert_eq!(left, balance - 30);
+            assert_eq!(holds, standing(&[(tx(2), other)], rest));
+        }
+
+        // One short of the burn above the other two, and the member
+        // loses: its own hold is back with everything else it did.
+        let base = holding(funded(99), &[(tx(1), 30), (tx(2), 40)], 30);
+        let (outcome, left, holds) = alone(base, member(tx(1), fee(30)), spend(|_| 0));
+        assert_eq!(
+            outcome,
+            Outcome::Infeasible {
+                key: payer(),
+                amount: 30
+            }
+        );
+        assert_eq!(left, 99);
+        assert_eq!(holds, standing(&[(tx(1), 30), (tx(2), 40)], 30));
+    }
+
+    /// A member's hold stands under its own body at what it was held
+    /// for, whatever the burn turns out to take of it.
+    #[test]
+    fn a_members_body_leaves_its_own_hold() {
+        let base = holding(funded(100), &[(tx(1), 30)], 0);
+
+        let (outcome, left, holds) = alone(base.clone(), member(tx(1), fee(10)), spend(|_| 71));
+        assert_eq!(
+            outcome,
+            Outcome::Infeasible {
+                key: payer(),
+                amount: 71
+            },
+            "a debit into the hold is a debit past the floor"
+        );
+        assert_eq!(left, 100);
+        assert_eq!(holds, standing(&[(tx(1), 30)], 0));
+
+        let (outcome, left, holds) = alone(base, member(tx(1), fee(10)), spend(|_| 70));
+        assert!(matches!(outcome, Outcome::Completed { .. }), "{outcome:?}");
+        assert_eq!(
+            left, 20,
+            "the body down to the hold, then the burn out of it"
+        );
+        assert_eq!(holds, FeeHolds::default());
+    }
+
+    /// A member that does not complete was not charged here, so the hold
+    /// its charge will come out of stands; the reservation it declared
+    /// was its own and goes.
+    #[test]
+    fn an_aborted_member_keeps_its_fee_hold() {
+        let declaration = declaring(&[
+            (payer(), Mode::Reserve { amount: 20 }),
+            (sink(), Mode::Delta { moves: Moves::Both }),
+        ]);
+        let entry = BatchTx::new(tx(1), declaration, EnvInputs::unsealed(0)).with_fee(Some(fee(5)));
+        let declining = |_: &BatchTx, session: KernelSession| RunResult::Aborted {
+            session,
+            outcome: Outcome::UserError {
+                reason: AbortReason::Unreachable,
+            },
+            spent: vec![],
+        };
+        let outcome = run(holding(funded(100), &[(tx(1), 30)], 0), &[entry], declining);
+
+        assert!(matches!(
+            outcome.receipts[&tx(1)].outcome,
+            Outcome::UserError { .. }
+        ));
+        assert_eq!(amount_at(&outcome.store, payer()), 100);
+        assert_eq!(
+            outcome.store.fee_holds(payer()),
+            standing(&[(tx(1), 30)], 0)
+        );
+        assert_eq!(outcome.store.held_reservation(payer(), tx(1)), None);
+    }
+
+    /// Two members of one payer whose holds are the whole vault: each
+    /// burns out of its own, in its own conflict group, under the
+    /// other's.
+    #[test]
+    fn two_members_of_one_payer_both_burn() {
+        let base = holding(funded(70), &[(tx(1), 30), (tx(2), 40)], 0);
+        let batch = [member(tx(1), fee(30)), member(tx(2), fee(40))];
+        let outcome = run(base, &batch, spend(|_| 0));
+
+        for entry in &batch {
+            let receipt = &outcome.receipts[&entry.tx];
+            assert!(
+                matches!(receipt.outcome, Outcome::Completed { .. }),
+                "{:?}",
+                receipt.outcome
+            );
+        }
+        assert_eq!(amount_at(&outcome.store, payer()), 0);
+        assert_eq!(outcome.store.fee_holds(payer()), FeeHolds::default());
+    }
+
+    /// The store a session threads on carries its burn, so a later
+    /// member of the payer's conflict group reads the vault the
+    /// canonical state will hold.
+    #[test]
+    fn a_group_mate_reads_the_vault_less_the_burn() {
+        let reader = BatchTx::new(
+            tx(2),
+            declaring(&[(payer(), Mode::Read)]),
+            EnvInputs::unsealed(0),
+        );
+        let read = Mutex::new(None);
+        let body = |entry: &BatchTx, mut session: KernelSession| {
+            if entry.tx == tx(2) {
+                let balance = session
+                    .amount_cell_balance(0, 0)
+                    .expect("the vault is declared");
+                *read.lock().expect("one reader") = Some(balance);
+            }
+            completed(session)
+        };
+        let outcome = run(funded(100), &[member(tx(1), fee(21)), reader], body);
+
+        for receipt in outcome.receipts.values() {
+            assert!(matches!(receipt.outcome, Outcome::Completed { .. }));
+        }
+        assert_eq!(*read.lock().expect("one reader"), Some(79));
+    }
+
+    /// A reservation settles what its body took, and what it held beyond
+    /// that is free again by the time the burn is judged: the session
+    /// settles before it burns, and the replay applies in that order.
+    #[test]
+    fn a_reservation_taken_short_frees_the_rest_for_the_burn() {
+        // Two grants fold to one hold of 70 and the body takes the 30,
+        // so the burn of 50 needs 20 of the 40 the hold lets go.
+        let declaration = declaring(&[
+            (payer(), Mode::Reserve { amount: 30 }),
+            (payer(), Mode::Reserve { amount: 40 }),
+            (sink(), Mode::Delta { moves: Moves::Both }),
+        ]);
+        let body = |_: &BatchTx, mut session: KernelSession| {
+            let funds = session.reserve_take(0, 0).expect("the first grant is held");
+            session.cell_put(2, 0, funds).expect("into the sink");
+            completed(session)
+        };
+        let entry =
+            BatchTx::new(tx(1), declaration, EnvInputs::unsealed(0)).with_fee(Some(fee(50)));
+
+        let (receipt, _) = in_session(funded(100), &entry, &body);
+        assert!(
+            matches!(receipt.outcome, Outcome::Completed { .. }),
+            "the session burns out of what the settle freed: {:?}",
+            receipt.outcome
+        );
+
+        let outcome = run(funded(100), &[entry], body);
+        assert!(
+            matches!(outcome.receipts[&tx(1)].outcome, Outcome::Completed { .. }),
+            "and the replay agrees: {:?}",
+            outcome.receipts[&tx(1)].outcome
+        );
+        assert_eq!(amount_at(&outcome.store, payer()), 20);
+        assert_eq!(amount_at(&outcome.store, sink()), 30);
+    }
+
+    proptest! {
+        /// Two members in separate conflict groups debit and burn from
+        /// one vault. Each group runs over the batch's base, so the
+        /// second's session never saw the first; the replay judges it
+        /// after the first landed, and reaches the verdict a session
+        /// started over the store the first left would have.
+        ///
+        /// A member its own group refused is not replayed, and keeps
+        /// that refusal.
+        #[test]
+        fn session_and_replay_agree_behind_a_cross_group_mate(
+            balance in 0u128..200,
+            rest in 0u128..60,
+            first in (0u128..120, 0u128..40, 0u128..60),
+            second in (0u128..120, 0u128..40, 0u128..60),
+        ) {
+            let base = holding(funded(balance), &[(tx(1), first.2), (tx(2), second.2)], rest);
+            let debits = move |member: TxHash| if member == tx(1) { first.0 } else { second.0 };
+            let batch = [member(tx(1), fee(first.1)), member(tx(2), fee(second.1))];
+
+            let together = run(base.clone(), &batch, spend(debits));
+            let before = run(base.clone(), &batch[..1], spend(debits));
+            prop_assert_eq!(&together.receipts[&tx(1)], &before.receipts[&tx(1)]);
+
+            let left = before.store.collapse_onto(base.clone());
+            let (grouped, _) = in_session(base, &batch[1], &spend(debits));
+            let expected = if matches!(grouped.outcome, Outcome::Completed { .. }) {
+                in_session(left, &batch[1], &spend(debits)).0
+            } else {
+                grouped
+            };
+            prop_assert_eq!(&together.receipts[&tx(2)], &expected);
+        }
+    }
+}
+
 /// The instance term, where an entry changes without a holding moving.
 ///
 /// A non-fungible's quantity is a count of entries, so what the fold

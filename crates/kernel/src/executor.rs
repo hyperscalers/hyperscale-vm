@@ -1160,8 +1160,9 @@ fn declares_exclusively(entry: &BatchTx, key: SubstateKey) -> bool {
 /// # Panics
 ///
 /// Only if a runner panics — the panic propagates from its worker — on the
-/// kernel defect of a group overlay outliving its group, or if judging
-/// wrote a cell and moved the batch's baseline.
+/// kernel defect of a group overlay outliving its group, if judging wrote
+/// a cell and moved the batch's baseline, or if a completed receipt does
+/// not carry the burn its entry states.
 pub fn execute_batch<R: GuestRunner>(
     base: Arc<dyn Baseline>,
     batch: &[BatchTx],
@@ -1380,8 +1381,10 @@ fn apply_receipts(
         let flip = if let Some(flipped) = observed {
             Some(Outcome::BaselineDiscarded { flipped })
         } else if completed {
-            let applies = entries.get(&tx).map_or(&WHOLE, |entry| &entry.applies);
-            apply_completed(store, receipt, tx, applies)?.map(|(key, amount)| {
+            let entry = entries.get(&tx);
+            let applies = entry.map_or(&WHOLE, |entry| &entry.applies);
+            let fee = entry.and_then(|entry| entry.fee);
+            apply_completed(store, receipt, tx, applies, fee)?.map(|(key, amount)| {
                 store.discard_active();
                 Outcome::Infeasible { key, amount }
             })
@@ -1418,23 +1421,31 @@ fn apply_receipts(
 
 /// One completed transaction's canonical application, on locally owned keys
 /// only — remote operations stay in the receipt as the outbound effect
-/// record. Absolute writes and entry changes, then movements under the
-/// reservation floor, then settles.
+/// record. Absolute writes and entry changes, then the body's movements
+/// under the floor, then settles, then the fee: the order the session
+/// judged in, so a member applied after a mate in another group moved
+/// one of its cells gets the verdict a session started after that mate
+/// would have given it.
+///
+/// The fee is the entry's, where judging it ends the member's hold. The
+/// receipt carries the burn composed into the payer's movement, and the
+/// two are judged apart: the body's part with the member's fee hold
+/// standing, the burn once the reservations have settled and the hold
+/// has ended.
 ///
 /// Returns the key and amount of a deterministic refusal for the caller to
-/// roll back; an error is a kernel defect. The two refusals are the ones
-/// the session judges by the same taxonomy: a debit past the floor, and a
+/// roll back; an error is a kernel defect. The refusals are the ones the
+/// session judges by the same taxonomy: a debit past the floor, and a
 /// cell an exclusive write left below the reservations still standing on
-/// it. Replay reaches the same verdicts the group overlay did — the same
-/// canonical order over the same base, and the floor is invariant under
-/// settle/movement ordering — so a refusal here is a defense against that
-/// reasoning going stale, not a second judgement.
+/// it.
 fn apply_completed(
     store: &mut OverlayStore,
     receipt: &Receipt,
     tx: TxHash,
     applies: &OwnerSet,
+    fee: Option<FeeBurn>,
 ) -> Result<Option<(SubstateKey, u128)>, BatchError> {
+    let burn = fee.filter(|fee| fee.ends_hold(applies));
     let owned = receipt.delta.owned(applies);
     for (key, change) in owned.cells() {
         match change {
@@ -1455,10 +1466,22 @@ fn apply_completed(
         }
     }
     for (key, movement) in owned.movements() {
-        match store.apply_movement(key, movement.credit, movement.debit) {
+        let burned = burn
+            .filter(|fee| fee.vault == key)
+            .map_or(0, |fee| fee.amount);
+        let debit = movement
+            .debit
+            .checked_sub(burned)
+            .expect("a completed receipt carries its entry's burn in the payer's movement");
+        // A payer's vault the body never moved carries the burn alone,
+        // and the session judged no movement on it.
+        if burned > 0 && movement.credit == 0 && debit == 0 {
+            continue;
+        }
+        match store.apply_movement(key, movement.credit, debit) {
             Ok(_) => {}
             Err(defect) => match defect.fault() {
-                Fault::Floor => return Ok(Some((key, movement.debit))),
+                Fault::Floor => return Ok(Some((key, debit))),
                 // Cross-group interaction is commutative by construction,
                 // so bytes that stopped being an amount cannot appear
                 // between judging and applying — a declaration fault
@@ -1485,6 +1508,17 @@ fn apply_completed(
                 }
                 Fault::Declaration(_) | Fault::Defect => return Err(defect.into()),
             },
+        }
+    }
+    if let Some(fee) = burn {
+        store.set_fee_hold(fee.vault, tx, None);
+        if fee.amount > 0
+            && let Err(defect) = store.apply_movement(fee.vault, 0, fee.amount)
+        {
+            return match defect.fault() {
+                Fault::Floor => Ok(Some((fee.vault, fee.amount))),
+                Fault::Declaration(_) | Fault::Defect => Err(defect.into()),
+            };
         }
     }
     Ok(None)

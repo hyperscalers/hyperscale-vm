@@ -52,7 +52,8 @@ pub use session::{
     KernelSession, MaterializeError, Receipt, SessionTrap, StateDelta,
 };
 pub use store::{
-    Access, AppliedDelta, Baseline, Fault, MemoryStore, StoreError, Substates, WorkingStore,
+    Access, AppliedDelta, Baseline, Fault, FeeHolds, MemoryStore, StoreError, Substates,
+    WorkingStore,
 };
 pub use supply::SupplyDelta;
 pub use walk::{GuestBackend, GuestCall, InvokeResult, ManifestWalk};

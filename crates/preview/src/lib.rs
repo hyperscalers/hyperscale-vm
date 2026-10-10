@@ -29,7 +29,7 @@ use std::sync::Arc;
 use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{Admitted, explain_refusal};
 use hyperscale_vm_kernel::{
-    Baseline, BatchTx, ExecutionMode, GuestBackend, ManifestWalk, OwnerSet, Substates,
+    Baseline, BatchTx, ExecutionMode, FeeHolds, GuestBackend, ManifestWalk, OwnerSet, Substates,
     execute_batch,
 };
 use hyperscale_vm_types::{
@@ -255,6 +255,10 @@ impl Substates for Optimistic {
 impl Baseline for Optimistic {
     fn holds(&self, _key: SubstateKey) -> BTreeMap<TxHash, u128> {
         BTreeMap::new()
+    }
+
+    fn fee_holds(&self, _key: SubstateKey) -> FeeHolds {
+        FeeHolds::default()
     }
 }
 

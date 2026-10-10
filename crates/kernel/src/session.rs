@@ -110,10 +110,10 @@ impl EnvInputs {
 /// a capability on it, so the shard states the burn to the session and
 /// the session records it as what it is — a movement composing with
 /// whatever else reached the vault, judged against the vault's floor
-/// like every other debit and read straight off the ledger rather than
-/// through a capability, and a burn the conservation fold weighs
-/// against it. Recorded only by the shard holding the vault, which is
-/// the one that settles it.
+/// once the member's own fee hold has ended and read straight off the
+/// ledger rather than through a capability, and a burn the conservation
+/// fold weighs against it. Recorded only by the shard holding the vault,
+/// which is the one that settles it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FeeBurn {
     /// The payer's vault.
@@ -122,6 +122,20 @@ pub struct FeeBurn {
     pub resource: ResourceAddr,
     /// What is burned, already held to the signed ceiling.
     pub amount: u128,
+}
+
+impl FeeBurn {
+    /// Whether judging this burn ends its member's fee hold: the vault
+    /// is under what the judging shard applies.
+    ///
+    /// The one question a session and the replay of its receipt both
+    /// ask, so the hold a session ended is the hold the replay ends. The
+    /// amount is no part of it: a burn of nothing ends the hold it was
+    /// held for.
+    #[must_use]
+    pub(crate) fn ends_hold(&self, applies: &OwnerSet) -> bool {
+        applies.covers(self.vault.owner)
+    }
 }
 
 /// What the node now running may emit, and what it has emitted.

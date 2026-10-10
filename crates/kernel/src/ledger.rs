@@ -6,15 +6,15 @@
 //! in exactly two things: what a cell currently holds, and what is
 //! currently held against it. Both questions already have answers on
 //! [`Baseline`]: `cell` resolves the plain store's map or the overlay's
-//! active-over-committed-over-base fall-through, and `holds` resolves the
-//! stored map or the three layers merged.
+//! active-over-committed-over-base fall-through, and `holds` and
+//! `fee_holds` resolve the stored maps or the three layers merged.
 //!
-//! So the arithmetic standing on those two answers is written once, here,
-//! and a store supplies only the five operations that cannot be derived —
-//! how it records an amount, a hold, and an access, and how it holds its
-//! queued deltas. What each store then owes is that its view is right,
-//! which is what the overlay's differential corpus tests; nothing owes a
-//! second copy of the reservation floor.
+//! So the arithmetic standing on those answers is written once, here,
+//! and a store supplies only the six operations that cannot be derived —
+//! how it records an amount, a hold, a fee hold, and an access, and how
+//! it holds its queued deltas. What each store then owes is that its view
+//! is right, which is what the overlay's differential corpus tests;
+//! nothing owes a second copy of the floor.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -46,6 +46,13 @@ pub trait AmountLedger: Baseline {
         let standing = self.held_reservation(key, tx).unwrap_or_default();
         self.set_hold(key, tx, Some(amount.min(standing)));
     }
+
+    /// Record `tx`'s fee hold on `key`, or end it when `amount` is `None`.
+    ///
+    /// Ending is the only thing a batch does to a fee hold, and only a
+    /// member's own burn does it: nothing settles one, releases one, or
+    /// reduces one.
+    fn set_fee_hold(&mut self, key: SubstateKey, tx: TxHash, amount: Option<u128>);
 
     /// Note one access against the trace the oracle checks.
     fn note(&mut self, target: EffectTarget, kind: ModeKind);
@@ -110,10 +117,46 @@ pub trait AmountLedger: Baseline {
         Ok(())
     }
 
+    /// What of `standing` on `key` nothing has been promised: less every
+    /// outstanding reservation, then less every fee hold.
+    ///
+    /// The two floors fail differently because they are different
+    /// promises. A reservation is a debit already granted against the
+    /// cell, so reservations the cell cannot cover are a ledger that no
+    /// longer adds up. A fee hold is a ceiling stood under whatever else
+    /// the cell is asked for, so fee holds past what is left leave
+    /// nothing to spend and nothing wrong.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::HeldExceedsCommitted`] where the reservations exceed
+    /// `standing`.
+    fn unpromised(&self, key: SubstateKey, standing: u128) -> Result<u128, StoreError> {
+        Ok(standing
+            .checked_sub(self.held_total(key)?)
+            .ok_or(StoreError::HeldExceedsCommitted(key))?
+            .saturating_sub(self.fee_holds(key).total()))
+    }
+
+    /// What a debit or a reservation on `key` may take: the cell and
+    /// `credit`, less everything [`Self::unpromised`] leaves out.
+    ///
+    /// # Errors
+    ///
+    /// [`ModeError::CellOverflow`] on credit overflow, [`Self::unpromised`]'s
+    /// ledger failure, or a decode failure.
+    fn spendable(&self, key: SubstateKey, credit: u128) -> Result<u128, StoreError> {
+        let credited = self
+            .amount(key)?
+            .checked_add(credit)
+            .ok_or(ModeError::CellOverflow)?;
+        self.unpromised(key, credited)
+    }
+
     /// Judge one transaction's net movement on an amount cell, returning
-    /// the value the cell would take. The floor is committed plus the
-    /// credit minus every outstanding reservation: an unconditional debit
-    /// can never consume value a held reservation still covers.
+    /// the value the cell would take. The floor is [`Self::unpromised`]'s:
+    /// an unconditional debit can never consume value a held reservation
+    /// still covers, nor value a fee hold stands on.
     ///
     /// # Errors
     ///
@@ -130,12 +173,9 @@ pub trait AmountLedger: Baseline {
             .amount(key)?
             .checked_add(credit)
             .ok_or(ModeError::CellOverflow)?;
-        let available = credited
-            .checked_sub(self.held_total(key)?)
-            .ok_or(StoreError::HeldExceedsCommitted(key))?;
-        available
-            .checked_sub(debit)
-            .ok_or(ModeError::CellUnderflow)?;
+        if debit > self.unpromised(key, credited)? {
+            return Err(ModeError::CellUnderflow.into());
+        }
         Ok(credited - debit)
     }
 
@@ -159,8 +199,10 @@ pub trait AmountLedger: Baseline {
 
     /// Judge a batch of reservation requests, holding the feasible ones.
     ///
-    /// Per cell: available is committed minus reservations already held,
-    /// and the batch is judged in canonical transaction-hash order.
+    /// Per cell: available is what [`Self::spendable`] leaves of the
+    /// committed amount, so a request competes with the reservations
+    /// already held and stays above every fee hold, its own member's
+    /// included. The batch is judged in canonical transaction-hash order.
     /// Verdicts are invariant under any permutation of the batch. Each
     /// request records a reserve access.
     ///
@@ -184,10 +226,7 @@ pub trait AmountLedger: Baseline {
         }
         let mut verdicts = BTreeMap::new();
         for (key, batch) in by_key {
-            let available = self
-                .amount(key)?
-                .checked_sub(self.held_total(key)?)
-                .ok_or(StoreError::HeldExceedsCommitted(key))?;
+            let available = self.spendable(key, 0)?;
             for (tx, verdict) in judge(available, &batch) {
                 if verdict.is_feasible() {
                     let amount = batch

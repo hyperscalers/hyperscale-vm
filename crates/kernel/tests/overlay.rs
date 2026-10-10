@@ -16,11 +16,14 @@
 use std::sync::Arc;
 
 use hyperscale_vm_effects::{Hash32, SlotId, TestHasher, child_key};
-use hyperscale_vm_kernel::{AmountLedger, DeltaOp, MemoryStore, OverlayStore, WorkingStore};
+use hyperscale_vm_kernel::{
+    AmountLedger, Baseline, DeltaOp, FeeHolds, MemoryStore, OverlayStore, WorkingStore,
+};
 use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, SubstateKey, TxHash, encode_amount,
 };
 use proptest::collection::vec;
+use proptest::option;
 use proptest::prelude::{Just, Strategy, any, prop_oneof, proptest};
 
 const OWNERS: [Address; 2] = [
@@ -56,6 +59,7 @@ enum Op {
     Judge(u8, u8, u128),
     Settle(u8, u8),
     Release(u8, u8),
+    FeeHold(u8, u8, Option<u128>),
 }
 
 fn arb_op() -> impl Strategy<Value = Op> {
@@ -90,9 +94,12 @@ fn arb_op() -> impl Strategy<Value = Op> {
             .prop_map(|(o, c, ord)| Op::EntryRemove(o, c, ord)),
         (owner, collection, order.clone(), order, 0u32..6)
             .prop_map(|(o, c, lo, hi, cap)| Op::Scan(o, c, lo, hi, cap)),
-        (holder.clone(), key.clone(), amount).prop_map(|(t, k, a)| Op::Judge(t, k, a)),
+        (holder.clone(), key.clone(), amount.clone()).prop_map(|(t, k, a)| Op::Judge(t, k, a)),
         (holder.clone(), key.clone()).prop_map(|(t, k)| Op::Settle(t, k)),
-        (holder, key).prop_map(|(t, k)| Op::Release(t, k)),
+        (holder.clone(), key.clone()).prop_map(|(t, k)| Op::Release(t, k)),
+        // A hold stood and a hold ended, so the floor every judge and
+        // movement above reads moves in both layers.
+        (holder, key, option::of(amount)).prop_map(|(t, k, a)| Op::FeeHold(t, k, a)),
     ]
 }
 
@@ -130,11 +137,16 @@ fn apply<S: AmountLedger + WorkingStore>(store: &mut S, op: &Op) -> String {
         Op::Judge(t, k, a) => format!("{:?}", store.judge_and_hold(&[(tx(*t), cell(*k), *a)])),
         Op::Settle(t, k) => format!("{:?}", store.settle(cell(*k), tx(*t))),
         Op::Release(t, k) => format!("{:?}", store.release(cell(*k), tx(*t))),
+        Op::FeeHold(t, k, a) => {
+            store.set_fee_hold(cell(*k), tx(*t), *a);
+            format!("{:?}", store.fee_holds(cell(*k)))
+        }
     }
 }
 
-/// A populated base: cells (some amount-encoded), entries, and one held
-/// reservation, so layered ops immediately interact with base state.
+/// A populated base: cells (some amount-encoded), entries, one held
+/// reservation and the fee holds on its cell, so layered ops immediately
+/// interact with base state.
 fn base_store(seed: &[(u8, u128)]) -> MemoryStore {
     let mut base = MemoryStore::new();
     for (index, (k, a)) in seed.iter().enumerate() {
@@ -146,6 +158,13 @@ fn base_store(seed: &[(u8, u128)]) -> MemoryStore {
     if let Some((k, a)) = seed.first() {
         base.write(cell(*k), encode_amount(a.saturating_add(50)).to_vec());
         base.judge_and_hold(&[(tx(0), cell(*k), 25)]).unwrap();
+        base.hold_fees(
+            cell(*k),
+            FeeHolds {
+                members: [(tx(1), 5)].into(),
+                rest: 5,
+            },
+        );
     }
     base
 }
@@ -182,6 +201,7 @@ proptest! {
                     reference.held_reservation(cell(k), tx(t)),
                 );
             }
+            assert_eq!(overlay.fee_holds(cell(k)), reference.fee_holds(cell(k)));
         }
         let overlay_pending: Vec<_> = overlay.pending_deltas().collect();
         let reference_pending: Vec<_> = reference.pending_deltas().collect();
@@ -208,5 +228,8 @@ proptest! {
             .map(|(key, value)| (key, value.to_vec()))
             .collect();
         assert_eq!(collapsed_entries, reference_entries);
+        for k in 0..6u8 {
+            assert_eq!(collapsed.fee_holds(cell(k)), reference.fee_holds(cell(k)));
+        }
     }
 }
