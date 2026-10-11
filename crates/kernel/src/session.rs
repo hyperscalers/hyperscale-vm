@@ -176,6 +176,9 @@ pub struct KernelSession {
     /// executing shard holds that vault. `None` where it does not, or
     /// where another execution of this shard's already charged it.
     fee: Option<FeeBurn>,
+    /// Whether what this execution credits is withheld from every other
+    /// member judged over the store it threads on.
+    credits_withheld: bool,
     /// The interval machinery: materialized scans and write caps.
     ranges: Ranges,
     /// The cell and amount a call-time refusal found no floor for, where
@@ -310,6 +313,14 @@ impl KernelSession {
     #[must_use]
     pub const fn with_fee(mut self, fee: Option<FeeBurn>) -> Self {
         self.fee = fee;
+        self
+    }
+
+    /// Whether what this execution credits is withheld from every other
+    /// member judged over the store it threads on.
+    #[must_use]
+    pub const fn with_credits_withheld(mut self, credits_withheld: bool) -> Self {
+        self.credits_withheld = credits_withheld;
         self
     }
 

@@ -644,6 +644,7 @@ impl KernelSession {
             judges: judges.clone(),
             nullifiers: Vec::new(),
             fee: None,
+            credits_withheld: false,
             ranges: Ranges::default(),
             lost_floor: None,
             invocation: None,

@@ -6,13 +6,14 @@
 //! in exactly two things: what a cell currently holds, and what is
 //! currently held against it. Both questions already have answers on
 //! [`Baseline`]: `cell` resolves the plain store's map or the overlay's
-//! active-over-committed-over-base fall-through, and `holds` and
-//! `fee_holds` resolve the stored maps or the three layers merged.
+//! active-over-committed-over-base fall-through, and `holds`,
+//! `fee_holds` and `withheld_credits` resolve the stored maps or the
+//! three layers merged.
 //!
 //! So the arithmetic standing on those answers is written once, here,
-//! and a store supplies only the six operations that cannot be derived —
-//! how it records an amount, a hold, a fee hold, and an access, and how
-//! it holds its queued deltas. What each store then owes is that its view
+//! and a store supplies only the seven operations that cannot be derived
+//! — how it records an amount, a hold, a fee hold, a withheld credit, and
+//! an access, and how it holds its queued deltas. What each store then owes is that its view
 //! is right, which is what the overlay's differential corpus tests;
 //! nothing owes a second copy of the floor.
 
@@ -53,6 +54,21 @@ pub trait AmountLedger: Baseline {
     /// member's own burn does it: nothing settles one, releases one, or
     /// reduces one.
     fn set_fee_hold(&mut self, key: SubstateKey, tx: TxHash, amount: Option<u128>);
+
+    /// Record that `amount` of what `key` holds is `tx`'s credit, withheld
+    /// from every other member.
+    ///
+    /// The amount is what the member's movement raised the cell by, its
+    /// credit less its own debit: a cell a member moved value through
+    /// holds what it held, whether the member stands or is discarded,
+    /// and one it drew down holds less only while it stands. So every
+    /// other member is judged over the lower of the two.
+    ///
+    /// Recorded where the credit is, so whatever rolls the credit back
+    /// takes the record with it. Nothing ends one within a batch: it
+    /// stands for as long as a debit judged over the credit could settle
+    /// without it.
+    fn withhold_credit(&mut self, key: SubstateKey, tx: TxHash, amount: u128);
 
     /// Note one access against the trace the oracle checks.
     fn note(&mut self, target: EffectTarget, kind: ModeKind);
@@ -118,45 +134,55 @@ pub trait AmountLedger: Baseline {
     }
 
     /// What of `standing` on `key` nothing has been promised: less every
-    /// outstanding reservation, then less every fee hold.
+    /// outstanding reservation, then less every fee hold and `withheld`,
+    /// the credits in it the judged transaction may not spend.
     ///
-    /// The two floors fail differently because they are different
-    /// promises. A reservation is a debit already granted against the
-    /// cell, so reservations the cell cannot cover are a ledger that no
-    /// longer adds up. A fee hold is a ceiling stood under whatever else
-    /// the cell is asked for, so fee holds past what is left leave
-    /// nothing to spend and nothing wrong.
+    /// The floors fail differently because they are different promises.
+    /// A reservation is a debit already granted against the cell, so
+    /// reservations the cell cannot cover are a ledger that no longer
+    /// adds up. A fee hold is a ceiling stood under whatever else the
+    /// cell is asked for, and a withheld credit is value the cell may
+    /// yet give back, so either past what is left leaves nothing to
+    /// spend and nothing wrong.
     ///
     /// # Errors
     ///
     /// [`StoreError::HeldExceedsCommitted`] where the reservations exceed
     /// `standing`.
-    fn unpromised(&self, key: SubstateKey, standing: u128) -> Result<u128, StoreError> {
+    fn unpromised(
+        &self,
+        key: SubstateKey,
+        standing: u128,
+        withheld: u128,
+    ) -> Result<u128, StoreError> {
         Ok(standing
             .checked_sub(self.held_total(key)?)
             .ok_or(StoreError::HeldExceedsCommitted(key))?
-            .saturating_sub(self.fee_holds(key).total()))
+            .saturating_sub(self.fee_holds(key).total())
+            .saturating_sub(withheld))
     }
 
-    /// What a debit or a reservation on `key` may take: the cell and
-    /// `credit`, less everything [`Self::unpromised`] leaves out.
+    /// What a debit of `tx`'s on `key` may take: the cell and `credit`,
+    /// less everything [`Self::unpromised`] leaves out, every credit
+    /// withheld from `tx` included.
     ///
     /// # Errors
     ///
     /// [`ModeError::CellOverflow`] on credit overflow, [`Self::unpromised`]'s
     /// ledger failure, or a decode failure.
-    fn spendable(&self, key: SubstateKey, credit: u128) -> Result<u128, StoreError> {
+    fn spendable(&self, key: SubstateKey, tx: TxHash, credit: u128) -> Result<u128, StoreError> {
         let credited = self
             .amount(key)?
             .checked_add(credit)
             .ok_or(ModeError::CellOverflow)?;
-        self.unpromised(key, credited)
+        self.unpromised(key, credited, self.withheld_credits(key).kept_from(tx))
     }
 
-    /// Judge one transaction's net movement on an amount cell, returning
-    /// the value the cell would take. The floor is [`Self::unpromised`]'s:
-    /// an unconditional debit can never consume value a held reservation
-    /// still covers, nor value a fee hold stands on.
+    /// Judge `tx`'s net movement on an amount cell, returning the value
+    /// the cell would take. The floor is [`Self::spendable`]'s: an
+    /// unconditional debit can never consume value a held reservation
+    /// still covers, value a fee hold stands on, nor a credit another
+    /// member made that is withheld.
     ///
     /// # Errors
     ///
@@ -166,6 +192,7 @@ pub trait AmountLedger: Baseline {
     fn judge_movement(
         &self,
         key: SubstateKey,
+        tx: TxHash,
         credit: u128,
         debit: u128,
     ) -> Result<u128, StoreError> {
@@ -173,14 +200,13 @@ pub trait AmountLedger: Baseline {
             .amount(key)?
             .checked_add(credit)
             .ok_or(ModeError::CellOverflow)?;
-        if debit > self.unpromised(key, credited)? {
+        if debit > self.unpromised(key, credited, self.withheld_credits(key).kept_from(tx))? {
             return Err(ModeError::CellUnderflow.into());
         }
         Ok(credited - debit)
     }
 
-    /// Apply one transaction's net movement under [`Self::judge_movement`]'s
-    /// floor.
+    /// Apply `tx`'s net movement under [`Self::judge_movement`]'s floor.
     ///
     /// # Errors
     ///
@@ -189,20 +215,23 @@ pub trait AmountLedger: Baseline {
     fn apply_movement(
         &mut self,
         key: SubstateKey,
+        tx: TxHash,
         credit: u128,
         debit: u128,
     ) -> Result<u128, StoreError> {
-        let after = self.judge_movement(key, credit, debit)?;
+        let after = self.judge_movement(key, tx, credit, debit)?;
         self.set_amount(key, after);
         Ok(after)
     }
 
     /// Judge a batch of reservation requests, holding the feasible ones.
     ///
-    /// Per cell: available is what [`Self::spendable`] leaves of the
+    /// Per cell: available is what [`Self::unpromised`] leaves of the
     /// committed amount, so a request competes with the reservations
     /// already held and stays above every fee hold, its own member's
-    /// included. The batch is judged in canonical transaction-hash order.
+    /// included, and above every withheld credit: a requester is judged
+    /// before its body runs, so none of them is its own. The batch is
+    /// judged in canonical transaction-hash order.
     /// Verdicts are invariant under any permutation of the batch. Each
     /// request records a reserve access.
     ///
@@ -226,7 +255,8 @@ pub trait AmountLedger: Baseline {
         }
         let mut verdicts = BTreeMap::new();
         for (key, batch) in by_key {
-            let available = self.spendable(key, 0)?;
+            let available =
+                self.unpromised(key, self.amount(key)?, self.withheld_credits(key).total())?;
             for (tx, verdict) in judge(available, &batch) {
                 if verdict.is_feasible() {
                     let amount = batch

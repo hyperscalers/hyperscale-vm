@@ -13,7 +13,8 @@ use hyperscale_vm_effects::{
 };
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, EnvInputs, ExecutionMode, FeeHolds, GuestBackend, GuestCall, InvokeResult,
-    Invoked, KernelSession, ManifestWalk, MemoryStore, OwnerSet, Substates, execute_batch,
+    Invoked, KernelSession, ManifestWalk, MemoryStore, OwnerSet, Substates, WithheldCredits,
+    execute_batch,
 };
 use hyperscale_vm_types::{
     Address, AddressClass, CollectionId, Effect, EffectSet, EffectTarget, Mode, Outcome, Presence,
@@ -449,6 +450,10 @@ impl Baseline for Counting {
 
     fn fee_holds(&self, key: SubstateKey) -> FeeHolds {
         self.inner.fee_holds(key)
+    }
+
+    fn withheld_credits(&self, key: SubstateKey) -> WithheldCredits {
+        self.inner.withheld_credits(key)
     }
 }
 

@@ -53,7 +53,7 @@ pub use session::{
 };
 pub use store::{
     Access, AppliedDelta, Baseline, Fault, FeeHolds, MemoryStore, StoreError, Substates,
-    WorkingStore,
+    WithheldCredits, WorkingStore,
 };
 pub use supply::SupplyDelta;
 pub use walk::{GuestBackend, GuestCall, InvokeResult, ManifestWalk};

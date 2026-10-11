@@ -294,9 +294,52 @@ impl FeeHolds {
     }
 }
 
+/// The credits a cell carries that not every member may spend: each is
+/// in the cell's amount while a debit judged over it could still settle
+/// without it.
+///
+/// A third kind beside reservations and fee holds. A credit is withheld
+/// from every member but the one that made it: that member's debits
+/// settle or are discarded with its credit, and nobody else's do.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WithheldCredits {
+    /// What members of the batch raised the cell by that a batch-mate
+    /// could settle without, by transaction: the credit, less its own
+    /// debit, of a member a counterpart's verdict can still discard, and
+    /// of one no committed order holds its batch-mates behind.
+    pub members: BTreeMap<TxHash, u128>,
+    /// What the baseline carries of credits not yet settled under it,
+    /// summed. No member of the batch made any of it.
+    pub rest: u128,
+}
+
+impl WithheldCredits {
+    /// Everything withheld, saturating as [`FeeHolds::total`] does.
+    #[must_use]
+    pub fn total(&self) -> u128 {
+        self.members
+            .values()
+            .fold(self.rest, |total, credit| total.saturating_add(*credit))
+    }
+
+    /// Everything withheld from `tx`: all of it but what `tx` credited
+    /// itself.
+    #[must_use]
+    pub fn kept_from(&self, tx: TxHash) -> u128 {
+        self.members
+            .iter()
+            .filter(|(member, _)| **member != tx)
+            .fold(self.rest, |total, (_, credit)| {
+                total.saturating_add(*credit)
+            })
+    }
+}
+
 /// Committed state as an overlay's baseline reads it: durable content
-/// plus the execution context standing over it — the reservations
-/// outstanding on each cell, and the fee holds standing on it.
+/// plus the execution context standing over it.
+///
+/// That context is the reservations outstanding on each cell, the fee
+/// holds standing on it, and the credits in it that are withheld.
 ///
 /// Holds are execution context, not backend state, which is why the
 /// composite is a separate trait: [`MemoryStore`] implements it whole
@@ -309,6 +352,9 @@ pub trait Baseline: Substates + std::fmt::Debug {
 
     /// Every fee hold standing on `key`.
     fn fee_holds(&self, key: SubstateKey) -> FeeHolds;
+
+    /// Every credit in `key` that is withheld.
+    fn withheld_credits(&self, key: SubstateKey) -> WithheldCredits;
 
     /// The reservation `tx` holds on `key`, if any.
     fn held_reservation(&self, key: SubstateKey, tx: TxHash) -> Option<u128> {
@@ -351,6 +397,10 @@ impl Baseline for MemoryStore {
         self.fee_held.get(&key).cloned().unwrap_or_default()
     }
 
+    fn withheld_credits(&self, key: SubstateKey) -> WithheldCredits {
+        self.withheld.get(&key).cloned().unwrap_or_default()
+    }
+
     fn held_reservation(&self, key: SubstateKey, tx: TxHash) -> Option<u128> {
         Self::held_reservation(self, key, tx)
     }
@@ -369,6 +419,7 @@ pub struct MemoryStore {
     pub(crate) pending_deltas: BTreeMap<SubstateKey, Vec<DeltaOp>>,
     pub(crate) held: BTreeMap<SubstateKey, BTreeMap<TxHash, u128>>,
     pub(crate) fee_held: BTreeMap<SubstateKey, FeeHolds>,
+    pub(crate) withheld: BTreeMap<SubstateKey, WithheldCredits>,
 }
 
 impl MemoryStore {
@@ -381,6 +432,7 @@ impl MemoryStore {
             pending_deltas: BTreeMap::new(),
             held: BTreeMap::new(),
             fee_held: BTreeMap::new(),
+            withheld: BTreeMap::new(),
         }
     }
 
@@ -466,6 +518,14 @@ impl AmountLedger for MemoryStore {
         }
     }
 
+    fn withhold_credit(&mut self, key: SubstateKey, tx: TxHash, amount: u128) {
+        self.withheld
+            .entry(key)
+            .or_default()
+            .members
+            .insert(tx, amount);
+    }
+
     fn note(&mut self, _target: EffectTarget, _kind: ModeKind) {}
 
     fn queued(&self) -> BTreeMap<SubstateKey, Vec<DeltaOp>> {
@@ -504,6 +564,12 @@ impl MemoryStore {
     /// there.
     pub fn hold_fees(&mut self, key: SubstateKey, holds: FeeHolds) {
         self.fee_held.insert(key, holds);
+    }
+
+    /// Seed the credits withheld on a cell, in place of any already
+    /// there.
+    pub fn withhold_credits(&mut self, key: SubstateKey, withheld: WithheldCredits) {
+        self.withheld.insert(key, withheld);
     }
 }
 
@@ -548,19 +614,19 @@ mod tests {
         store.judge_and_hold(&[(tx(1), vault, 50)]).unwrap();
 
         // Ten of headroom above the hold; eleven is past the floor.
-        assert_eq!(store.judge_movement(vault, 0, 10), Ok(50));
+        assert_eq!(store.judge_movement(vault, tx(9), 0, 10), Ok(50));
         assert_eq!(
-            store.judge_movement(vault, 0, 11),
+            store.judge_movement(vault, tx(9), 0, 11),
             Err(StoreError::Mode(ModeError::CellUnderflow))
         );
         // The transaction's own credit funds its debit above the floor.
-        assert_eq!(store.judge_movement(vault, 5, 15), Ok(50));
+        assert_eq!(store.judge_movement(vault, tx(9), 5, 15), Ok(50));
 
         // A refused application leaves the cell untouched; an accepted one
         // lands, and the hold survives both.
-        assert!(store.apply_movement(vault, 0, 11).is_err());
-        assert_eq!(store.judge_movement(vault, 0, 0), Ok(60));
-        assert_eq!(store.apply_movement(vault, 0, 10), Ok(50));
+        assert!(store.apply_movement(vault, tx(9), 0, 11).is_err());
+        assert_eq!(store.judge_movement(vault, tx(9), 0, 0), Ok(60));
+        assert_eq!(store.apply_movement(vault, tx(9), 0, 10), Ok(50));
         assert_eq!(store.held_reservation(vault, tx(1)), Some(50));
         assert_eq!(store.settle(vault, tx(1)), Ok(50));
     }
@@ -676,7 +742,7 @@ mod tests {
                 Err(StoreError::HeldExceedsCommitted(vault))
             );
             assert_eq!(
-                store.spendable(vault, 0),
+                store.spendable(vault, tx(9), 0),
                 Err(StoreError::HeldExceedsCommitted(vault))
             );
         }
@@ -698,17 +764,17 @@ mod tests {
             },
         );
 
-        assert_eq!(store.spendable(vault, 0), Ok(0));
+        assert_eq!(store.spendable(vault, tx(9), 0), Ok(0));
         // A credit is spendable only past what the holds still lack.
-        assert_eq!(store.spendable(vault, 1), Ok(0));
-        assert_eq!(store.spendable(vault, 5), Ok(4));
+        assert_eq!(store.spendable(vault, tx(9), 1), Ok(0));
+        assert_eq!(store.spendable(vault, tx(9), 5), Ok(4));
         let verdicts = store.judge_and_hold(&[(tx(3), vault, 1)]).unwrap();
         assert_eq!(verdicts[&(tx(3), vault)], Feasibility::Infeasible);
         assert_eq!(
-            store.judge_movement(vault, 0, 1),
+            store.judge_movement(vault, tx(9), 0, 1),
             Err(StoreError::Mode(ModeError::CellUnderflow))
         );
-        assert_eq!(store.judge_movement(vault, 0, 0), Ok(50));
+        assert_eq!(store.judge_movement(vault, tx(9), 0, 0), Ok(50));
 
         // Past `u128` is past the cell.
         store.hold_fees(
@@ -718,7 +784,7 @@ mod tests {
                 rest: u128::MAX,
             },
         );
-        assert_eq!(store.spendable(vault, 0), Ok(0));
+        assert_eq!(store.spendable(vault, tx(9), 0), Ok(0));
 
         // The reservation settles what it held, fee holds or no.
         assert_eq!(store.settle(vault, tx(1)), Ok(20));

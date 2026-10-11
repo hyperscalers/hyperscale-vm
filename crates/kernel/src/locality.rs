@@ -317,7 +317,7 @@ mod tests {
         overlay.remove(removed).unwrap();
         for (cell, movement) in movements {
             overlay
-                .apply_movement(cell, movement.credit, movement.debit)
+                .apply_movement(cell, tx, movement.credit, movement.debit)
                 .unwrap();
         }
         for (cell, amount) in [(reserved, 40), (emptied, 25)] {

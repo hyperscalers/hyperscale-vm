@@ -90,6 +90,13 @@ pub struct BatchTx {
     /// the shard holding that vault; `None` elsewhere, and where this
     /// shard already charged it.
     pub fee: Option<FeeBurn>,
+    /// Whether what this execution credits is withheld from the rest of
+    /// its batch: set for a member whose effects a batch-mate can settle
+    /// without, because a counterpart's verdict can still discard them
+    /// or because no committed order holds the batch-mate behind them.
+    /// A debit by any other member is then judged as if the credit were
+    /// not there, in the session and in the replay alike.
+    pub credits_withheld: bool,
     /// The owners whose keys this shard applies: its own share of the
     /// key space, or every owner for a batch that reaches no other
     /// shard. Every participant of a cross-shard transaction runs the
@@ -153,6 +160,7 @@ impl BatchTx {
             },
             nullifiers: Vec::new(),
             fee: None,
+            credits_withheld: false,
             applies: OwnerSet::whole(),
             judges: OwnerSet::whole(),
             env,
@@ -206,6 +214,14 @@ impl BatchTx {
     #[must_use]
     pub fn with_disposals(mut self, disposals: Vec<Disposal>) -> Self {
         self.job = Job::Records(disposals);
+        self
+    }
+
+    /// Bind whether this execution's credits are withheld from the rest
+    /// of its batch.
+    #[must_use]
+    pub const fn with_credits_withheld(mut self, credits_withheld: bool) -> Self {
+        self.credits_withheld = credits_withheld;
         self
     }
 
@@ -992,6 +1008,7 @@ fn run_group<R: GuestRunner>(
                     .with_applies(entry.applies.clone())
                     .with_nullifiers(entry.nullifiers.clone())
                     .with_fee(entry.fee)
+                    .with_credits_withheld(entry.credits_withheld)
             }
             Err(defect) => {
                 receipts.push((entry.tx, abort_receipt(defect.into(), Vec::new())));
@@ -1384,7 +1401,8 @@ fn apply_receipts(
             let entry = entries.get(&tx);
             let applies = entry.map_or(&WHOLE, |entry| &entry.applies);
             let fee = entry.and_then(|entry| entry.fee);
-            apply_completed(store, receipt, tx, applies, fee)?.map(|(key, amount)| {
+            let withheld = entry.is_some_and(|entry| entry.credits_withheld);
+            apply_completed(store, receipt, tx, applies, fee, withheld)?.map(|(key, amount)| {
                 store.discard_active();
                 Outcome::Infeasible { key, amount }
             })
@@ -1433,6 +1451,12 @@ fn apply_receipts(
 /// standing, the burn once the reservations have settled and the hold
 /// has ended.
 ///
+/// Every debit is judged for `tx`, under the credits withheld from it.
+/// Where `withheld`, what the body's movement raised each cell by is
+/// recorded beside the movement that lands it, so the members applied
+/// after this one are judged without it and its own burn is judged with
+/// it.
+///
 /// Returns the key and amount of a deterministic refusal for the caller to
 /// roll back; an error is a kernel defect. The refusals are the ones the
 /// session judges by the same taxonomy: a debit past the floor, and a
@@ -1444,6 +1468,7 @@ fn apply_completed(
     tx: TxHash,
     applies: &OwnerSet,
     fee: Option<FeeBurn>,
+    withheld: bool,
 ) -> Result<Option<(SubstateKey, u128)>, BatchError> {
     let burn = fee.filter(|fee| fee.ends_hold(applies));
     let owned = receipt.delta.owned(applies);
@@ -1478,8 +1503,13 @@ fn apply_completed(
         if burned > 0 && movement.credit == 0 && debit == 0 {
             continue;
         }
-        match store.apply_movement(key, movement.credit, debit) {
-            Ok(_) => {}
+        match store.apply_movement(key, tx, movement.credit, debit) {
+            Ok(_) => {
+                let raised = movement.credit.saturating_sub(debit);
+                if withheld && raised > 0 {
+                    store.withhold_credit(key, tx, raised);
+                }
+            }
             Err(defect) => match defect.fault() {
                 Fault::Floor => return Ok(Some((key, debit))),
                 // Cross-group interaction is commutative by construction,
@@ -1513,7 +1543,7 @@ fn apply_completed(
     if let Some(fee) = burn {
         store.set_fee_hold(fee.vault, tx, None);
         if fee.amount > 0
-            && let Err(defect) = store.apply_movement(fee.vault, 0, fee.amount)
+            && let Err(defect) = store.apply_movement(fee.vault, tx, 0, fee.amount)
         {
             return match defect.fault() {
                 Fault::Floor => Ok(Some((fee.vault, fee.amount))),

@@ -504,7 +504,9 @@ impl KernelSession {
     }
 
     /// The queued deltas as checked totals, judged against the floor on
-    /// every cell this shard owns, and folded into it.
+    /// every cell this shard owns, and folded into it. A session whose
+    /// credits are withheld records what the fold raised each cell by, in
+    /// the layer the fold lands in.
     ///
     /// The error is a kernel defect; a refusal the caller aborts the
     /// transaction with comes back as [`Phase::Aborted`].
@@ -537,27 +539,28 @@ impl KernelSession {
                 // movement is the outbound record.
                 continue;
             }
-            let refusal = match self
-                .store
-                .judge_movement(*key, movement.credit, movement.debit)
-            {
-                Ok(_) => continue,
-                // An uncovered debit, and a cell an exclusive write left
-                // below the reservations still outstanding on it, are the
-                // same deterministic loss: the floor this movement needed
-                // is not there, and the transaction that declared the
-                // movement is the one that loses.
-                Err(defect) => match defect.fault() {
-                    Fault::Floor => Outcome::Infeasible {
-                        key: *key,
-                        amount: movement.debit,
+            let refusal =
+                match self
+                    .store
+                    .judge_movement(*key, self.tx, movement.credit, movement.debit)
+                {
+                    Ok(_) => continue,
+                    // An uncovered debit, and a cell an exclusive write left
+                    // below the reservations still outstanding on it, are the
+                    // same deterministic loss: the floor this movement needed
+                    // is not there, and the transaction that declared the
+                    // movement is the one that loses.
+                    Err(defect) => match defect.fault() {
+                        Fault::Floor => Outcome::Infeasible {
+                            key: *key,
+                            amount: movement.debit,
+                        },
+                        Fault::Declaration(error) => Outcome::UserError {
+                            reason: error.into(),
+                        },
+                        Fault::Defect => return Err(defect.into()),
                     },
-                    Fault::Declaration(error) => Outcome::UserError {
-                        reason: error.into(),
-                    },
-                    Fault::Defect => return Err(defect.into()),
-                },
-            };
+                };
             return Ok(Phase::Aborted(refusal));
         }
         // A movement on a key this shard does not own folds at the owning
@@ -578,6 +581,14 @@ impl KernelSession {
                 })),
                 Fault::Floor | Fault::Defect => Err(defect.into()),
             };
+        }
+        if self.credits_withheld {
+            for (key, movement) in &movements {
+                let raised = movement.credit.saturating_sub(movement.debit);
+                if raised > 0 && self.applies.covers(key.owner) {
+                    self.store.withhold_credit(*key, self.tx, raised);
+                }
+            }
         }
         Ok(Phase::Produced(movements))
     }
@@ -604,7 +615,7 @@ impl KernelSession {
         if fee.amount == 0 {
             return Ok(Phase::Produced(movements));
         }
-        if let Err(defect) = self.store.apply_movement(fee.vault, 0, fee.amount) {
+        if let Err(defect) = self.store.apply_movement(fee.vault, self.tx, 0, fee.amount) {
             return match defect.fault() {
                 Fault::Floor => Ok(Phase::Aborted(Outcome::Infeasible {
                     key: fee.vault,

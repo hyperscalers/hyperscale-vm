@@ -231,6 +231,7 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
         judges: OwnerSet::whole(),
         nullifiers: vec![nullifier_record(SUBINTENT, signed_nullifier())],
         fee: None,
+        credits_withheld: false,
         env: env(),
         gas_limits: Vec::new(),
         event_bytes: Vec::new(),

@@ -425,28 +425,28 @@ mod under_fee_holds {
 
     use super::{Hash32, MemoryStore, TestHasher, TxHash, encode_amount, vault};
 
-    const UNIT: ResourceAddr = ResourceAddr::new([0xA1; 31]);
+    pub const UNIT: ResourceAddr = ResourceAddr::new([0xA1; 31]);
 
     fn hash(data: &[u8]) -> [u8; 32] {
         TestHasher.hash(b"crypto", &[data]).0
     }
 
-    const fn tx(byte: u8) -> TxHash {
+    pub const fn tx(byte: u8) -> TxHash {
         TxHash(Hash32([byte; 32]))
     }
 
     /// The payer's vault, which every fee here burns from.
-    fn payer() -> SubstateKey {
+    pub fn payer() -> SubstateKey {
         vault(2, UNIT.address())
     }
 
     /// Where a body files what it took.
-    fn sink() -> SubstateKey {
+    pub fn sink() -> SubstateKey {
         vault(3, UNIT.address())
     }
 
     /// A store whose payer holds `balance`.
-    fn funded(balance: u128) -> MemoryStore {
+    pub fn funded(balance: u128) -> MemoryStore {
         let mut store = MemoryStore::new();
         store.write(payer(), encode_amount(balance).to_vec());
         store
@@ -466,7 +466,7 @@ mod under_fee_holds {
         }
     }
 
-    fn fee(amount: u128) -> FeeBurn {
+    pub fn fee(amount: u128) -> FeeBurn {
         FeeBurn {
             vault: payer(),
             resource: UNIT,
@@ -484,7 +484,7 @@ mod under_fee_holds {
         BatchTx::new(tx, declaration, EnvInputs::unsealed(0)).with_fee(Some(burn))
     }
 
-    const fn completed(session: KernelSession) -> RunResult {
+    pub const fn completed(session: KernelSession) -> RunResult {
         RunResult::Completed {
             session,
             answers: vec![],
@@ -508,7 +508,7 @@ mod under_fee_holds {
     }
 
     /// A declaration of value cells in clause order, folded to its set.
-    fn declaring(clauses: &[(SubstateKey, Mode)]) -> Declaration {
+    pub fn declaring(clauses: &[(SubstateKey, Mode)]) -> Declaration {
         let ordered: Vec<DeclaredAccess> = clauses
             .iter()
             .map(|(key, mode)| DeclaredAccess {
@@ -534,13 +534,13 @@ mod under_fee_holds {
     }
 
     /// What the store holds at `key`, an absent cell being zero.
-    fn amount_at(store: &impl Substates, key: SubstateKey) -> u128 {
+    pub fn amount_at(store: &impl Substates, key: SubstateKey) -> u128 {
         store
             .cell(key)
             .map_or(0, |cell| decode_amount(&cell).expect("an amount cell"))
     }
 
-    fn run(
+    pub fn run(
         base: MemoryStore,
         batch: &[BatchTx],
         body: impl Fn(&BatchTx, KernelSession) -> RunResult + Sync,
@@ -551,7 +551,7 @@ mod under_fee_holds {
 
     /// One member through a session of its own over `store`: its receipt
     /// and the store the session threads on.
-    fn in_session(
+    pub fn in_session(
         store: MemoryStore,
         entry: &BatchTx,
         body: &impl Fn(&BatchTx, KernelSession) -> RunResult,
@@ -564,7 +564,8 @@ mod under_fee_holds {
             hash,
         )
         .expect("the store covers what the member reserves")
-        .with_fee(entry.fee);
+        .with_fee(entry.fee)
+        .with_credits_withheld(entry.credits_withheld);
         let RunResult::Completed {
             session,
             answers,
@@ -822,6 +823,61 @@ mod under_fee_holds {
         assert_eq!(amount_at(&outcome.store, sink()), 30);
     }
 
+    /// A member whose credit a counterpart's verdict can still discard
+    /// funds no other member of its batch: the debits the batch
+    /// completes on a vault stay within what the vault holds without
+    /// that credit, wherever the crediting member falls in canonical
+    /// order.
+    #[test]
+    fn a_debit_does_not_spend_a_provisional_credit_of_its_batch() {
+        let source = vault(4, UNIT.address());
+        let mut base = funded(100);
+        base.write(source, encode_amount(50).to_vec());
+
+        let provisional = tx(1);
+        let crediting = BatchTx::new(
+            provisional,
+            declaring(&[
+                (source, Mode::Delta { moves: Moves::Both }),
+                (payer(), Mode::Delta { moves: Moves::Both }),
+            ]),
+            EnvInputs::unsealed(0),
+        )
+        .with_credits_withheld(true);
+        let batch = [
+            crediting,
+            member(tx(2), fee(0)).with_fee(None),
+            member(tx(3), fee(0)).with_fee(None),
+        ];
+        let body = |entry: &BatchTx, mut session: KernelSession| {
+            let amount = if entry.tx == provisional { 50 } else { 60 };
+            let taken = session.cell_take(0, 0, amount).expect("the debit queues");
+            session.cell_put(1, 0, taken).expect("the credit queues");
+            completed(session)
+        };
+        let outcome = run(base, &batch, body);
+
+        assert!(
+            matches!(
+                outcome.receipts[&provisional].outcome,
+                Outcome::Completed { .. }
+            ),
+            "the crediting member completes: {:?}",
+            outcome.receipts[&provisional].outcome
+        );
+        let debited: u128 = [tx(2), tx(3)]
+            .iter()
+            .map(|member| &outcome.receipts[member])
+            .filter(|receipt| matches!(receipt.outcome, Outcome::Completed { .. }))
+            .filter_map(|receipt| receipt.delta.movements.get(&payer()))
+            .map(|movement| movement.debit)
+            .sum();
+        assert!(
+            debited <= 100,
+            "the batch completes debits of {debited} on a vault holding 100 without the provisional credit"
+        );
+    }
+
     proptest! {
         /// Two members in separate conflict groups debit and burn from
         /// one vault. Each group runs over the batch's base, so the
@@ -854,6 +910,411 @@ mod under_fee_holds {
                 grouped
             };
             prop_assert_eq!(&together.receipts[&tx(2)], &expected);
+        }
+    }
+}
+
+/// The credits a member may not spend, through the session that judges
+/// under them and the replay that applies what the session produced.
+mod under_withheld_credits {
+    use hyperscale_vm_kernel::{
+        Baseline, BatchTx, EnvInputs, KernelSession, OwnerSet, RunResult, WithheldCredits,
+    };
+    use hyperscale_vm_types::{Mode, Moves, Outcome, SubstateKey};
+    use proptest::collection::vec as prop_vec;
+    use proptest::prelude::{any, prop_assert, prop_assert_eq, proptest};
+
+    use super::under_fee_holds::{
+        UNIT, amount_at, completed, declaring, fee, funded, in_session, payer, run, sink, tx,
+    };
+    use super::{MemoryStore, TxHash, encode_amount, vault};
+
+    /// What a body moves into the payer's vault, which holds plenty.
+    fn source() -> SubstateKey {
+        vault(4, UNIT.address())
+    }
+
+    /// A cell every member of a batch may declare an exclusive write on,
+    /// which puts them in one conflict group.
+    fn latch() -> SubstateKey {
+        vault(5, UNIT.address())
+    }
+
+    /// A store whose payer holds `balance`, beside a source that covers
+    /// every credit a body makes.
+    fn supplied(balance: u128) -> MemoryStore {
+        let mut store = funded(balance);
+        store.write(source(), encode_amount(1_000_000).to_vec());
+        store
+    }
+
+    /// What one member does: the credit it moves into the payer's vault,
+    /// the debit it moves out of it, the fee it burns from it, and
+    /// whether its credits are withheld.
+    type Moving = (u128, u128, u128, bool);
+
+    /// A member that may credit the payer's vault from the source and
+    /// debit it into the sink.
+    fn mover(tx: TxHash, (_, _, burn, withheld): Moving, grouped: bool) -> BatchTx {
+        let mut clauses = vec![
+            (payer(), Mode::Delta { moves: Moves::Both }),
+            (sink(), Mode::Delta { moves: Moves::Both }),
+            (source(), Mode::Delta { moves: Moves::Both }),
+        ];
+        if grouped {
+            clauses.push((latch(), Mode::Write { moves: Moves::Both }));
+        }
+        BatchTx::new(tx, declaring(&clauses), EnvInputs::unsealed(0))
+            .with_fee(Some(fee(burn)))
+            .with_credits_withheld(withheld)
+    }
+
+    /// A [`mover`]'s body: its credit into the vault, then its debit out.
+    fn moving(
+        of: impl Fn(TxHash) -> Moving + Sync,
+    ) -> impl Fn(&BatchTx, KernelSession) -> RunResult + Sync {
+        move |entry, mut session| {
+            let (credit, debit, _, _) = of(entry.tx);
+            if credit > 0 {
+                let taken = session.cell_take(2, 0, credit).expect("the debit queues");
+                session.cell_put(0, 0, taken).expect("into the vault");
+            }
+            if debit > 0 {
+                let taken = session.cell_take(0, 0, debit).expect("the debit queues");
+                session.cell_put(1, 0, taken).expect("into the sink");
+            }
+            completed(session)
+        }
+    }
+
+    /// A member's debits and its burn come out of its own credit: the
+    /// credit is withheld from everyone else, and the member that made
+    /// it settles or is discarded with it.
+    #[test]
+    fn a_member_spends_its_own_withheld_credit() {
+        let does = (50, 30, 20, true);
+        let entry = mover(tx(1), does, false);
+        let (receipt, threaded) = in_session(supplied(0), &entry, &moving(|_| does));
+        assert!(
+            matches!(receipt.outcome, Outcome::Completed { .. }),
+            "{:?}",
+            receipt.outcome
+        );
+        assert_eq!(amount_at(&threaded, payer()), 0);
+
+        let outcome = run(supplied(0), &[entry], moving(|_| does));
+        assert_eq!(outcome.receipts[&tx(1)], receipt, "and the replay agrees");
+        assert_eq!(amount_at(&outcome.store, payer()), 0);
+        assert_eq!(
+            outcome.store.withheld_credits(payer()),
+            threaded.withheld_credits(payer())
+        );
+        assert_eq!(
+            outcome.store.withheld_credits(payer()).members,
+            [(tx(1), 20)].into(),
+            "what its body raised the vault by, which its burn then took",
+        );
+    }
+
+    /// The outcome of a mate debiting `debit` from a vault holding 100,
+    /// applied behind a member whose credits are withheld and that moves
+    /// `through` in and out of the vault.
+    fn debiting_behind(through: (u128, u128), debit: u128) -> Outcome {
+        let of = move |member: TxHash| {
+            if member == tx(1) {
+                (through.0, through.1, 0, true)
+            } else {
+                (0, debit, 0, false)
+            }
+        };
+        let batch = [
+            mover(tx(1), of(tx(1)), false),
+            mover(tx(2), of(tx(2)), false),
+        ];
+        let outcome = run(supplied(100), &batch, moving(of));
+        assert!(
+            matches!(outcome.receipts[&tx(1)].outcome, Outcome::Completed { .. }),
+            "the member moving value through completes: {:?}",
+            outcome.receipts[&tx(1)].outcome
+        );
+        outcome.receipts[&tx(2)].outcome.clone()
+    }
+
+    /// A member that moves value into a vault and the same value out
+    /// leaves it holding what it held whether the member stands or is
+    /// discarded, so nothing of the vault is withheld from its mates.
+    #[test]
+    fn a_round_trip_through_a_vault_withholds_nothing() {
+        for debit in [10, 100] {
+            assert!(
+                matches!(
+                    debiting_behind((100, 100), debit),
+                    Outcome::Completed { .. }
+                ),
+                "the vault covers {debit} with the member or without it",
+            );
+        }
+        assert_eq!(
+            debiting_behind((100, 100), 101),
+            Outcome::Infeasible {
+                key: payer(),
+                amount: 101
+            }
+        );
+    }
+
+    /// A member that leaves a vault holding more than it found withholds
+    /// what it raised it by and no more: its mates spend what the vault
+    /// held below the batch.
+    #[test]
+    fn only_what_a_member_raised_a_vault_by_is_withheld() {
+        assert!(matches!(
+            debiting_behind((80, 30), 100),
+            Outcome::Completed { .. }
+        ));
+        assert_eq!(
+            debiting_behind((80, 30), 101),
+            Outcome::Infeasible {
+                key: payer(),
+                amount: 101
+            }
+        );
+    }
+
+    /// A member that leaves a vault holding less than it found withholds
+    /// nothing, and its mates spend what it left: the vault holds no
+    /// more than that while the member stands.
+    #[test]
+    fn a_member_drawing_a_vault_down_leaves_its_mates_the_rest() {
+        assert!(matches!(
+            debiting_behind((30, 80), 50),
+            Outcome::Completed { .. }
+        ));
+        assert_eq!(
+            debiting_behind((30, 80), 51),
+            Outcome::Infeasible {
+                key: payer(),
+                amount: 51
+            }
+        );
+    }
+
+    /// A member refused after its credit folded loses the credit and the
+    /// record of it at once, in the session and in the replay.
+    #[test]
+    fn a_flip_removes_a_withheld_credit_and_its_record_together() {
+        // The burn is past what the credit leaves, so the member is
+        // refused at the last judgement it gets.
+        let does = (50, 0, 60, true);
+        let entry = mover(tx(1), does, false);
+        let (receipt, threaded) = in_session(supplied(0), &entry, &moving(|_| does));
+        assert_eq!(
+            receipt.outcome,
+            Outcome::Infeasible {
+                key: payer(),
+                amount: 60
+            }
+        );
+        assert_eq!(amount_at(&threaded, payer()), 0);
+        assert_eq!(
+            threaded.withheld_credits(payer()),
+            WithheldCredits::default()
+        );
+
+        // In the replay it is a mate in another group that takes the
+        // floor: the second member's session completed over the base, and
+        // by the time it is applied the first has burned what it needed.
+        let batch = [
+            mover(tx(1), (0, 0, 40, false), false),
+            mover(tx(2), does, false),
+        ];
+        let of = move |member: TxHash| {
+            if member == tx(1) {
+                (0, 0, 40, false)
+            } else {
+                does
+            }
+        };
+        let outcome = run(supplied(40), &batch, moving(of));
+        assert_eq!(
+            outcome.receipts[&tx(2)].outcome,
+            Outcome::Infeasible {
+                key: payer(),
+                amount: 60
+            }
+        );
+        assert_eq!(amount_at(&outcome.store, payer()), 0);
+        assert_eq!(
+            outcome.store.withheld_credits(payer()),
+            WithheldCredits::default()
+        );
+    }
+
+    /// A credit the baseline carries unsettled funds no member of the
+    /// batch: not a debit, not a reservation, not a burn.
+    #[test]
+    fn a_credit_unsettled_under_the_baseline_funds_no_member() {
+        let withholding = |rest| {
+            let mut base = supplied(100);
+            base.withhold_credits(
+                payer(),
+                WithheldCredits {
+                    rest,
+                    ..WithheldCredits::default()
+                },
+            );
+            base
+        };
+        let outcome_of = |does: Moving| {
+            let entry = mover(tx(1), does, false);
+            run(withholding(40), &[entry], moving(move |_| does)).receipts[&tx(1)]
+                .outcome
+                .clone()
+        };
+        assert!(matches!(
+            outcome_of((0, 60, 0, false)),
+            Outcome::Completed { .. }
+        ));
+        assert_eq!(
+            outcome_of((0, 61, 0, false)),
+            Outcome::Infeasible {
+                key: payer(),
+                amount: 61
+            }
+        );
+        assert_eq!(
+            outcome_of((0, 50, 11, false)),
+            Outcome::Infeasible {
+                key: payer(),
+                amount: 11
+            }
+        );
+
+        let reserving = |amount| {
+            let declaration = declaring(&[
+                (payer(), Mode::Reserve { amount }),
+                (sink(), Mode::Delta { moves: Moves::Both }),
+            ]);
+            let entry = BatchTx::new(tx(1), declaration, EnvInputs::unsealed(0));
+            let body = |_: &BatchTx, mut session: KernelSession| {
+                let funds = session.reserve_take(0, 0).expect("the grant is held");
+                session.cell_put(1, 0, funds).expect("into the sink");
+                completed(session)
+            };
+            run(withholding(40), &[entry], body).receipts[&tx(1)]
+                .outcome
+                .clone()
+        };
+        assert!(matches!(reserving(60), Outcome::Completed { .. }));
+        assert_eq!(
+            reserving(61),
+            Outcome::Infeasible {
+                key: payer(),
+                amount: 61
+            }
+        );
+    }
+
+    proptest! {
+        /// Two members in separate conflict groups credit, debit and burn
+        /// on one vault, either with its credits withheld. The second's
+        /// session never saw the first; the replay judges it after the
+        /// first landed, under the credit the first is recorded with, and
+        /// reaches the verdict a session started over the store the first
+        /// left, that record carried, would have.
+        ///
+        /// A member its own group refused is not replayed, and keeps
+        /// that refusal.
+        #[test]
+        fn session_and_replay_agree_behind_a_withheld_credit(
+            balance in 0u128..150,
+            rest in 0u128..60,
+            first in (0u128..80, 0u128..120, 0u128..30, any::<bool>()),
+            second in (0u128..80, 0u128..120, 0u128..30, any::<bool>()),
+        ) {
+            let mut base = supplied(balance);
+            base.withhold_credits(payer(), WithheldCredits { rest, ..WithheldCredits::default() });
+            let of = move |member: TxHash| if member == tx(1) { first } else { second };
+            let batch = [mover(tx(1), first, false), mover(tx(2), second, false)];
+
+            let together = run(base.clone(), &batch, moving(of));
+            let before = run(base.clone(), &batch[..1], moving(of));
+            prop_assert_eq!(&together.receipts[&tx(1)], &before.receipts[&tx(1)]);
+
+            let left = before.store.collapse_onto(base.clone());
+            let (grouped, _) = in_session(base, &batch[1], &moving(of));
+            let expected = if matches!(grouped.outcome, Outcome::Completed { .. }) {
+                in_session(left, &batch[1], &moving(of)).0
+            } else {
+                grouped
+            };
+            prop_assert_eq!(&together.receipts[&tx(2)], &expected);
+        }
+
+        /// Whichever of the members whose credits are withheld go on to
+        /// settle, no cell is overdrawn: the members nothing withholds
+        /// settle with any subset of the rest, each cell taking every
+        /// survivor's movement over what it held below the batch.
+        ///
+        /// In separate groups the replay alone judges one member behind
+        /// another; in one group each session does, over the store the
+        /// members before it threaded.
+        #[test]
+        fn no_surviving_subset_of_withheld_members_overdraws_a_cell(
+            balance in 0u128..150,
+            members in prop_vec((0u128..80, 0u128..120, 0u128..20, any::<bool>()), 1..5),
+            grouped in any::<bool>(),
+        ) {
+            let base = supplied(balance);
+            let named: Vec<(TxHash, Moving)> = members
+                .iter()
+                .enumerate()
+                .map(|(index, does)| (tx(u8::try_from(index + 1).expect("a handful")), *does))
+                .collect();
+            let batch: Vec<BatchTx> = named
+                .iter()
+                .map(|(member, does)| mover(*member, *does, grouped))
+                .collect();
+            let of = |member: TxHash| {
+                named
+                    .iter()
+                    .find(|(named, _)| *named == member)
+                    .map_or((0, 0, 0, false), |(_, does)| *does)
+            };
+            let outcome = run(base.clone(), &batch, moving(of));
+
+            let (withheld, settled): (Vec<&BatchTx>, Vec<&BatchTx>) = batch
+                .iter()
+                .filter(|entry| {
+                    matches!(outcome.receipts[&entry.tx].outcome, Outcome::Completed { .. })
+                })
+                .partition(|entry| entry.credits_withheld);
+            let whole = OwnerSet::whole();
+            for surviving in 0u32..1 << withheld.len() {
+                let survivors = settled.iter().chain(
+                    withheld
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| surviving & (1 << index) != 0)
+                        .map(|(_, entry)| entry),
+                );
+                let mut credited = std::collections::BTreeMap::<SubstateKey, u128>::new();
+                let mut debited = std::collections::BTreeMap::<SubstateKey, u128>::new();
+                for entry in survivors {
+                    let owned = outcome.receipts[&entry.tx].delta.owned(&whole);
+                    for (key, movement) in owned.movements() {
+                        *credited.entry(key).or_default() += movement.credit;
+                        *debited.entry(key).or_default() += movement.debit;
+                    }
+                }
+                for (key, debit) in debited {
+                    let held = amount_at(&base, key) + credited.get(&key).copied().unwrap_or(0);
+                    prop_assert!(
+                        debit <= held,
+                        "{key:?} holds {held} under debits of {debit} with {surviving:b} surviving",
+                    );
+                }
+            }
         }
     }
 }

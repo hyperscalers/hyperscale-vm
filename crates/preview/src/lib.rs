@@ -30,7 +30,7 @@ use hyperscale_hbor::Capped;
 use hyperscale_vm_effects::{Admitted, explain_refusal};
 use hyperscale_vm_kernel::{
     Baseline, BatchTx, ExecutionMode, FeeHolds, GuestBackend, ManifestWalk, OwnerSet, Substates,
-    execute_batch,
+    WithheldCredits, execute_batch,
 };
 use hyperscale_vm_types::{
     Address, BASIS_POINTS, CollectionId, Event, Movement, Outcome, SubstateKey, TxHash,
@@ -259,6 +259,10 @@ impl Baseline for Optimistic {
 
     fn fee_holds(&self, _key: SubstateKey) -> FeeHolds {
         FeeHolds::default()
+    }
+
+    fn withheld_credits(&self, _key: SubstateKey) -> WithheldCredits {
+        WithheldCredits::default()
     }
 }
 

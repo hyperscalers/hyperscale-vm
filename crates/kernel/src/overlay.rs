@@ -20,7 +20,9 @@ use hyperscale_vm_types::{
 
 use crate::ledger::{AmountLedger, amount_bytes};
 use crate::modes::DeltaOp;
-use crate::store::{Access, Baseline, FeeHolds, MemoryStore, StoreError, Substates, WorkingStore};
+use crate::store::{
+    Access, Baseline, FeeHolds, MemoryStore, StoreError, Substates, WithheldCredits, WorkingStore,
+};
 
 /// A collection's layered entry changes: `None` values are tombstones.
 type EntryChanges = BTreeMap<u128, Option<Vec<u8>>>;
@@ -50,6 +52,7 @@ struct Layer {
     pending_deltas: BTreeMap<SubstateKey, Vec<DeltaOp>>,
     held: BTreeMap<SubstateKey, BTreeMap<TxHash, Option<u128>>>,
     fee_held: BTreeMap<SubstateKey, BTreeMap<TxHash, Option<u128>>>,
+    withheld: BTreeMap<SubstateKey, BTreeMap<TxHash, u128>>,
 }
 
 /// Apply one layer's per-transaction hold changes onto `holds`: an
@@ -231,6 +234,21 @@ impl OverlayStore {
         holds
     }
 
+    /// The effective withheld credits on a cell: the base's with what
+    /// both layers' members credited. A member is recorded in the layer
+    /// its credit landed in, and no layer moves `rest`.
+    fn effective_withheld_credits(&self, key: SubstateKey) -> WithheldCredits {
+        let mut withheld = self.base.withheld_credits(key);
+        for layer in [self.committed.as_ref(), &self.active] {
+            if let Some(credits) = layer.withheld.get(&key) {
+                withheld
+                    .members
+                    .extend(credits.iter().map(|(tx, credit)| (*tx, *credit)));
+            }
+        }
+        withheld
+    }
+
     /// The reservation amount `tx` holds on `key`, if any.
     #[must_use]
     pub fn held_reservation(&self, key: SubstateKey, tx: TxHash) -> Option<u128> {
@@ -373,6 +391,9 @@ impl OverlayStore {
         for (key, holds) in active.fee_held {
             committed.fee_held.entry(key).or_default().extend(holds);
         }
+        for (key, credits) in active.withheld {
+            committed.withheld.entry(key).or_default().extend(credits);
+        }
     }
 
     /// Drop the active layer: the transaction never happened. The
@@ -442,6 +463,11 @@ impl OverlayStore {
             for (key, holds) in &layer.fee_held {
                 for (tx, change) in holds {
                     store.set_fee_hold(*key, *tx, *change);
+                }
+            }
+            for (key, credits) in &layer.withheld {
+                for (tx, credit) in credits {
+                    store.withhold_credit(*key, *tx, *credit);
                 }
             }
         }
@@ -569,6 +595,14 @@ impl AmountLedger for OverlayStore {
             .insert(tx, amount);
     }
 
+    fn withhold_credit(&mut self, key: SubstateKey, tx: TxHash, amount: u128) {
+        self.active
+            .withheld
+            .entry(key)
+            .or_default()
+            .insert(tx, amount);
+    }
+
     fn note(&mut self, target: EffectTarget, kind: ModeKind) {
         self.record(target, kind);
     }
@@ -609,6 +643,10 @@ impl Baseline for OverlayStore {
 
     fn fee_holds(&self, key: SubstateKey) -> FeeHolds {
         self.effective_fee_holds(key)
+    }
+
+    fn withheld_credits(&self, key: SubstateKey) -> WithheldCredits {
+        self.effective_withheld_credits(key)
     }
 
     fn held_reservation(&self, key: SubstateKey, tx: TxHash) -> Option<u128> {
@@ -804,16 +842,16 @@ mod tests {
         base.judge_and_hold(&[(tx(1), vault, 50)]).unwrap();
 
         let overlay = OverlayStore::new(Arc::new(base.clone()));
-        assert_eq!(overlay.judge_movement(vault, 0, 10), Ok(50));
+        assert_eq!(overlay.judge_movement(vault, tx(9), 0, 10), Ok(50));
         assert_eq!(
-            overlay.judge_movement(vault, 0, 11),
+            overlay.judge_movement(vault, tx(9), 0, 11),
             Err(StoreError::Mode(ModeError::CellUnderflow)),
             "the base's hold still floors the cell"
         );
 
         let mut settled = OverlayStore::new(Arc::new(base));
         settled.settle(vault, tx(1)).unwrap();
-        assert_eq!(settled.judge_movement(vault, 0, 10), Ok(0));
+        assert_eq!(settled.judge_movement(vault, tx(9), 0, 10), Ok(0));
     }
 
     #[test]
