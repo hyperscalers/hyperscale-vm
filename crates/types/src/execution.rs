@@ -669,17 +669,17 @@ pub enum Outcome {
         /// The flipped group-mate whose writes this execution could see.
         flipped: TxHash,
     },
-    /// A value crossing this execution meant to take was already taken.
-    ///
-    /// The claim cell under the consuming node's own target is committed
-    /// state, so it says the crossing is spent whoever spent it — an
-    /// earlier replay of this transaction, or another take of the same
-    /// crossing. Priced with [`Outcome::Infeasible`]: no composer
-    /// could have read the cell at signing time, so this is a lost race
-    /// rather than a defect in what was signed.
+    /// A value crossing this execution meant to take is already
+    /// answered: this transaction's own take stands at the claim cell,
+    /// its own refusal stands at the decline cell, or an earlier member
+    /// of the same batch wrote the claim cell. An answer of another
+    /// transaction standing before the batch refuses nothing. Priced
+    /// with [`Outcome::Infeasible`]: no composer could have read the
+    /// cell at signing time, so this is a lost race rather than a defect
+    /// in what was signed.
     #[hbor(discriminant = 11)]
     EscrowAlreadyClaimed {
-        /// The claim cell whoever took it wrote.
+        /// The claim or decline cell that refused the take.
         key: SubstateKey,
     },
     /// A value crossing this execution meant to issue was already

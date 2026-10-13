@@ -882,8 +882,8 @@ fn a_replayed_issue_finds_its_own_record() {
     assert!(replayed.escrow.is_empty(), "and nothing crossed twice");
 }
 
-/// The same on the receiving side: a committed claim says the crossing
-/// is spent, whoever spent it.
+/// The same on the receiving side: a transaction's own committed claim
+/// says it already took the crossing.
 #[test]
 fn a_replayed_claim_finds_the_crossing_taken() {
     let crossed = Crossed {
@@ -906,17 +906,80 @@ fn a_replayed_claim_finds_the_crossing_taken() {
     assert!(replayed.delta.movements.is_empty(), "and credited nothing");
 }
 
-/// Two transactions reaching for one crossing in a single batch: the
+/// Two transactions reaching for one claim cell in a single batch: the
 /// declaration puts them in one conflict group, the group runs in
-/// canonical order, and the second finds the first's claim. Driven in
-/// parallel mode, because that is the arrangement where a crossing not
-/// forced into a group would be claimed twice.
+/// canonical order, and the second finds the claim the first wrote in
+/// this batch and is refused, whichever way the groups are scheduled
+/// and whatever order the batch lists them in. Parallel mode is the
+/// arrangement where a claim cell not forced into a group would be
+/// taken twice.
 ///
 /// The claim cell is the whole of what groups them — the two also
 /// declare one delta target, and deltas commute — so this is the
-/// screen's own reason, driven.
+/// screen's own reason, driven. The first's claim is no answer of the
+/// second's transaction: what refuses is that it was written in this
+/// batch, where one claim cell is taken at once.
 #[test]
 fn one_crossing_is_claimed_once_across_two_claimers() {
+    let crossed = Crossed {
+        resource: RESOURCE,
+        amount: 200,
+    };
+    for mode in [ExecutionMode::Serial, ExecutionMode::Parallel] {
+        for listed in [[tx(0x21), tx(0x22)], [tx(0x22), tx(0x21)]] {
+            let mut arrived = MemoryStore::new();
+            arrived.write(cell(PAYEE), encode_amount(0).to_vec());
+
+            let batch = listed.map(|taker| receiving_as(taker, crossed));
+            let outcome = execute(Arc::new(arrived) as Arc<dyn Baseline>, &batch, mode).unwrap();
+
+            assert!(
+                matches!(
+                    outcome.receipts[&tx(0x21)].outcome,
+                    Outcome::Completed { .. }
+                ),
+                "{:?}",
+                outcome.receipts[&tx(0x21)],
+            );
+            let refused = &outcome.receipts[&tx(0x22)];
+            assert_eq!(
+                refused.outcome,
+                Outcome::EscrowAlreadyClaimed { key: claim_key() },
+            );
+            assert_eq!(refused.escrow.claimed(RESOURCE), 0);
+            assert_eq!(refused.fuel, 0, "the node never ran");
+            assert!(
+                refused.delta.cells.is_empty() && refused.delta.movements.is_empty(),
+                "and the refused taker writes nothing: {refused:?}",
+            );
+            assert_eq!(
+                outcome.store.cell(claim_key()),
+                Some(
+                    crossing()
+                        .answer(tx(0x21), Answered::Taken, VALIDITY_END_MS)
+                        .to_bytes()
+                ),
+                "the claim standing is the one taker's",
+            );
+            assert_eq!(
+                outcome.receipts[&tx(0x21)]
+                    .delta
+                    .movements
+                    .get(&cell(PAYEE))
+                    .map(|movement| movement.credit),
+                Some(200),
+                "and what crossed is credited once",
+            );
+        }
+    }
+}
+
+/// A claim another transaction left in an earlier batch refuses nothing
+/// of a later taker, while the same claim written in the taker's own
+/// batch does: the two batches below hold the same two takers, run
+/// apart and run together.
+#[test]
+fn a_claim_refuses_another_taker_only_in_the_batch_that_wrote_it() {
     let crossed = Crossed {
         resource: RESOURCE,
         amount: 200,
@@ -924,30 +987,138 @@ fn one_crossing_is_claimed_once_across_two_claimers() {
     let mut arrived = MemoryStore::new();
     arrived.write(cell(PAYEE), encode_amount(0).to_vec());
 
-    let batch = vec![
+    let apart = then(
+        &arrived,
         receiving_as(tx(0x21), crossed),
         receiving_as(tx(0x22), crossed),
-    ];
-    let outcome = execute(
-        Arc::new(arrived) as Arc<dyn Baseline>,
-        &batch,
-        ExecutionMode::Parallel,
-    )
-    .unwrap();
-
+    );
     assert!(
-        matches!(
-            outcome.receipts[&tx(0x21)].outcome,
-            Outcome::Completed { .. }
-        ),
-        "{:?}",
-        outcome.receipts[&tx(0x21)],
+        matches!(apart.outcome, Outcome::Completed { .. }),
+        "a claim standing before the batch is another record's answer: {apart:?}",
     );
     assert_eq!(
-        outcome.receipts[&tx(0x22)].outcome,
+        apart.delta.cells.get(&claim_key()),
+        Some(&Some(
+            crossing()
+                .answer(tx(0x22), Answered::Taken, VALIDITY_END_MS)
+                .to_bytes()
+        )),
+        "and the later taker writes its own claim over it",
+    );
+
+    let together = execute(
+        Arc::new(arrived) as Arc<dyn Baseline>,
+        &[
+            receiving_as(tx(0x21), crossed),
+            receiving_as(tx(0x22), crossed),
+        ],
+        ExecutionMode::Serial,
+    )
+    .unwrap();
+    assert_eq!(
+        together.receipts[&tx(0x22)].outcome,
         Outcome::EscrowAlreadyClaimed { key: claim_key() },
     );
-    assert_eq!(outcome.receipts[&tx(0x22)].escrow.claimed(RESOURCE), 0);
+}
+
+/// The answer keys name the edge and no transaction, so an answer left
+/// by another transaction, to a record that stood at this edge before,
+/// refuses nothing: the take runs, credits what crossed and writes its
+/// own claim, over the other's where it stood at the claim key. So does
+/// this transaction's answer under any other validity end, which is not
+/// the answer its record's readers derive. Its own answer, seen or
+/// unseen, still refuses it.
+#[test]
+fn a_take_is_not_refused_under_another_transactions_answer() {
+    let never = crossing().answer_key(&TestHasher, Answered::Never);
+    let crossed = Crossed {
+        resource: RESOURCE,
+        amount: 200,
+    };
+    let taker = tx(9);
+    let earlier = tx(7);
+    let own_claim = crossing()
+        .answer(taker, Answered::Taken, VALIDITY_END_MS)
+        .to_bytes();
+    let under = |key: SubstateKey, value: Vec<u8>| {
+        let mut store = MemoryStore::new();
+        store.write(cell(PAYEE), encode_amount(0).to_vec());
+        store.write(key, value);
+        run(&store, receiving_refusable(taker, crossed, true))
+    };
+
+    for (name, key, standing) in [
+        (
+            "another transaction's Taken",
+            claim_key(),
+            crossing()
+                .answer(earlier, Answered::Taken, VALIDITY_END_MS)
+                .to_bytes(),
+        ),
+        (
+            "another transaction's Never",
+            never,
+            crossing()
+                .answer(earlier, Answered::Never, VALIDITY_END_MS)
+                .to_bytes(),
+        ),
+        (
+            "another transaction's unseen Never",
+            never,
+            crossing().unseen_never(earlier, VALIDITY_END_MS).to_bytes(),
+        ),
+        (
+            "its own Never under another validity end",
+            never,
+            crossing()
+                .answer(taker, Answered::Never, VALIDITY_END_MS + 1)
+                .to_bytes(),
+        ),
+        (
+            "its own Taken under another validity end",
+            claim_key(),
+            crossing()
+                .answer(taker, Answered::Taken, VALIDITY_END_MS + 1)
+                .to_bytes(),
+        ),
+    ] {
+        let receipt = under(key, standing);
+        assert!(
+            matches!(receipt.outcome, Outcome::Completed { .. }),
+            "under {name}: {receipt:?}",
+        );
+        assert_eq!(
+            receipt.delta.cells.get(&claim_key()),
+            Some(&Some(own_claim.clone())),
+            "under {name} the take writes its own claim",
+        );
+        assert_eq!(
+            receipt
+                .delta
+                .movements
+                .get(&cell(PAYEE))
+                .map(|movement| movement.credit),
+            Some(200),
+            "under {name} the take credits what crossed",
+        );
+    }
+
+    for (name, key, standing) in [
+        ("its own Taken", claim_key(), own_claim),
+        (
+            "its own unseen Never",
+            never,
+            crossing().unseen_never(taker, VALIDITY_END_MS).to_bytes(),
+        ),
+    ] {
+        let receipt = under(key, standing);
+        assert_eq!(
+            receipt.outcome,
+            Outcome::EscrowAlreadyClaimed { key },
+            "under {name} the member does not run",
+        );
+        assert!(receipt.delta.movements.is_empty(), "under {name}");
+    }
 }
 
 /// Two consumers of one output is a double spend, and running whole is

@@ -205,8 +205,9 @@ pub struct Arrival {
     /// where the crossing is refusable; `None` for one owed to its
     /// consumer, which nothing takes back.
     ///
-    /// Filed so the take screen covers it: a `Never` standing at it is
-    /// the crossing already answered, and the member must not run.
+    /// Filed so the take screen covers it: the taking transaction's
+    /// `Never` standing at it is the crossing already answered, and the
+    /// member must not run.
     pub never: Option<SubstateKey>,
     /// The taking transaction's validity end, which the claim states.
     pub validity_end_ms: u64,
@@ -308,6 +309,14 @@ impl LegPlan {
         self.edges.values().filter_map(|action| match action {
             EdgeAction::Departs(departure) => Some(departure.record),
             EdgeAction::Arrives(_) => None,
+        })
+    }
+
+    /// Every arrival this execution takes, in edge order.
+    pub(crate) fn arrivals(&self) -> impl Iterator<Item = Arrival> + '_ {
+        self.edges.values().filter_map(|action| match action {
+            EdgeAction::Arrives(arrival) => Some(*arrival),
+            EdgeAction::Departs(_) => None,
         })
     }
 

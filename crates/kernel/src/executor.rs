@@ -33,13 +33,13 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::thread;
 
-use hyperscale_vm_effects::{Declaration, IntentRecord, NodeCall, PackageHash};
+use hyperscale_vm_effects::{Answered, Declaration, IntentRecord, NodeCall, PackageHash};
 use hyperscale_vm_types::{
     AbortReason, Address, Answer, CollectionId, ConflictClass, Effect, EffectSet, EffectTarget,
     MAX_EVENT_BYTES_PER_TX, Mode, ModeKind, Moves, Outcome, SubstateKey, TxHash, UnmetCondition,
 };
 
-use crate::escrow::{Disposal, EscrowDelta, LegPlan};
+use crate::escrow::{Arrival, Disposal, EscrowDelta, LegPlan};
 use crate::ledger::AmountLedger;
 use crate::locality::OwnerSet;
 use crate::overlay::OverlayStore;
@@ -314,6 +314,15 @@ impl BatchTx {
         }
     }
 
+    /// Every arrival this execution takes, in edge order; none for a
+    /// settlement.
+    fn arrivals(&self) -> Vec<Arrival> {
+        match &self.job {
+            Job::Manifest { legs, .. } => legs.arrivals().collect(),
+            Job::Records(_) => Vec::new(),
+        }
+    }
+
     /// Every decline cell the refusal of this execution's member would
     /// write: one per refusable arrival a manifest takes, none for any
     /// other job.
@@ -322,8 +331,9 @@ impl BatchTx {
     /// naming it is honest; held to an exclusive declaration like the
     /// claim beside it, so every writer of the key sits in one conflict
     /// group. Outside [`created_cells`], because the cell is not this
-    /// execution's to create: a `Never` standing at it is the crossing
-    /// already answered, which is what refuses the member's take.
+    /// execution's to create: this transaction's `Never` standing at it
+    /// is the crossing already answered, which is what refuses the
+    /// member's take.
     #[must_use]
     pub(crate) fn never_cells(&self) -> Vec<SubstateKey> {
         match &self.job {
@@ -871,21 +881,17 @@ fn abort_receipt(outcome: Outcome, fuel_by_node: Vec<u64>) -> Receipt {
     }
 }
 
-/// Every marker cell this execution creates, each with the outcome its
-/// presence beforehand means: the nullifier of each intent it
-/// commits, the claims it takes, the records it writes.
+/// Every marker cell this execution creates, each with the outcome that
+/// names its family: the nullifier of each intent it commits, the
+/// claims it takes, the records it writes.
 ///
-/// One list for the three families, in the order a caller wants them
-/// read: a spent nullifier says the intent was already committed —
-/// by this group, an earlier batch, or the signer's own cancellation; a
-/// claim is the cell another party can write; a record only ever says
-/// this leg already ran. Whichever is found first names the outcome, so
-/// two committed cells name one outcome whatever else is in the batch.
+/// What the declaration screen holds to an exclusive write, and no
+/// statement of what refuses a run: a claim found standing refuses only
+/// on the terms [`standing_marker`] reads it under.
 ///
-/// Creations, so a cell found already there means the work is done. A
-/// settlement's own record is there by construction — it is what the
-/// settlement disposes of — which is why the screen reads a wider set
-/// than this one does ([`marker_writes`]).
+/// A settlement's own record is there by construction — it is what the
+/// settlement disposes of — which is why the declaration screen reads a
+/// wider set than this one ([`marker_writes`]).
 fn created_cells(entry: &BatchTx) -> Vec<(SubstateKey, Outcome)> {
     entry
         .nullifiers
@@ -938,6 +944,87 @@ fn marker_writes(entry: &BatchTx) -> Vec<(SubstateKey, Outcome)> {
         .collect()
 }
 
+/// The marker standing in `store` that says `entry` must not run, as
+/// the outcome it names.
+///
+/// Read in one order, so two standing cells name one outcome whatever
+/// else is in the batch: a spent nullifier says the intent was already
+/// committed — by this group, an earlier batch, or the signer's own
+/// cancellation; this transaction's `Taken` at an arrival's claim says
+/// it already took the crossing, and a claim an earlier member of this
+/// group wrote says that member completed a take at the cell in this
+/// batch; a record says this leg already ran; and this transaction's
+/// `Never` at an arrival's decline says its refusal already answered
+/// the crossing the other way.
+///
+/// A nullifier and a record refuse by being there. An answer standing
+/// in the batch's baseline refuses only where it is this transaction's
+/// ([`CrossingId::answered_by`]): the answer keys name the edge and no
+/// transaction, so a cell holding anything else is what another
+/// transaction answered a record that stood at this edge before. It
+/// answers nothing here, and this execution's take, or its refusal,
+/// writes over it.
+///
+/// A claim written inside the batch refuses, whichever transaction
+/// wrote it. One claim cell is taken at most once per batch: a record
+/// is issued at an edge only once the record before it has gone, and
+/// that one goes only once its consumer's take is committed or its
+/// consumer can never take it, so two takes at one cell in one batch
+/// are not two records and the second credits nothing. Every taker of a claim declares it an
+/// exclusive write, so all of them sit in one group and `store`, the
+/// group's overlay, holds the earlier one's write
+/// ([`OverlayStore::layered_cell`]).
+///
+/// Only the shard holding a cell can read it; elsewhere the owning
+/// shard's verdict arrives through the tick combine.
+///
+/// [`CrossingId::answered_by`]: hyperscale_vm_effects::CrossingId::answered_by
+fn standing_marker(entry: &BatchTx, store: &OverlayStore) -> Option<Outcome> {
+    let stands = |key: &SubstateKey| entry.applies.covers(key.owner) && store.cell(*key).is_some();
+    let answered = |key: SubstateKey, arrival: &Arrival, answered: Answered| {
+        entry.applies.covers(key.owner)
+            && store.cell(key).is_some_and(|value| {
+                arrival
+                    .crossing
+                    .id
+                    .answered_by(entry.tx, arrival.validity_end_ms, answered, &value)
+            })
+    };
+    let taken_in_group =
+        |claim: SubstateKey| entry.applies.covers(claim.owner) && store.layered_cell(claim);
+    let arrivals = entry.arrivals();
+    entry
+        .nullifiers
+        .iter()
+        .flat_map(|record| &record.nullifiers)
+        .map(|nullifier| nullifier.key)
+        .find(stands)
+        .map(|key| Outcome::NullifierSpent { key })
+        .or_else(|| {
+            arrivals
+                .iter()
+                .find(|arrival| {
+                    answered(arrival.claim, arrival, Answered::Taken)
+                        || taken_in_group(arrival.claim)
+                })
+                .map(|arrival| Outcome::EscrowAlreadyClaimed { key: arrival.claim })
+        })
+        .or_else(|| {
+            entry
+                .record_cells()
+                .into_iter()
+                .find(stands)
+                .map(|key| Outcome::EscrowAlreadyIssued { key })
+        })
+        .or_else(|| {
+            arrivals
+                .iter()
+                .filter_map(|arrival| Some((arrival.never?, arrival)))
+                .find(|(never, arrival)| answered(*never, arrival, Answered::Never))
+                .map(|(key, _)| Outcome::EscrowAlreadyClaimed { key })
+        })
+}
+
 /// Execute one conflict group: members in canonical order, each threading
 /// the group's store; a non-completed transaction leaves the store as it
 /// found it.
@@ -953,18 +1040,16 @@ fn run_group<R: GuestRunner>(
     let mut store = OverlayStore::new(shared);
     for &index in group {
         let entry = batch[index];
-        // A marker already committed aborts before execution: a spent
-        // nullifier says some earlier transaction — this group, an
-        // earlier batch, or the signer's own cancellation — already
-        // committed the intent; a crossing cell says this execution
-        // has already run, or that somebody else took what it came for.
-        // Either way the node must not run: a second claim would credit
-        // value nobody issued, and a second issue would debit the
-        // producing vault twice and rewrite the record with the bytes
-        // already in it.
+        // A marker already committed aborts before execution: the
+        // intent was already committed, this execution has already run
+        // or already answered its crossing, or an earlier member of the
+        // group took at its claim cell. Either way the node
+        // must not run: a second claim would credit value nobody
+        // issued, a second issue would debit the producing vault twice
+        // and rewrite the record with the bytes already in it, and a
+        // take after this member's own refusal would take what the
+        // refusal said it never would.
         //
-        // Only the shard holding the cell can read it; elsewhere the
-        // owning shard's verdict arrives through the tick combine.
         // Presence, not presence-and-unexpired. A marker past its
         // expiry is unreachable rather than ignorable: the intent a
         // nullifier records stopped being admissible a full grace
@@ -972,22 +1057,7 @@ fn run_group<R: GuestRunner>(
         // absent would only matter where one did arrive — a chain whose
         // committed clock lags far enough to admit a lapsed intent —
         // and there the cell is the last thing refusing the replay.
-        //
-        // A decline cell standing at an arrival's edge is the crossing
-        // already answered the other way: the member must not run and
-        // take what its own refusal said it never would, so the screen
-        // reads the `Never` beside the claim, as the one "already
-        // answered" outcome.
-        let marked = created_cells(entry)
-            .into_iter()
-            .chain(
-                entry
-                    .never_cells()
-                    .into_iter()
-                    .map(|key| (key, Outcome::EscrowAlreadyClaimed { key })),
-            )
-            .find(|(key, _)| entry.applies.covers(key.owner) && store.cell(*key).is_some());
-        if let Some((_, outcome)) = marked {
+        if let Some(outcome) = standing_marker(entry, &store) {
             receipts.push((entry.tx, abort_receipt(outcome, Vec::new())));
             continue;
         }

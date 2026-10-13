@@ -413,6 +413,21 @@ impl OverlayStore {
         !self.active.cells.is_empty() || !self.committed.cells.is_empty()
     }
 
+    /// Whether a layer holds a value at `key`: a write of something that
+    /// ran over this overlay, as against a cell its base holds.
+    ///
+    /// A group's overlay is opened empty over the batch's baseline and
+    /// threads each completed member's writes, so on it this says an
+    /// earlier member of the group wrote the cell.
+    #[must_use]
+    pub(crate) fn layered_cell(&self, key: SubstateKey) -> bool {
+        self.active
+            .cells
+            .get(&key)
+            .or_else(|| self.committed.cells.get(&key))
+            .is_some_and(Option::is_some)
+    }
+
     /// Apply both layers onto `base`, returning the collapsed plain store
     /// with a clear access log — the kernel-suite convenience for
     /// asserting a batch's end state. `base` must be the store this

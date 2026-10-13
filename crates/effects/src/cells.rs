@@ -628,13 +628,14 @@ impl Answered {
 ///
 /// One type for both answers because they carry the same terms and are
 /// cleaned up against the same record; two roles because what a producer
-/// asks is which cell is *there*, and a key is what can answer that
-/// without a reader pinning an encoding.
+/// asks is which cell is *there*, and a key is what answers that. Whose
+/// answer the cell is, is in its bytes: the keys name the edge and no
+/// transaction, and a presence states the hash of the bytes it proves.
 ///
-/// No expiry, because nothing sweeps it. A crossing is answered once, by
-/// a presence its producer reads at whatever anchor it reaches, and this
-/// cell is what refuses a second answer, so a clock that took it away
-/// would license the second.
+/// No expiry, because nothing sweeps it. A transaction answers a
+/// crossing once, by a presence its producer reads at whatever anchor
+/// it reaches, and this cell is what refuses that transaction a second
+/// answer, so a clock that took it away would license the second.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hbor)]
 pub struct CrossingAnswer {
     /// The transaction whose execution answered the crossing, or — for a
@@ -782,11 +783,12 @@ impl CrossingId {
     /// different role, which is what lets one crossing be named by both
     /// shards without either consulting placement. Two keys rather than
     /// one cell with two meanings, because what a producer asks is
-    /// whether a cell is *there* — a proof of presence carries a value
-    /// hash and nothing a reader could compare against without pinning
-    /// an encoding, so the key is what says which answer was given. The
-    /// one derivation of either answer key, so the member's refusal
-    /// receipt, the abandonment and every reader name one cell.
+    /// whether a cell is *there*, so the key is what says which answer
+    /// was given. The value hash a proof of presence carries says whose
+    /// answer it is ([`Self::answer_values`]): the key names no
+    /// transaction. The one derivation of either answer key, so the
+    /// member's refusal receipt, the abandonment and every reader name
+    /// one cell.
     #[must_use]
     pub fn answer_key(&self, hasher: &dyn Hasher, answered: Answered) -> SubstateKey {
         answer_key(
@@ -864,6 +866,51 @@ impl CrossingId {
             seen: false,
             ..self.answer(tx, Answered::Never, validity_end_ms)
         }
+    }
+
+    /// Every value a cell answering this crossing for `tx` in
+    /// `answered`'s role holds: the one a take writes, or the two a
+    /// decline stands as, seen and unseen.
+    ///
+    /// The answer keys name the edge and no transaction, and an edge is
+    /// issued again by any later transaction carrying its intent. An
+    /// answer's bytes are a function of the crossing, the answering
+    /// transaction and that transaction's validity end, so the bytes
+    /// are what says whose answer a cell is. Every writer writes one of
+    /// these and every reader holds what it reads to them: by the
+    /// bytes where it holds the cell ([`Self::answered_by`]), by their
+    /// hash where it holds a proof of the cell's presence.
+    #[must_use]
+    pub fn answer_values(
+        self,
+        tx: TxHash,
+        validity_end_ms: u64,
+        answered: Answered,
+    ) -> Vec<Vec<u8>> {
+        let seen = self.answer(tx, answered, validity_end_ms).to_bytes();
+        match answered {
+            Answered::Taken => vec![seen],
+            Answered::Never => vec![seen, self.unseen_never(tx, validity_end_ms).to_bytes()],
+        }
+    }
+
+    /// Whether `value`, read at this crossing's `answered` key, is the
+    /// answer of `tx`: one of [`Self::answer_values`], byte for byte.
+    ///
+    /// A cell holding anything else answers nothing for `tx`. It is
+    /// another transaction's answer to a record that stood at this key
+    /// before, and whoever answers for `tx` writes over it.
+    #[must_use]
+    pub fn answered_by(
+        self,
+        tx: TxHash,
+        validity_end_ms: u64,
+        answered: Answered,
+        value: &[u8],
+    ) -> bool {
+        self.answer_values(tx, validity_end_ms, answered)
+            .iter()
+            .any(|held| held == value)
     }
 }
 
