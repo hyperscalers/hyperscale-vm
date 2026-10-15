@@ -169,25 +169,6 @@ pub struct Departure {
     pub validity_end_ms: u64,
 }
 
-/// One record this execution takes back rather than runs a node for: a
-/// crossing the producing shard issued that no consumer will take.
-///
-/// The record is read and deleted, and its resource and amount are
-/// credited to the cell the value left; nothing else is written. Every
-/// term is the leaf's, so a replica holding the prefix and nothing else
-/// — a split child — composes a reclaim from the record alone.
-///
-/// The evidence is the parent's to establish. What the kernel checks is
-/// that the record is there to read, and its removal is what refuses a
-/// second reclaim. A record whose consumer took the crossing is not
-/// this job's: its removal is a commit-fold write licensed by the
-/// consumer's answer read present, and reaches no session.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Disposal {
-    /// The record cell to read.
-    pub record: SubstateKey,
-}
-
 /// What arrived for the edge a node this execution does not run would
 /// have made: what crossed, and the claim cell taking it writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

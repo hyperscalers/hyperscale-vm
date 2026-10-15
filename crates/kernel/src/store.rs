@@ -305,12 +305,8 @@ impl FeeHolds {
 pub struct WithheldCredits {
     /// What members of the batch raised the cell by that a batch-mate
     /// could settle without, by transaction: the credit, less its own
-    /// debit, of a member a counterpart's verdict can still discard, and
-    /// of one no committed order holds its batch-mates behind.
+    /// debit, of a member a counterpart's verdict can still discard.
     pub members: BTreeMap<TxHash, u128>,
-    /// What the baseline carries of credits not yet settled under it,
-    /// summed. No member of the batch made any of it.
-    pub rest: u128,
 }
 
 impl WithheldCredits {
@@ -319,7 +315,7 @@ impl WithheldCredits {
     pub fn total(&self) -> u128 {
         self.members
             .values()
-            .fold(self.rest, |total, credit| total.saturating_add(*credit))
+            .fold(0, |total: u128, credit| total.saturating_add(*credit))
     }
 
     /// Everything withheld from `tx`: all of it but what `tx` credited
@@ -329,9 +325,7 @@ impl WithheldCredits {
         self.members
             .iter()
             .filter(|(member, _)| **member != tx)
-            .fold(self.rest, |total, (_, credit)| {
-                total.saturating_add(*credit)
-            })
+            .fold(0, |total: u128, (_, credit)| total.saturating_add(*credit))
     }
 }
 
@@ -564,12 +558,6 @@ impl MemoryStore {
     /// there.
     pub fn hold_fees(&mut self, key: SubstateKey, holds: FeeHolds) {
         self.fee_held.insert(key, holds);
-    }
-
-    /// Seed the credits withheld on a cell, in place of any already
-    /// there.
-    pub fn withhold_credits(&mut self, key: SubstateKey, withheld: WithheldCredits) {
-        self.withheld.insert(key, withheld);
     }
 }
 

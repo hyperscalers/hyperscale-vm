@@ -236,7 +236,7 @@ impl OverlayStore {
 
     /// The effective withheld credits on a cell: the base's with what
     /// both layers' members credited. A member is recorded in the layer
-    /// its credit landed in, and no layer moves `rest`.
+    /// its credit landed in.
     fn effective_withheld_credits(&self, key: SubstateKey) -> WithheldCredits {
         let mut withheld = self.base.withheld_credits(key);
         for layer in [self.committed.as_ref(), &self.active] {

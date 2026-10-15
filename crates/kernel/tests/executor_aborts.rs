@@ -338,7 +338,7 @@ fn nullifier_tx(id: u8) -> BatchTx {
         fee: None,
         credits_withheld: false,
         declaration: Declaration::from_set(point(nullifier(), Mode::Write { moves: Moves::Both })),
-        job: Job::Manifest {
+        job: Job {
             calls: Vec::new(),
             legs: LegPlan::whole(0),
         },
@@ -409,7 +409,7 @@ fn sharing_tx(id: u8) -> BatchTx {
     BatchTx {
         tx: tx(id),
         declaration: Declaration::from_set(set),
-        job: Job::Manifest {
+        job: Job {
             calls: Vec::new(),
             legs: LegPlan::whole(0),
         },
@@ -441,7 +441,7 @@ fn nullifier_and_shared_tx(id: u8) -> BatchTx {
     BatchTx {
         tx: tx(id),
         declaration: Declaration::from_set(set),
-        job: Job::Manifest {
+        job: Job {
             calls: Vec::new(),
             legs: LegPlan::whole(0),
         },
@@ -592,7 +592,7 @@ fn a_nullifier_outside_the_declaration_refuses_the_batch() {
     let undeclared = BatchTx {
         tx: tx(0x01),
         declaration: Declaration::from_set(point(nullifier(), Mode::Read)),
-        job: Job::Manifest {
+        job: Job {
             calls: Vec::new(),
             legs: LegPlan::whole(0),
         },
@@ -653,7 +653,7 @@ fn declaration_views_that_disagree_refuse_the_batch() {
                 .collect(),
             ..Declaration::default()
         },
-        job: Job::Manifest {
+        job: Job {
             calls: Vec::new(),
             legs: LegPlan::whole(0),
         },

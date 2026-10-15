@@ -490,12 +490,10 @@ fn departing(
             Ok(_) => kept.push(None),
             Err(trap) => {
                 // A departure refused for the plan's shape is the batch's
-                // defect wherever it is raised, which is the class the
-                // settlement path already gives these two. What the guest
-                // did with its bucket is its own.
+                // defect wherever it is raised. What the guest did with
+                // its bucket is its own.
                 let outcome = match trap {
-                    SessionTrap::EscrowCreditUndeclared(_)
-                    | SessionTrap::CrossingKeyRepeated(_) => Outcome::ProtocolError {
+                    SessionTrap::CrossingKeyRepeated(_) => Outcome::ProtocolError {
                         reason: trap.into(),
                     },
                     other => Outcome::UserError {
@@ -625,55 +623,9 @@ fn satisfies(
     }
 }
 
-/// Run a job that invokes no node: what it writes, in order, or the
-/// first trap that stops it.
-///
-/// A reclaim is the one of them. It costs no fuel and reaches no guest,
-/// and so cannot refuse for a guest's reason — what it can refuse for
-/// is its own cells, which is the batch's defect and not the
-/// transaction's.
-fn walk_cells(
-    mut session: KernelSession,
-    mut each: impl FnMut(&mut KernelSession) -> Result<(), SessionTrap>,
-) -> RunResult {
-    if let Err(trap) = each(&mut session) {
-        let outcome = match trap {
-            SessionTrap::EscrowRecordUnreadable(_) | SessionTrap::EscrowCreditUndeclared(_) => {
-                Outcome::ProtocolError {
-                    reason: trap.into(),
-                }
-            }
-            other => Outcome::UserError {
-                reason: other.into(),
-            },
-        };
-        return RunResult::Aborted {
-            session,
-            outcome,
-            spent: Vec::new(),
-        };
-    }
-    RunResult::Completed {
-        session,
-        answers: Vec::new(),
-        spent: Vec::new(),
-    }
-}
-
 impl<B: GuestBackend + ?Sized> GuestRunner for ManifestWalk<'_, B> {
     fn run(&self, entry: &BatchTx, mut session: KernelSession) -> Result<RunResult, Unavailable> {
-        let (calls, legs) = match &entry.job {
-            // The records this member takes back: read, credited back,
-            // deleted.
-            Job::Records(disposals) => {
-                return Ok(walk_cells(session, |session| {
-                    disposals
-                        .iter()
-                        .try_for_each(|disposal| session.escrow_settle(disposal))
-                }));
-            }
-            Job::Manifest { calls, legs } => (calls, legs),
-        };
+        let Job { calls, legs } = &entry.job;
         let mut outputs: Vec<Vec<Option<u32>>> = Vec::with_capacity(calls.len());
         let mut answers: Vec<Answer> = Vec::new();
         // What each node consumed, in node order: the receipt's report,

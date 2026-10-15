@@ -350,10 +350,10 @@ fn answer_key(
 ///
 /// The validity end, the issuing transaction and the consumer's target are
 /// terms of the reclaim rather than the record's identity, which stays
-/// the edge the key is derived from. The transaction is what a
-/// successor's reclaim is admitted under, the tick and its receipt being
-/// keyed by transaction and a record naming none being unadmittable. The
-/// consumer's target is what the consumer's answer cells are keyed
+/// the edge the key is derived from. The transaction and its validity end
+/// are what the consumer's answers bind to: an answer states one derived
+/// from them, so one another transaction left on the same edge answers
+/// nothing for this record. The consumer's target is what the consumer's answer cells are keyed
 /// under — the claim that says the crossing was taken and the record is
 /// the retirement's, the `Never` that says it was refused and the value
 /// is the producer's to credit back — and nothing else names it: it is

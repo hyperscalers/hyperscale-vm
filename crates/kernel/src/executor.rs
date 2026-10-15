@@ -39,7 +39,7 @@ use hyperscale_vm_types::{
     MAX_EVENT_BYTES_PER_TX, Mode, ModeKind, Moves, Outcome, SubstateKey, TxHash, UnmetCondition,
 };
 
-use crate::escrow::{Arrival, Disposal, EscrowDelta, LegPlan};
+use crate::escrow::{Arrival, EscrowDelta, LegPlan};
 use crate::ledger::AmountLedger;
 use crate::locality::OwnerSet;
 use crate::overlay::OverlayStore;
@@ -75,8 +75,7 @@ pub struct BatchTx {
     /// read index for index and only ever come from one evaluation. The
     /// ordered view must fold to the set; [`execute_batch`] checks it.
     pub declaration: Declaration,
-    /// What this execution does: walk the transaction's manifest, or
-    /// settle records without invoking a node.
+    /// The manifest this execution walks and the share of it it runs.
     pub job: Job,
     /// The nullifier keys of every intent the transaction commits.
     /// Each must also be declared as an exclusive write,
@@ -92,8 +91,7 @@ pub struct BatchTx {
     pub fee: Option<FeeBurn>,
     /// Whether what this execution credits is withheld from the rest of
     /// its batch: set for a member whose effects a batch-mate can settle
-    /// without, because a counterpart's verdict can still discard them
-    /// or because no committed order holds the batch-mate behind them.
+    /// without, because a counterpart's verdict can still discard them.
     /// A debit by any other member is then judged as if the credit were
     /// not there, in the session and in the replay alike.
     pub credits_withheld: bool,
@@ -154,7 +152,7 @@ impl BatchTx {
         Self {
             tx,
             declaration: declaration.into(),
-            job: Job::Manifest {
+            job: Job {
                 calls: Vec::new(),
                 legs: LegPlan::whole(0),
             },
@@ -197,23 +195,10 @@ impl BatchTx {
         self
     }
 
-    /// Bind which of the manifest's nodes this execution runs. An entry
-    /// settling records walks no manifest; binding legs makes it one.
+    /// Bind which of the manifest's nodes this execution runs.
     #[must_use]
     pub fn with_legs(mut self, legs: LegPlan) -> Self {
-        let calls = match self.job {
-            Job::Manifest { calls, .. } => calls,
-            Job::Records(_) => Vec::new(),
-        };
-        self.job = Job::Manifest { calls, legs };
-        self
-    }
-
-    /// Bind the records this execution settles instead of walking a
-    /// manifest.
-    #[must_use]
-    pub fn with_disposals(mut self, disposals: Vec<Disposal>) -> Self {
-        self.job = Job::Records(disposals);
+        self.job.legs = legs;
         self
     }
 
@@ -263,69 +248,39 @@ impl BatchTx {
         self.gas_limits.get(node).copied()
     }
 
-    /// Bind the invocations the manifest walk performs. An entry
-    /// settling records walks no manifest; binding calls makes it one.
+    /// Bind the invocations the manifest walk performs.
     #[must_use]
     pub fn with_calls(mut self, calls: Vec<NodeCall>) -> Self {
-        let legs = match self.job {
-            Job::Manifest { legs, .. } => legs,
-            Job::Records(_) => LegPlan::whole(0),
-        };
-        self.job = Job::Manifest { calls, legs };
+        self.job.calls = calls;
         self
     }
 
-    /// The invocations this execution walks; none for a settlement.
+    /// The invocations this execution walks.
     #[must_use]
     pub fn calls(&self) -> &[NodeCall] {
-        match &self.job {
-            Job::Manifest { calls, .. } => calls,
-            Job::Records(_) => &[],
-        }
+        &self.job.calls
     }
 
     /// Every record cell this execution creates: what its departing
-    /// edges write. A reclaim creates none — it reads records and
-    /// deletes them.
+    /// edges write.
     #[must_use]
     pub(crate) fn record_cells(&self) -> Vec<SubstateKey> {
-        match &self.job {
-            Job::Manifest { legs, .. } => legs.records().collect(),
-            Job::Records(_) => Vec::new(),
-        }
-    }
-
-    /// Every record cell this execution takes back and deletes. A
-    /// manifest disposes of none — it issues them.
-    #[must_use]
-    pub(crate) fn disposed_records(&self) -> Vec<SubstateKey> {
-        match &self.job {
-            Job::Manifest { .. } => Vec::new(),
-            Job::Records(disposals) => disposals.iter().map(|disposal| disposal.record).collect(),
-        }
+        self.job.legs.records().collect()
     }
 
     /// Every claim cell this execution creates: the arrivals it takes.
     #[must_use]
     pub(crate) fn claim_cells(&self) -> Vec<SubstateKey> {
-        match &self.job {
-            Job::Manifest { legs, .. } => legs.claims().collect(),
-            Job::Records(_) => Vec::new(),
-        }
+        self.job.legs.claims().collect()
     }
 
-    /// Every arrival this execution takes, in edge order; none for a
-    /// settlement.
+    /// Every arrival this execution takes, in edge order.
     fn arrivals(&self) -> Vec<Arrival> {
-        match &self.job {
-            Job::Manifest { legs, .. } => legs.arrivals().collect(),
-            Job::Records(_) => Vec::new(),
-        }
+        self.job.legs.arrivals().collect()
     }
 
     /// Every decline cell the refusal of this execution's member would
-    /// write: one per refusable arrival a manifest takes, none for any
-    /// other job.
+    /// write: one per refusable arrival it takes.
     ///
     /// The member's refusal receipt writes the cell, so the declaration
     /// naming it is honest; held to an exclusive declaration like the
@@ -336,10 +291,7 @@ impl BatchTx {
     /// member's take.
     #[must_use]
     pub(crate) fn never_cells(&self) -> Vec<SubstateKey> {
-        match &self.job {
-            Job::Manifest { legs, .. } => legs.nevers().collect(),
-            Job::Records(_) => Vec::new(),
-        }
+        self.job.legs.nevers().collect()
     }
 
     /// Bind the intents this transaction commits. Each key must also be
@@ -358,43 +310,33 @@ impl BatchTx {
     }
 }
 
-/// What a batch entry does.
-///
-/// A manifest is walked: its lowered invocations run in node order, under
-/// a plan saying which of them this participant runs and what crosses at
-/// the edges between them. Records are taken back: no node is invoked,
-/// and each record named is read, credited back and removed. A reclaim
-/// names cells and not a manifest, which is what lets a shard holding
-/// the record and no body — a reshape successor — compose one.
+/// The manifest a batch entry walks: its lowered invocations, run in
+/// node order, under a plan saying which of them this participant runs
+/// and what crosses at the edges between them.
 #[derive(Clone, Debug)]
-pub enum Job {
-    /// Walk the transaction's manifest.
-    Manifest {
-        /// The transaction's lowered invocations, in manifest node
-        /// order: what [`crate::walk::ManifestWalk`] performs.
-        ///
-        /// Shard-invariant, exactly like the declaration and for the
-        /// same reason — every participant of a cross-shard transaction
-        /// runs the identical calls against the identical table, and
-        /// locality scopes what is applied rather than what is invoked.
-        calls: Vec<NodeCall>,
-        /// Which of the manifest's nodes this execution runs, and the
-        /// cells the ones it does not run stand in for.
-        ///
-        /// Whole until a transaction decomposes, which is what every
-        /// execution ran before there was anything else to run — so the
-        /// whole-shape path is the default rather than a case. A plan
-        /// naming no node runs every node the entry has, which is what
-        /// the default is.
-        ///
-        /// Unlike the declaration and the calls beside it, this is
-        /// **not** shard-invariant: it is the one thing about a manifest
-        /// entry that differs per participant, because it is exactly the
-        /// statement of which participant this is.
-        legs: LegPlan,
-    },
-    /// Take back the records named, in order, invoking nothing.
-    Records(Vec<Disposal>),
+pub struct Job {
+    /// The transaction's lowered invocations, in manifest node order:
+    /// what [`crate::walk::ManifestWalk`] performs.
+    ///
+    /// Shard-invariant, exactly like the declaration and for the same
+    /// reason — every participant of a cross-shard transaction runs the
+    /// identical calls against the identical table, and locality scopes
+    /// what is applied rather than what is invoked.
+    pub calls: Vec<NodeCall>,
+    /// Which of the manifest's nodes this execution runs, and the cells
+    /// the ones it does not run stand in for.
+    ///
+    /// Whole until a transaction decomposes, which is what every
+    /// execution ran before there was anything else to run — so the
+    /// whole-shape path is the default rather than a case. A plan naming
+    /// no node runs every node the entry has, which is what the default
+    /// is.
+    ///
+    /// Unlike the declaration and the calls beside it, this is **not**
+    /// shard-invariant: it is the one thing about a manifest entry that
+    /// differs per participant, because it is exactly the statement of
+    /// which participant this is.
+    pub legs: LegPlan,
 }
 
 /// The seam between the executor's per-transaction bookkeeping and the
@@ -889,9 +831,8 @@ fn abort_receipt(outcome: Outcome, fuel_by_node: Vec<u64>) -> Receipt {
 /// statement of what refuses a run: a claim found standing refuses only
 /// on the terms [`standing_marker`] reads it under.
 ///
-/// A settlement's own record is there by construction — it is what the
-/// settlement disposes of — which is why the declaration screen reads a
-/// wider set than this one ([`marker_writes`]).
+/// The declaration screen reads a wider set than this one
+/// ([`marker_writes`]).
 fn created_cells(entry: &BatchTx) -> Vec<(SubstateKey, Outcome)> {
     entry
         .nullifiers
@@ -917,24 +858,13 @@ fn created_cells(entry: &BatchTx) -> Vec<(SubstateKey, Outcome)> {
 /// Every marker cell this execution *writes*, which is what the batch
 /// screen holds to an exclusive declaration.
 ///
-/// Wider than [`created_cells`] by the cells a job deletes — the
-/// records a reclaim disposes of — and by the decline cells a member's
-/// refusal writes. None is created here: a removal is a write on the
-/// same cell, and a `Never` is written by the host under the member's
-/// name, so each belongs in the same conflict group and wants the same
-/// exclusive declaration. Screening creations alone let a reclaim whose
-/// declaration omitted a record it deletes through, to surface later as
-/// an undeclared access: a kernel defect, and a halt, where a batch
-/// that cannot be run should simply refuse.
+/// Wider than [`created_cells`] by the decline cells a member's
+/// refusal writes. None is created here: a `Never` is written by the
+/// host under the member's name, so it belongs in the same conflict
+/// group and wants the same exclusive declaration.
 fn marker_writes(entry: &BatchTx) -> Vec<(SubstateKey, Outcome)> {
     created_cells(entry)
         .into_iter()
-        .chain(
-            entry
-                .disposed_records()
-                .into_iter()
-                .map(|key| (key, Outcome::EscrowAlreadyIssued { key })),
-        )
         .chain(
             entry
                 .never_cells()

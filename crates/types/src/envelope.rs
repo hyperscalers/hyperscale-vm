@@ -62,13 +62,18 @@ pub const MAX_ENVELOPE_BYTES: usize = <TransactionEnvelope as HborBound>::MAX_EN
 /// How long a transaction-derived artifact outlives the signed window it
 /// was derived from, in milliseconds.
 ///
-/// An intent stops being admissible at its `validity_end_ms`, so the
-/// last transaction that could have carried it is admitted before then and
-/// has terminated everywhere a bounded stretch later. Past that the
-/// nullifier answers nobody, and no reshape reads it across a cut — it
-/// is state, and state migrates with its owner's prefix at every split
-/// and merge. The workspace asserts this figure against the bound every
-/// other transaction-derived artifact is retained by.
+/// An intent stops being admissible at its `validity_end_ms`, and a
+/// transaction binding it has a window inside the intent's, so no member
+/// binding it is named to run at a tick anchored past its deadline, which
+/// falls inside this span. A spend can settle later than that, when its
+/// tick finalizes late; a tick anchored before the settle reads its
+/// anchor's state and the contributions above it, which the spend is one
+/// of, so the nullifier refuses the intent wherever it can still run.
+/// Past the span the nullifier answers nobody, and no reshape reads it
+/// across a cut — it is state, and state migrates with its owner's
+/// prefix at every split and merge. The workspace asserts this figure
+/// against the bound every other transaction-derived artifact is
+/// retained by.
 pub const ARTIFACT_GRACE_MS: u64 = 144_000;
 
 /// How long a shard's committed cell for a transaction outlives that

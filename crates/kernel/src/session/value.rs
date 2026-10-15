@@ -11,14 +11,12 @@
 
 use std::collections::BTreeSet;
 
-use hyperscale_vm_effects::{
-    Answered, CrossingCell, IssuanceGrant, Kind, ResourceKind, Terms, distinct_ids,
-};
+use hyperscale_vm_effects::{Answered, IssuanceGrant, Kind, ResourceKind, Terms, distinct_ids};
 use hyperscale_vm_types::{ResourceAddr, SubstateKey};
 
 use super::buckets::Held;
 use super::{Capability, KernelSession, Op, SessionTrap, Settlement};
-use crate::escrow::{Arrival, Crossed, Departure, Disposal};
+use crate::escrow::{Arrival, Crossed, Departure};
 use crate::ledger::AmountLedger;
 use crate::modes::{DeltaOp, decode_amount};
 use crate::store::WorkingStore;
@@ -289,59 +287,6 @@ impl KernelSession {
             | Capability::RangeWrite(_)
             | Capability::Instances { .. } => None,
         }
-    }
-
-    /// Take back one record this execution issued: credit the crossing
-    /// to the cell it left and remove the record.
-    ///
-    /// Taking it back counts the crossing as a loss and credits it to
-    /// the cell the value left, so the fold balances with no term of its
-    /// own, and writes nothing else. The resource, the amount and the
-    /// cell credited are all the record's. Retiring moves nothing and
-    /// enters no fold term: the consumer's claim moved the value where
-    /// it ran, and what is left is a cell saying so.
-    ///
-    /// Either way the record goes: it is a balance held for a claim, and
-    /// the claim has happened or never will. Its going is what refuses a
-    /// second settlement — one finds nothing to read, and a second
-    /// settlement is the batch's defect rather than a lost race.
-    ///
-    /// # Errors
-    ///
-    /// [`SessionTrap::EscrowRecordUnreadable`] for a record that is
-    /// absent, does not decode, or — for a reclaim — leaves the
-    /// crossing nobody's to take back;
-    /// [`SessionTrap::EscrowCreditUndeclared`] where the declaration
-    /// carries no movement handle on the cell the record says to credit;
-    /// and any [`SessionTrap`] the loss, the credit or the store raises.
-    pub(crate) fn escrow_settle(&mut self, disposal: &Disposal) -> Result<(), SessionTrap> {
-        let record: CrossingCell = self
-            .store
-            .read(disposal.record)?
-            .and_then(|bytes| CrossingCell::from_bytes(&bytes))
-            .ok_or(SessionTrap::EscrowRecordUnreadable(disposal.record))?;
-        let Terms::Escrowed { credit } = record.terms else {
-            return Err(SessionTrap::EscrowRecordUnreadable(disposal.record));
-        };
-        let site = self
-            .table
-            .iter()
-            .position(|held| matches!(held, Capability::Delta { key, .. } if *key == credit))
-            .and_then(|index| u32::try_from(index).ok())
-            .ok_or(SessionTrap::EscrowCreditUndeclared(credit))?;
-        let crossed = Crossed {
-            resource: record.resource,
-            amount: record.amount,
-        };
-        self.escrow.claim(crossed)?;
-        let funds = self.open_bucket(Held::Amount(crossed.amount), crossed.resource, None);
-        self.cell_put(site, 0, funds)?;
-        // The record goes with the value. Its consumer reads the going
-        // of it at an anchor at or above the frontier its chain has
-        // already read this producer at, so the absence needs no date
-        // and the key stands for nothing once the value is back.
-        self.store.remove(disposal.record)?;
-        Ok(())
     }
 
     /// Write the crossing `value` at `key`, where nothing has written

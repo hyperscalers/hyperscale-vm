@@ -1150,71 +1150,6 @@ mod under_withheld_credits {
         );
     }
 
-    /// A credit the baseline carries unsettled funds no member of the
-    /// batch: not a debit, not a reservation, not a burn.
-    #[test]
-    fn a_credit_unsettled_under_the_baseline_funds_no_member() {
-        let withholding = |rest| {
-            let mut base = supplied(100);
-            base.withhold_credits(
-                payer(),
-                WithheldCredits {
-                    rest,
-                    ..WithheldCredits::default()
-                },
-            );
-            base
-        };
-        let outcome_of = |does: Moving| {
-            let entry = mover(tx(1), does, false);
-            run(withholding(40), &[entry], moving(move |_| does)).receipts[&tx(1)]
-                .outcome
-                .clone()
-        };
-        assert!(matches!(
-            outcome_of((0, 60, 0, false)),
-            Outcome::Completed { .. }
-        ));
-        assert_eq!(
-            outcome_of((0, 61, 0, false)),
-            Outcome::Infeasible {
-                key: payer(),
-                amount: 61
-            }
-        );
-        assert_eq!(
-            outcome_of((0, 50, 11, false)),
-            Outcome::Infeasible {
-                key: payer(),
-                amount: 11
-            }
-        );
-
-        let reserving = |amount| {
-            let declaration = declaring(&[
-                (payer(), Mode::Reserve { amount }),
-                (sink(), Mode::Delta { moves: Moves::Both }),
-            ]);
-            let entry = BatchTx::new(tx(1), declaration, EnvInputs::unsealed(0));
-            let body = |_: &BatchTx, mut session: KernelSession| {
-                let funds = session.reserve_take(0, 0).expect("the grant is held");
-                session.cell_put(1, 0, funds).expect("into the sink");
-                completed(session)
-            };
-            run(withholding(40), &[entry], body).receipts[&tx(1)]
-                .outcome
-                .clone()
-        };
-        assert!(matches!(reserving(60), Outcome::Completed { .. }));
-        assert_eq!(
-            reserving(61),
-            Outcome::Infeasible {
-                key: payer(),
-                amount: 61
-            }
-        );
-    }
-
     proptest! {
         /// Two members in separate conflict groups credit, debit and burn
         /// on one vault, either with its credits withheld. The second's
@@ -1228,12 +1163,10 @@ mod under_withheld_credits {
         #[test]
         fn session_and_replay_agree_behind_a_withheld_credit(
             balance in 0u128..150,
-            rest in 0u128..60,
             first in (0u128..80, 0u128..120, 0u128..30, any::<bool>()),
             second in (0u128..80, 0u128..120, 0u128..30, any::<bool>()),
         ) {
-            let mut base = supplied(balance);
-            base.withhold_credits(payer(), WithheldCredits { rest, ..WithheldCredits::default() });
+            let base = supplied(balance);
             let of = move |member: TxHash| if member == tx(1) { first } else { second };
             let batch = [mover(tx(1), first, false), mover(tx(2), second, false)];
 
@@ -1426,6 +1359,137 @@ mod instances {
             },
             "the entry carries something else and the instance is where it was",
         );
+    }
+}
+
+/// What the cell an escrowed crossing names to be credited back may come
+/// to hold between the issue and the return.
+///
+/// The record names the cell its value was debited from, and only a
+/// session's own declaration says what that cell holds: whether a point
+/// is an amount, and of which resource, is the clause that names it. So a
+/// later transaction holding the cell as bytes, as another resource's
+/// amount, or crediting it to the top, is one the kernel completes.
+mod a_credit_cell {
+    use std::sync::Arc;
+
+    use hyperscale_vm_effects::{Declaration, Hash32, Hasher, IssuanceGrant, Issued};
+    use hyperscale_vm_kernel::{EnvInputs, KernelSession, OverlayStore};
+    use hyperscale_vm_types::{
+        Effect, EffectSet, EffectTarget, Mode, Movement, Moves, Outcome, ResourceAddr, read_amount,
+    };
+
+    use super::{MemoryStore, ResourceKind, TestHasher, TxHash, encode_amount, vault};
+
+    const UNIT: ResourceAddr = ResourceAddr::new([0xA1; 31]);
+    const OTHER: ResourceAddr = ResourceAddr::new([0xA2; 31]);
+
+    fn hash(data: &[u8]) -> [u8; 32] {
+        TestHasher.hash(b"crypto", &[data]).0
+    }
+
+    /// The cell an escrow of `UNIT` was debited from, holding `held`.
+    fn left(held: u128) -> MemoryStore {
+        let mut store = MemoryStore::new();
+        store.write(vault(1, UNIT.address()), encode_amount(held).to_vec());
+        store
+    }
+
+    /// A session over `store` holding the credit cell in `mode`,
+    /// denominated in `holds` where it holds an amount at all.
+    fn holding(store: MemoryStore, mode: Mode, holds: Option<ResourceAddr>) -> KernelSession {
+        let mut set = EffectSet::new();
+        set.insert_at_cap(Effect {
+            target: EffectTarget::Point(vault(1, UNIT.address())),
+            mode,
+        })
+        .expect("one cell");
+        let mut session = KernelSession::materialize(
+            OverlayStore::new(Arc::new(store)),
+            &Declaration::from_set(set).denominated(|_| holds),
+            TxHash(Hash32([7; 32])),
+            EnvInputs::unsealed(0),
+            hash,
+        )
+        .expect("the declaration materializes");
+        if let Some(resource) = holds {
+            session.grant_issuance(vec![IssuanceGrant {
+                resource,
+                kind: ResourceKind::Fungible,
+                direction: Issued::Either,
+            }]);
+        }
+        session
+    }
+
+    /// What the cell holds once `session` completes.
+    fn after(session: KernelSession) -> Option<Vec<u8>> {
+        let (receipt, _) = session
+            .finish(vec![], Vec::new())
+            .expect("the oracle stands");
+        assert!(
+            matches!(receipt.outcome, Outcome::Completed { .. }),
+            "{:?}",
+            receipt.outcome
+        );
+        let key = vault(1, UNIT.address());
+        let movement = receipt.delta.movements.get(&key).copied();
+        receipt.delta.cells.get(&key).cloned().unwrap_or_else(|| {
+            movement.map(|movement| {
+                encode_amount(movement.apply(400).expect("the credit fits")).to_vec()
+            })
+        })
+    }
+
+    /// A declaration naming the cell as bytes writes bytes over the
+    /// amount it held.
+    #[test]
+    fn a_credit_cell_can_come_to_hold_bytes() {
+        let mut session = holding(left(400), Mode::Write { moves: Moves::Both }, None);
+        session
+            .write_cell_set(0, 0, vec![1, 2, 3])
+            .expect("a write handle writes");
+        let held = after(session).expect("the cell holds what was written");
+        assert_eq!(held, vec![1, 2, 3]);
+        assert_eq!(read_amount(&held), None, "the cell holds no amount");
+    }
+
+    /// A declaration naming the cell as another resource's amount
+    /// credits that resource to it.
+    #[test]
+    fn a_credit_cell_can_take_a_second_resource() {
+        let mut session = holding(left(400), Mode::Delta { moves: Moves::Both }, Some(OTHER));
+        let minted = session.mint(0, 50).expect("the grant mints");
+        session
+            .cell_put(0, 0, minted)
+            .expect("the cell takes what its declaration denominates");
+        let held = after(session).expect("the cell holds an amount");
+        assert_eq!(read_amount(&held), Some(450));
+    }
+
+    /// A credit fills the cell to the top of `u128`, where the escrow's
+    /// return cannot land.
+    #[test]
+    fn a_credit_cell_can_be_filled_past_what_its_return_fits() {
+        let mut session = holding(left(400), Mode::Delta { moves: Moves::Both }, Some(UNIT));
+        let minted = session.mint(0, u128::MAX - 400).expect("the grant mints");
+        session.cell_put(0, 0, minted).expect("the credit fits");
+        let held = after(session).expect("the cell holds an amount");
+        assert_eq!(read_amount(&held), Some(u128::MAX));
+    }
+
+    /// A return over a full cell applies to nothing: a credit past
+    /// `u128` leaves the producer's fold no amount to write, so the fold
+    /// skips the return and the record stands. One that fits lands to
+    /// the top.
+    #[test]
+    fn a_return_past_u128_applies_to_nothing() {
+        let returned = Movement {
+            credit: 100,
+            ..Movement::none(UNIT)
+        };
+        assert_eq!(returned.apply(u128::MAX), None);
+        assert_eq!(returned.apply(u128::MAX - 100), Some(u128::MAX));
     }
 }
 

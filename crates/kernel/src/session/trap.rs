@@ -251,15 +251,6 @@ pub enum SessionTrap {
     /// A supply movement past what an accumulator can hold.
     #[error(transparent)]
     Supply(#[from] ModeError),
-    /// An escrow crossing naming a cell the declaration does not carry
-    /// in the form the crossing needs — no reservation on the cell the
-    /// value left, or no movement handle on the cell a reclaim credits.
-    #[error("escrow cell {0:?} is not declared in the form the crossing needs")]
-    EscrowCreditUndeclared(SubstateKey),
-    /// A settlement's record cell that is absent, does not decode, or is
-    /// a reclaim of a record naming nothing to credit.
-    #[error("escrow record {0:?} is not readable as a record to settle")]
-    EscrowRecordUnreadable(SubstateKey),
     /// Two crossings of one execution at one cell.
     ///
     /// The key names the edge, so two edges deriving one key leave a
@@ -315,8 +306,6 @@ impl From<SessionTrap> for AbortReason {
             SessionTrap::Math(error) => error.into(),
             SessionTrap::Supply(error) => error.into(),
             SessionTrap::Store(store) => store.into(),
-            SessionTrap::EscrowCreditUndeclared(_) => Self::EscrowCreditUndeclared,
-            SessionTrap::EscrowRecordUnreadable(_) => Self::EscrowRecordUnreadable,
             SessionTrap::CrossingKeyRepeated(_) => Self::CrossingKeyRepeated,
             SessionTrap::CrossingWithoutRecourse(_) => Self::CrossingWithoutRecourse,
             SessionTrap::OwedArrival(_) => Self::OwedArrival,

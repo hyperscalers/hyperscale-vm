@@ -391,8 +391,8 @@ pub fn star_at(
 /// its role.
 ///
 /// **The core must have a bearer.** A core with no node in it names no
-/// shard for a refusal, a departure or an absence to be taken against,
-/// so there is nothing for a reclaim to be admitted on. Where nothing
+/// shard to answer for the transaction, so nothing would ever write the
+/// `Never` an escrowed record goes back on. Where nothing
 /// else is in the core, the fee payer's home bears it: a party the
 /// routing already names, on a shard its legs already reach, and the
 /// cheaper bearer by a crossing wherever a write-free node was the other
@@ -610,9 +610,8 @@ impl Placed<'_> {
     }
 
     /// A reservation-shaped source feeding a deposit sink has no core node
-    /// at all, and nothing then names a shard for a refusal, a departure
-    /// or an absence to be taken against. An escrow issued under such a
-    /// shape would have no reclaim path.
+    /// at all, and nothing then names a shard to answer for it. An escrow
+    /// issued under such a shape would have no answer to go back on.
     fn core_bears_a_verdict(&self) -> bool {
         !self.core.is_empty()
     }

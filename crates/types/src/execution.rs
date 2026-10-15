@@ -458,19 +458,6 @@ pub enum AbortReason {
     /// classifier's defect, never the sender's.
     #[hbor(discriminant = 67)]
     ConditionStraddlesScope,
-    /// An escrow crossing named a cell the declaration does not carry
-    /// in the form the crossing needs: no reservation on the cell the
-    /// value is said to have left, or no movement handle on the cell a
-    /// reclaim would credit.
-    ///
-    /// The batch's own defect — whoever built the plan named a cell the
-    /// declaration beside it does not reach.
-    #[hbor(discriminant = 68)]
-    EscrowCreditUndeclared,
-    /// A reclaim named a record cell that is absent, does not decode, or
-    /// names an edge other than the one the reclaim claims.
-    #[hbor(discriminant = 69)]
-    EscrowRecordUnreadable,
     /// A body acted through a capability on a cell outside its member's
     /// execution scope.
     ///
@@ -872,8 +859,6 @@ mod tests {
             (65, AbortReason::CellValueTooLarge),
             (66, AbortReason::EscrowOverflow),
             (67, AbortReason::ConditionStraddlesScope),
-            (68, AbortReason::EscrowCreditUndeclared),
-            (69, AbortReason::EscrowRecordUnreadable),
             (70, AbortReason::OutsideScope),
             (71, AbortReason::CrossingKeyRepeated),
             (72, AbortReason::HandleOutsideFrame),

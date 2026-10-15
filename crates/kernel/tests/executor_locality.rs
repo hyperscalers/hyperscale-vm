@@ -223,7 +223,7 @@ fn committing_envelope(id: u8, amount: u128) -> BatchTx {
     BatchTx {
         tx: TxHash(Hash32([id; 32])),
         declaration: moving(declared),
-        job: Job::Manifest {
+        job: Job {
             calls: Vec::new(),
             legs: LegPlan::whole(0),
         },
