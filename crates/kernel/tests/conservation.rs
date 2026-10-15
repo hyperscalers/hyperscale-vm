@@ -1478,18 +1478,20 @@ mod a_credit_cell {
         assert_eq!(read_amount(&held), Some(u128::MAX));
     }
 
-    /// A return over a full cell applies to nothing: a credit past
-    /// `u128` leaves the producer's fold no amount to write, so the fold
-    /// skips the return and the record stands. One that fits lands to
-    /// the top.
+    /// A return over a full cell would burn what it carries: a credit
+    /// past `u128` lands what fits and burns the rest, and a return lands
+    /// only whole, so the fold skips it and the record stands. One that
+    /// fits lands to the top and burns nothing.
     #[test]
-    fn a_return_past_u128_applies_to_nothing() {
+    fn a_return_past_u128_burns_what_it_carries() {
         let returned = Movement {
             credit: 100,
             ..Movement::none(UNIT)
         };
-        assert_eq!(returned.apply(u128::MAX), None);
+        assert_eq!(returned.apply(u128::MAX), Some(u128::MAX));
+        assert_eq!(returned.burned(u128::MAX), 100);
         assert_eq!(returned.apply(u128::MAX - 100), Some(u128::MAX));
+        assert_eq!(returned.burned(u128::MAX - 100), 0);
     }
 }
 

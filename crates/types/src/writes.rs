@@ -254,11 +254,14 @@ impl Movement {
     ///
     /// The judged sides net before they touch `before`, so a movement whose
     /// credit and debit both land on one cell cannot overflow on a net that
-    /// fits: only a genuine debit past the balance returns `None`. The
-    /// settled value must agree with the execution-side fold in
-    /// `fold_deltas`, and does wherever that fold lands one: it credits
-    /// before it debits, so a net that fits over a credit that does not is
-    /// the one case it refuses and settlement, which cannot error, nets.
+    /// fits. A net credit lands what fits under `u128::MAX` and the rest is
+    /// burned ([`Self::burned`]): a credit can settle on a balance above
+    /// the one its kernel judged it against — raised by a credit the
+    /// settling fold writes after that read, or left higher by settlement
+    /// netting together movements the read landed one tick at a time — so
+    /// running past the width an amount has is no disagreement to halt on,
+    /// and every replica burns the same excess off the same prior. Only a
+    /// genuine debit past the balance returns `None`.
     ///
     /// [`Self::unjudged_debit`] applies last and saturates at zero, so a
     /// short payer pays what they have. It runs after the judged sides
@@ -266,14 +269,40 @@ impl Movement {
     /// fold never weighs one at all.
     #[must_use]
     pub const fn apply(self, before: u128) -> Option<u128> {
-        let judged = if self.credit >= self.debit {
-            before.checked_add(self.credit - self.debit)
-        } else {
-            before.checked_sub(self.debit - self.credit)
-        };
-        match judged {
-            Some(after) => Some(after.saturating_sub(self.unjudged_debit)),
+        match self.land(before) {
+            Some((after, _)) => Some(after.saturating_sub(self.unjudged_debit)),
             None => None,
+        }
+    }
+
+    /// What this movement's judged net credit runs past `u128::MAX` over
+    /// `before`, burned where [`Self::apply`] lands it. Zero for a net
+    /// debit, and for one past the balance, which does not land at all.
+    #[must_use]
+    pub const fn burned(self, before: u128) -> u128 {
+        match self.land(before) {
+            Some((_, burned)) => burned,
+            None => 0,
+        }
+    }
+
+    /// The judged sides over `before`: what the cell holds after them and
+    /// what a net credit burns past `u128::MAX`, or `None` for a debit
+    /// past the balance.
+    const fn land(self, before: u128) -> Option<(u128, u128)> {
+        if self.credit >= self.debit {
+            let net = self.credit - self.debit;
+            let room = u128::MAX - before;
+            if net > room {
+                Some((u128::MAX, net - room))
+            } else {
+                Some((before + net, 0))
+            }
+        } else {
+            match before.checked_sub(self.debit - self.credit) {
+                Some(after) => Some((after, 0)),
+                None => None,
+            }
         }
     }
 }
@@ -316,6 +345,8 @@ impl StateWrites {
     /// the transaction read. This receipt's own exclusive write to a
     /// cell stands in for `prior` where there is one; an absent cell
     /// reads as zero, and a drained one resolves to a removal.
+    /// A credit lands what fits under `u128::MAX` and burns the rest
+    /// ([`Movement::apply`]).
     ///
     /// # Errors
     ///
@@ -739,6 +770,51 @@ mod tests {
                 held: 500,
                 debit: 600,
             }
+        );
+    }
+
+    /// A net credit lands what fits under `u128::MAX` and burns the rest,
+    /// exactly at the edge and past it, and settles without an error; a
+    /// net debit burns nothing.
+    #[test]
+    fn a_credit_past_u128_lands_at_the_ceiling_and_burns_the_rest() {
+        let credit = |amount| Movement {
+            credit: amount,
+            ..Movement::none(RESOURCE)
+        };
+        assert_eq!(credit(10).apply(u128::MAX - 10), Some(u128::MAX));
+        assert_eq!(credit(10).burned(u128::MAX - 10), 0);
+        assert_eq!(credit(250).apply(u128::MAX - 10), Some(u128::MAX));
+        assert_eq!(credit(250).burned(u128::MAX - 10), 240);
+        assert_eq!(credit(5).apply(u128::MAX), Some(u128::MAX));
+        assert_eq!(credit(5).burned(u128::MAX), 5);
+        let netted = Movement {
+            debit: 4,
+            ..credit(10)
+        };
+        assert_eq!(netted.apply(u128::MAX - 2), Some(u128::MAX));
+        assert_eq!(netted.burned(u128::MAX - 2), 4);
+        let unjudged = Movement {
+            unjudged_debit: 7,
+            ..credit(250)
+        };
+        assert_eq!(
+            unjudged.apply(u128::MAX - 10),
+            Some(u128::MAX - 7),
+            "the unjudged debit takes from what landed, not from what burned"
+        );
+        assert_eq!(Movement::debit(RESOURCE, 3).burned(10), 0);
+        assert_eq!(Movement::debit(RESOURCE, 11).burned(10), 0);
+        assert_eq!(Movement::debit(RESOURCE, 11).apply(10), None);
+
+        let mut writes = StateWrites::default();
+        writes.movements.insert(key(1, 1), credit(250));
+        let settled = writes
+            .resolve(&mut |_| amount_cell(u128::MAX - 10).map(|cell| cell.to_vec()))
+            .expect("a credit settles whatever it carries");
+        assert_eq!(
+            settled.cells().get(&key(1, 1)),
+            Some(&amount_cell(u128::MAX).map(|cell| cell.to_vec()))
         );
     }
 
