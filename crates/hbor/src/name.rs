@@ -20,6 +20,7 @@
 
 use std::fmt;
 use std::ops::Deref;
+use std::str::FromStr;
 
 use crate::decode::Decoder;
 use crate::encode::{Encoder, Sink};
@@ -217,10 +218,10 @@ impl TryFrom<String> for Name {
     }
 }
 
-impl TryFrom<&str> for Name {
-    type Error = MalformedName;
+impl FromStr for Name {
+    type Err = MalformedName;
 
-    fn try_from(text: &str) -> Result<Self, MalformedName> {
+    fn from_str(text: &str) -> Result<Self, MalformedName> {
         Self::new(text.to_owned())
     }
 }
@@ -255,41 +256,43 @@ impl HborShape for Name {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::{MAX_NAME_BYTES, MalformedName, Name};
     use crate::{assert_canonical, from_slice, to_vec};
 
     #[test]
     fn a_name_is_the_identifier_that_declared_it() {
-        assert!(Name::try_from("deposit_nf").is_ok());
-        assert!(Name::try_from("ValidatorRegistered").is_ok());
-        assert!(Name::try_from("_held").is_ok());
-        assert!(Name::try_from("t0").is_ok());
-        assert_eq!(Name::try_from(""), Err(MalformedName::Empty));
-        assert_eq!(Name::try_from("café"), Err(MalformedName::Outside('é')));
-        assert_eq!(Name::try_from("a b"), Err(MalformedName::Outside(' ')));
+        assert!(Name::from_str("deposit_nf").is_ok());
+        assert!(Name::from_str("ValidatorRegistered").is_ok());
+        assert!(Name::from_str("_held").is_ok());
+        assert!(Name::from_str("t0").is_ok());
+        assert_eq!(Name::from_str(""), Err(MalformedName::Empty));
+        assert_eq!(Name::from_str("café"), Err(MalformedName::Outside('é')));
+        assert_eq!(Name::from_str("a b"), Err(MalformedName::Outside(' ')));
         assert_eq!(
-            Name::try_from("deposit-nf"),
+            Name::from_str("deposit-nf"),
             Err(MalformedName::Outside('-')),
             "the rendering that folded two identifiers into one is gone"
         );
-        assert_eq!(Name::try_from("0th"), Err(MalformedName::LeadingDigit));
+        assert_eq!(Name::from_str("0th"), Err(MalformedName::LeadingDigit));
         let long = "a".repeat(MAX_NAME_BYTES + 1);
         assert_eq!(
-            Name::try_from(long.as_str()),
+            Name::from_str(long.as_str()),
             Err(MalformedName::TooLong {
                 actual: MAX_NAME_BYTES + 1
             })
         );
-        assert!(Name::try_from("a".repeat(MAX_NAME_BYTES).as_str()).is_ok());
+        assert!(Name::from_str("a".repeat(MAX_NAME_BYTES).as_str()).is_ok());
     }
 
     /// A name reaching a consumer from the wire has passed no macro, so
     /// what it is made of is what the decoder holds it to.
     #[test]
     fn a_name_the_protocol_would_not_spell_does_not_decode() {
-        let name = Name::try_from("deposit_nf").expect("a name");
+        let name = Name::from_str("deposit_nf").expect("a name");
         assert_eq!(from_slice::<Name>(&to_vec(&name).unwrap()), Ok(name));
-        assert_canonical(&Name::try_from("Staked").expect("a name"));
+        assert_canonical(&Name::from_str("Staked").expect("a name"));
 
         // The rendering a package would be read by, arranged by bytes a
         // reader never sees.

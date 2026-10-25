@@ -7,6 +7,7 @@
 //! and at decode before anything is allocated.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::str::FromStr;
 use std::sync::Arc;
 
 use hyperscale_hbor::{
@@ -177,10 +178,10 @@ fn a_value_past_the_cap_cannot_be_built() {
     // The cap on text is bytes: two characters of three bytes each do
     // not fit in five.
     assert_eq!(
-        Text::<5>::try_from("日本"),
+        Text::<5>::from_str("日本"),
         Err(Overflow { actual: 6, max: 5 })
     );
-    assert!(Text::<6>::try_from("日本").is_ok());
+    assert!(Text::<6>::from_str("日本").is_ok());
 }
 
 /// A capped type describes as the run it encodes as, under its cap.

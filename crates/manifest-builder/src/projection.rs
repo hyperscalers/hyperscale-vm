@@ -501,10 +501,10 @@ fn governing(
             };
             let resource = match reach {
                 Some(behaviour) => {
-                    let keyed = keying_resource(target).and_then(&resolve)?;
+                    let keyed = keying_resource(target).and_then(resolve)?;
                     return Some(vec![(keyed, Some(*behaviour))]);
                 }
-                None => denomination.as_deref().and_then(&resolve)?,
+                None => denomination.as_deref().and_then(resolve)?,
             };
             // Which movement entries the access earns, off the table
             // admission injects them from. A read earns none and still

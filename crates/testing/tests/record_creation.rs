@@ -7,6 +7,8 @@
 //! own encoding, byte for byte — an instantiated resource and a
 //! genesis-seeded one have to be the same object.
 
+use std::str::FromStr;
+
 use hyperscale_vm_effects::{
     PACKAGE_SLOT_BASE, ResourceRecord, SlotId, TestHasher, child_key, instance_data_key,
     resource_record_key,
@@ -77,7 +79,7 @@ mod issuer {
                 id,
                 Seat {
                     operator,
-                    label: Text::try_from("back-row").expect("a label inside its cap"),
+                    label: "back-row".parse().expect("a label inside its cap"),
                 },
             );
             if let Some(seat) = Seat::at(id) {
@@ -92,7 +94,7 @@ mod issuer {
                 7,
                 Seat {
                     operator,
-                    label: Text::try_from("front-row").expect("a label inside its cap"),
+                    label: "front-row".parse().expect("a label inside its cap"),
                 },
             )
         }
@@ -214,7 +216,7 @@ fn a_fielded_mint_files_the_record_its_mark_declares() {
         filed,
         to_vec(&issuer::Seat {
             operator: 42,
-            label: Text::try_from("front-row").expect("a label inside its cap"),
+            label: Text::from_str("front-row").expect("a label inside its cap"),
         })
         .expect("the record encodes"),
         "the cell holds the record's own encoding, not a presence byte",

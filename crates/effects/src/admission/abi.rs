@@ -149,7 +149,7 @@ pub(super) fn lower_call(
         };
         args.push(match binding {
             AbiParam::Handle { clause, site } => {
-                bind_site(signature, declaration, *clause, *site, offset).map_err(&unbindable)?
+                bind_site(signature, declaration, *clause, *site, offset).map_err(unbindable)?
             }
             AbiParam::Guard(clause) => {
                 let taken = usize::try_from(*clause)

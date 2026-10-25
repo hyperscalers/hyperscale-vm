@@ -24,6 +24,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::{Deref, Index, IndexMut};
+use std::str::FromStr;
 
 use crate::decode::Decoder;
 use crate::encode::{Encoder, Sink};
@@ -779,10 +780,10 @@ impl<const N: usize> TryFrom<String> for Text<N> {
     }
 }
 
-impl<const N: usize> TryFrom<&str> for Text<N> {
-    type Error = Overflow;
+impl<const N: usize> FromStr for Text<N> {
+    type Err = Overflow;
 
-    fn try_from(text: &str) -> Result<Self, Overflow> {
+    fn from_str(text: &str) -> Result<Self, Overflow> {
         Self::new(text.to_owned())
     }
 }

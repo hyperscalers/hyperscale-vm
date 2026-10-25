@@ -7,6 +7,7 @@
 //! consumer's problem later.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::str::FromStr;
 
 use hyperscale_hbor::{
     Capped, DecodeError, Hbor, HborBound, HborShape, LengthFree, Name, NodeId, ShapeFault,
@@ -182,13 +183,13 @@ fn a_value_reads_back_against_its_own_shape() {
         distinct: Capped::new([4, 9].into_iter().collect()).unwrap(),
         by_key: Capped::new(
             [
-                (Text::try_from("a").unwrap(), Choice::Nothing),
+                (Text::from_str("a").unwrap(), Choice::Nothing),
                 (
-                    Text::try_from("b").unwrap(),
+                    Text::from_str("b").unwrap(),
                     Choice::Named {
                         held: Some(Inner {
                             tag: 3,
-                            label: Text::try_from("in").unwrap(),
+                            label: Text::from_str("in").unwrap(),
                         }),
                     },
                 ),
@@ -237,7 +238,7 @@ fn a_value_reads_back_against_its_own_shape() {
 fn a_payload_the_shape_does_not_describe_is_refused() {
     let value = Inner {
         tag: 3,
-        label: Text::try_from("in").unwrap(),
+        label: Text::from_str("in").unwrap(),
     };
     let bytes = to_vec(&value).expect("encodes");
     let (table, root) = ShapeTable::of::<Inner>();
