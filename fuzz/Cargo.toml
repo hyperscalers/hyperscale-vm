@@ -22,8 +22,8 @@ hyperscale-vm-ref = { path = "../crates/ref" }
 hyperscale-vm-runtime = { path = "../crates/runtime" }
 hyperscale-vm-types = { path = "../crates/types" }
 libfuzzer-sys = "0.4.13"
-wasm-smith = "=0.254.0"
-wasmtime = { version = "=48.0.2", default-features = false, features = [
+wasm-smith = "=0.261.0"
+wasmtime = { version = "=50.0.0", default-features = false, features = [
     "cranelift",
     "parallel-compilation",
     "pooling-allocator",
@@ -34,7 +34,7 @@ wasmtime = { version = "=48.0.2", default-features = false, features = [
     "wat",
     "winch",
 ] }
-wat = "=1.254.0"
+wat = "=1.261.0"
 
 [[bin]]
 name = "admitted-is-executable"

@@ -10,6 +10,6 @@
 # `guests/rust-toolchain.toml` because the deploy-time stack bound needs
 # a prelude without panic formatting.
 [toolchain]
-channel = "1.96.0"
+channel = "1.97.0"
 components = ["rustfmt", "clippy"]
 targets = ["wasm32-unknown-unknown"]

@@ -20,7 +20,7 @@ docker run --rm \
     --volume hyperscale-vm-regen-cargo:/usr/local/cargo \
     --volume hyperscale-vm-regen-target:/work/target \
     --workdir /work \
-    rust:1.96.0 \
+    rust:1.97.0 \
     bash -euc '
         channel="$(sed -n "s/^channel = \"\(.*\)\"$/\1/p" guests/rust-toolchain.toml)"
         rustup toolchain install "$channel" \

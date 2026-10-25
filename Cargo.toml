@@ -47,19 +47,19 @@ hyperscale-vm-sdk-macros = { path = "crates/sdk-macros" }
 hyperscale-vm-stdlib = { path = "crates/stdlib" }
 hyperscale-vm-testing = { path = "crates/testing" }
 
-arbitrary = "1.4.2"
+arbitrary = "1.5.0"
 blake3 = "1.8.7"
 proc-macro2 = "1.0.107"
-proptest = "1.11.0"
+proptest = "1.12.0"
 quote = "1.0.47"
-serde_json = "1.0.151"
-syn = { version = "3.0.6", features = ["full", "extra-traits", "visit", "visit-mut"] }
-thiserror = "2.0.20"
-trybuild = "1.0.121"
-wasm-encoder = { version = "=0.254.0", features = ["wasmparser"] }
-wasm-smith = "=0.254.0"
-wasmparser = "=0.254.0"
-wasmtime = { version = "=48.0.2", default-features = false, features = [
+serde_json = "1.0.154"
+syn = { version = "3.0.9", features = ["full", "extra-traits", "visit", "visit-mut"] }
+thiserror = "2.0.21"
+trybuild = "1.0.122"
+wasm-encoder = { version = "=0.261.0", features = ["wasmparser"] }
+wasm-smith = "=0.261.0"
+wasmparser = "=0.261.0"
+wasmtime = { version = "=50.0.0", default-features = false, features = [
     "cranelift",
     "parallel-compilation",
     "pooling-allocator",
@@ -70,7 +70,7 @@ wasmtime = { version = "=48.0.2", default-features = false, features = [
     "wat",
     "winch",
 ] }
-wat = "=1.254.0"
+wat = "=1.261.0"
 
 [workspace.lints.rust]
 missing_docs = "warn"

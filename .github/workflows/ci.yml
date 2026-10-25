@@ -102,7 +102,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.96.0"
+          toolchain: "1.97.0"
           targets: wasm32-unknown-unknown
       # The guest fixtures pin their own toolchain and build with
       # -Zbuild-std, so the lane needs that channel and rust-src present

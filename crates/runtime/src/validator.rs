@@ -397,7 +397,7 @@ fn check_exports(reader: ExportSectionReader<'_>) -> Result<(), ProfileError> {
 /// the per-module total.
 fn validate_function_body(body: &FunctionBody<'_>) -> Result<usize, ProfileError> {
     check(
-        body.range().len(),
+        body.as_bytes().len(),
         profile::MAX_FUNCTION_BODY_BYTES,
         "function body bytes",
     )?;
