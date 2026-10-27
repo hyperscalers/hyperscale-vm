@@ -343,6 +343,23 @@ pub enum AdmissionError {
         /// The method it named.
         method: String,
     },
+    /// A node creates a leaf, or needs it absent, after an earlier node
+    /// of the same tree creates it.
+    ///
+    /// A create's one-way door is judged once, against committed state,
+    /// before any body runs; it cannot see what the tree itself writes.
+    /// Two creates of one leaf would both pass it and the later write
+    /// would silently overwrite the earlier, whoever signed it.
+    #[error(
+        "node {node} creates or needs absent a leaf node {creator} already creates in this \
+         transaction"
+    )]
+    LeafCreatedEarlier {
+        /// The later node.
+        node: u32,
+        /// The node that creates the leaf first.
+        creator: u32,
+    },
     /// A guarded method named with no evidence presented.
     #[error("node {node} calls a guarded method and presents no evidence")]
     MissingEvidence {
@@ -821,6 +838,7 @@ impl AdmissionError {
             | Self::Unadmitted { node, .. }
             | Self::EntryMalformed { node, .. }
             | Self::PresentedForCall { node, .. }
+            | Self::LeafCreatedEarlier { node, .. }
             | Self::MissingEvidence { node, .. }
             | Self::MovementUnanswerable { node, .. }
             | Self::EvidenceUnsatisfied { node, .. }

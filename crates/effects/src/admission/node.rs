@@ -6,7 +6,7 @@
 //! form and content-addressed metadata, which is what lets every node
 //! reach the identical one.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use hyperscale_vm_types::{
@@ -112,6 +112,7 @@ pub(super) fn lower_all(
         calls: Vec::with_capacity(total),
         origins: Vec::with_capacity(total),
         declaration: Declaration::default(),
+        created: BTreeMap::new(),
         table_len: 0,
     };
     for &(intent_index, local_index) in &interleaved.order {
@@ -186,6 +187,13 @@ struct Admission<'a> {
     origins: Vec<NodeOrigin>,
     /// The transaction's whole declaration, folded frame by frame.
     declaration: Declaration,
+    /// Every leaf a node so far creates, with the node that creates it.
+    ///
+    /// A create's one-way door is judged once, against committed state,
+    /// before any body runs, so it cannot see what this tree writes: a
+    /// second create of one leaf would pass it and overwrite the first.
+    /// The tree is the only place both are visible, so it refuses here.
+    created: BTreeMap<EffectTarget, u32>,
     /// Effects logged so far across every frame: the offset the next
     /// frame's clause spans are relative to, and therefore the base of
     /// every handle position that frame's binding resolves to.
@@ -296,6 +304,7 @@ impl Admission<'_> {
         // the union declaration and is judged at materialization, beside
         // the presence a write requires; one whose leaves reach the
         // call's evidence rides the node's call.
+        self.judge_creates(&frame, node_index)?;
         let mut requires = Vec::new();
         self.split_conditions(&frame, node_index, &mut requires);
         if let Some(rule) = fence {
@@ -644,6 +653,45 @@ impl Admission<'_> {
             }
         }
         Ok((issues, injected))
+    }
+
+    /// Refuse a frame that creates, or needs absent, a leaf an earlier
+    /// node of this tree creates; then record what this one creates.
+    ///
+    /// A create is a write beside a one-way `Absent` door on the same
+    /// target. Keyed on creates alone, so an `Absent` read or an injected
+    /// halt fence on a leaf nothing here creates admits as before.
+    fn judge_creates(
+        &mut self,
+        frame: &Declaration,
+        node_index: u32,
+    ) -> Result<(), AdmissionError> {
+        let absent = frame.required().filter_map(|rule| match rule {
+            Rule::Require(JudgedLeaf::Presence {
+                target,
+                expect: Presence::Absent,
+            }) => Some(*target),
+            _ => None,
+        });
+        let mut creates = Vec::new();
+        for target in absent {
+            if let Some(&creator) = self.created.get(&target) {
+                return Err(AdmissionError::LeafCreatedEarlier {
+                    node: node_index,
+                    creator,
+                });
+            }
+            let writes = frame.ordered.iter().any(|access| {
+                access.effect.target == target && matches!(access.effect.mode, Mode::Write { .. })
+            });
+            if writes {
+                creates.push(target);
+            }
+        }
+        for target in creates {
+            self.created.insert(target, node_index);
+        }
+        Ok(())
     }
 
     /// Split a frame's conditions by where each is judged.
