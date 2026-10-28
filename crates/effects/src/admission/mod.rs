@@ -38,7 +38,7 @@ mod tree;
 
 use std::collections::BTreeSet;
 
-pub(crate) use edge::{check_instance_value_depth, check_value_depth};
+pub(crate) use edge::{check_instance_records, check_value_depth};
 pub use error::{AdmissionError, Placed};
 use fill::check_bindings;
 pub(crate) use fill::{IntentView, Wired};

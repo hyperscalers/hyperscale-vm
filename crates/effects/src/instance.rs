@@ -50,6 +50,7 @@ pub enum ResolveError {
 /// answer and a record an envelope presents are all held to the one
 /// check.
 #[derive(Clone, Debug, PartialEq, Eq, Hbor)]
+#[hbor(validate = configuration_within_cap)]
 pub struct InstanceMeta {
     /// The package the instance runs.
     pub package: PackageHash,
@@ -132,7 +133,7 @@ impl InstanceMeta {
     /// # Panics
     ///
     /// If the configuration is past the vocabulary's own caps, which no
-    /// admitted creation can have produced.
+    /// decoded record carries and no admitted creation can have produced.
     #[must_use]
     pub fn address(&self, hasher: &dyn Hasher) -> ComponentAddr {
         let bytes = self
@@ -156,6 +157,15 @@ impl InstanceMeta {
         component_address(hasher, self.package, config_hash(hasher, &bytes), self.salt)
             == address.into()
     }
+}
+
+/// Refuse at decode a record whose configuration encodes past
+/// [`MAX_CONFIG_BYTES`]: no creation can have sealed one, and every
+/// record in memory is then one [`InstanceMeta::address`] answers for.
+fn configuration_within_cap(meta: &InstanceMeta) -> Result<(), &'static str> {
+    meta.config_bytes()
+        .map(drop)
+        .map_err(|_| "a configuration encodes past its cap")
 }
 
 /// A record that does not derive the address it is claimed for.
@@ -303,6 +313,7 @@ mod tests {
 
     use super::*;
     use crate::hash::TestHasher;
+    use crate::types::MAX_VALUE_BYTES;
 
     /// A record at the configuration cap is one the leaf holds, and one
     /// past it is a component that could be addressed and never sealed.
@@ -338,6 +349,27 @@ mod tests {
         // A record the cap refuses derives no address, so it is a record
         // nothing can present, create against, or resolve through.
         assert!(!over.derives(&TestHasher, PrincipalAddr::new([0; 31])));
+    }
+
+    /// A record past the configuration cap does not decode, though every
+    /// field in it is within the value width.
+    ///
+    /// The per-field and field-count bounds admit a configuration many
+    /// times the cap, and an envelope's records and a fetched reply are
+    /// both decoded from bytes a stranger chose. Refusing it at the
+    /// decode is what keeps [`InstanceMeta::address`] total over every
+    /// record that exists in memory.
+    #[test]
+    fn a_record_past_the_configuration_cap_does_not_decode() {
+        let over = InstanceMeta {
+            package: PackageHash(Hash32([1; 32])),
+            config: Capped::new(vec![Value::Bytes(vec![0; MAX_VALUE_BYTES]); 5])
+                .expect("five fields"),
+            salt: Hash32([2; 32]),
+        };
+        assert!(over.config_bytes().is_err());
+        let bytes = to_vec(&over).expect("the record's own caps hold");
+        assert!(from_slice::<InstanceMeta>(&bytes).is_err());
     }
 
     #[test]

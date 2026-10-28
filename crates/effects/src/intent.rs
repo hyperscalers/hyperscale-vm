@@ -47,7 +47,7 @@ pub use hyperscale_vm_types::{MAX_INTENTS, attest};
 
 use crate::admission::{
     AdmissionError, Admitted, IntentView, MAX_SOCKETS, Wired, admit_intents,
-    check_instance_value_depth, check_value_depth, flatten, resolve_tree, walk,
+    check_instance_records, check_value_depth, flatten, resolve_tree, walk,
 };
 use crate::cells::{nullifier_expiry_ms, nullifier_key};
 use crate::claim::Claim;
@@ -534,7 +534,7 @@ impl IntentTree {
         for intent in flat.intents() {
             check_value_depth(&intent.graph)?;
         }
-        check_instance_value_depth(&self.instances)
+        check_instance_records(&self.instances)
     }
 
     /// Every intent's hash, in tree order, each computed once.
@@ -695,7 +695,7 @@ pub fn admit_tree(
     for intent in intents {
         check_value_depth(&intent.graph)?;
     }
-    check_instance_value_depth(&tree.instances)?;
+    check_instance_records(&tree.instances)?;
     // The intent hash alone. It is what names every escrow record and
     // claim the tree derives — so two intents that hash alike derive one
     // key for two edges.

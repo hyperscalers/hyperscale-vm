@@ -10,7 +10,7 @@ use super::MAX_SOCKETS;
 use crate::MAX_ACCOUNTS;
 use crate::claim::Claim;
 use crate::dsl::EvalError;
-use crate::instance::ResolveError;
+use crate::instance::{MAX_CONFIG_BYTES, ResolveError};
 use crate::resource::{GrantedBehaviour, ResourceKind};
 use crate::rule::Rule;
 use crate::types::MAX_VALUE_DEPTH;
@@ -787,6 +787,13 @@ pub enum AdmissionError {
         /// Index of the record in the envelope's own order.
         instance: u32,
     },
+    /// A presented instance record whose configuration encodes past
+    /// [`MAX_CONFIG_BYTES`], so no address derives from it.
+    #[error("instance record {instance}: configuration encodes past {MAX_CONFIG_BYTES} bytes")]
+    InstanceConfigTooWide {
+        /// Index of the record in the envelope's own order.
+        instance: u32,
+    },
     /// A literal nested past [`MAX_VALUE_DEPTH`].
     #[error("node {node} argument {param}: literal nests deeper than {MAX_VALUE_DEPTH}")]
     ValueTooDeep {
@@ -956,7 +963,8 @@ impl AdmissionError {
             | Self::Resolve(..)
             | Self::TableOverflow { .. }
             | Self::Conflict(..)
-            | Self::InstanceValueTooDeep { .. } => Placed {
+            | Self::InstanceValueTooDeep { .. }
+            | Self::InstanceConfigTooWide { .. } => Placed {
                 intent: None,
                 node: None,
                 param: None,

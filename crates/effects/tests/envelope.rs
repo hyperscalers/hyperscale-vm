@@ -9,6 +9,7 @@ use hyperscale_hbor::{Capped, from_slice_with_depth};
 mod common;
 
 use common::admit_leaf;
+use hyperscale_vm_effects::types::MAX_VALUE_BYTES;
 use hyperscale_vm_effects::vocabulary::AUTH;
 use hyperscale_vm_effects::{
     AdmissionError, Admitted, Answered, Binding, Bounds, CROSSING_ANSWER_CELL_BYTES,
@@ -2477,6 +2478,29 @@ fn a_deep_instance_config_value_refuses_at_admission() {
     assert!(matches!(
         admit_composed(&tree),
         Err(AdmissionError::InstanceValueTooDeep { .. })
+    ));
+}
+
+/// A presented record wider than the configuration cap refuses as a
+/// shape fault, whoever built the tree: decoding refuses it from bytes,
+/// and this is the same bound on a tree put together in memory.
+#[test]
+fn a_wide_instance_config_refuses_at_admission() {
+    let mut tree = composed_tree(100);
+    tree.instances
+        .push(InstanceMeta {
+            package: pkg(),
+            config: Capped::new(vec![Value::Bytes(vec![0; MAX_VALUE_BYTES]); 5]).unwrap(),
+            salt: Hash32([9; 32]),
+        })
+        .unwrap();
+    assert!(matches!(
+        tree.check_shape(),
+        Err(AdmissionError::InstanceConfigTooWide { instance: 0 })
+    ));
+    assert!(matches!(
+        admit_composed(&tree),
+        Err(AdmissionError::InstanceConfigTooWide { instance: 0 })
     ));
 }
 

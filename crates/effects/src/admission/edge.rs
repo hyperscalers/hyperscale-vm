@@ -13,19 +13,26 @@ use crate::signature::ParamType;
 use crate::types::{EdgeContent, MAX_VALUE_DEPTH, Value};
 
 /// Reject presented instance records whose configuration values nest
-/// past [`MAX_VALUE_DEPTH`] — the same bound graph literals clear,
-/// judged here so composing the per-envelope registry never meets a
-/// value the vocabulary's own encoders refuse.
-pub fn check_instance_value_depth(records: &[InstanceMeta]) -> Result<(), AdmissionError> {
+/// past [`MAX_VALUE_DEPTH`] — the same bound graph literals clear — or
+/// whose configuration encodes past
+/// [`MAX_CONFIG_BYTES`](crate::instance::MAX_CONFIG_BYTES), judged here so
+/// composing the per-envelope registry never meets a record no address
+/// derives from.
+///
+/// A decoded record already clears the width; this is the same bound on
+/// a tree a builder put together in memory.
+pub fn check_instance_records(records: &[InstanceMeta]) -> Result<(), AdmissionError> {
     for (index, meta) in records.iter().enumerate() {
+        let instance = u32::try_from(index).unwrap_or(u32::MAX);
         if meta
             .config
             .iter()
             .any(|value| value.depth() > MAX_VALUE_DEPTH)
         {
-            return Err(AdmissionError::InstanceValueTooDeep {
-                instance: u32::try_from(index).unwrap_or(u32::MAX),
-            });
+            return Err(AdmissionError::InstanceValueTooDeep { instance });
+        }
+        if meta.config_bytes().is_err() {
+            return Err(AdmissionError::InstanceConfigTooWide { instance });
         }
     }
     Ok(())
