@@ -482,7 +482,15 @@ fn an_uncovered_gate_refuses_with_the_claim_named() {
     let unrelated = b
         .call_proving(BOB, "present_badge", (owner_badge(),))
         .unwrap();
-    let refused = b.presenting(unrelated, |b| b.call(pool(), &seal, ()).map(|_| ()));
+    let funds = b
+        .call(BOB, "withdraw", (RES, 100u128))
+        .unwrap()
+        .one()
+        .unwrap();
+    let refused = b.presenting(unrelated, |b| {
+        b.call(pool(), &seal, (funds, 1u64, [0u8; 48], [0u8; 96]))
+            .map(|_| ())
+    });
     assert!(
         matches!(&refused, Err(TypedError::UncoveredGate { method, .. }) if *method == seal),
         "an uncovered gate names itself: {refused:?}"

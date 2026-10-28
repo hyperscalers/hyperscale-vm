@@ -169,6 +169,28 @@ pub mod staking {
     }
 
     impl Staking {
+        /// Bring the pool up holding `funds` as its founding stake, with
+        /// `validator_id` registered under it.
+        ///
+        /// The founder brings it up, which the configuration's gate
+        /// answers, and the owner badge the pool comes up holding goes to
+        /// them. Registering here is what lets one transaction found,
+        /// fund and seat a pool: founder and badge-holder are one party in
+        /// this node and nowhere else, and the seal runs once. The
+        /// founding stake mints no units: it is the pool's own bond.
+        pub fn instantiate(
+            &mut self,
+            funds: Bucket,
+            validator_id: u64,
+            pubkey: [u8; PUBKEY_BYTES],
+            possession_proof: [u8; POSSESSION_PROOF_BYTES],
+        ) {
+            let staked = funds.quantity();
+            self.pool.put(funds);
+            Staked { amount: staked }.emit();
+            self.take_on(validator_id, pubkey, possession_proof);
+        }
+
         /// Delegate `funds`, taking stake units at par.
         pub fn stake(&mut self, funds: Bucket) -> Bucket {
             // The amount is the kernel's own cell width, which is what
@@ -202,8 +224,20 @@ pub mod staking {
             pubkey: [u8; PUBKEY_BYTES],
             possession_proof: [u8; POSSESSION_PROOF_BYTES],
         ) {
+            self.take_on(validator_id, pubkey, possession_proof);
+        }
+
+        /// Record `validator_id` under the key it registered, and say so.
+        fn take_on(
+            &mut self,
+            validator_id: u64,
+            pubkey: [u8; PUBKEY_BYTES],
+            possession_proof: [u8; POSSESSION_PROOF_BYTES],
+        ) {
             // Registering twice is refused by the shard holding the leaf,
-            // against committed state, before this runs.
+            // against committed state, before this runs, and a second
+            // registration of one leaf in a transaction is refused at
+            // admission.
             self.validators
                 .at(validator_id)
                 .create(Validator { pubkey });

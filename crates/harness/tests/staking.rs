@@ -635,14 +635,27 @@ fn a_second_registration_of_one_validator_is_refused() -> Result<()> {
     Ok(())
 }
 
-/// Bringing the pool up: one node, sealing its record, writing the
-/// record of each mark it issues, and minting the owner badge it comes
-/// up holding — filed in the founder's own account.
+/// What a founder brings a pool up holding: a million whole tokens.
+const FOUNDING: u128 = 1_000_000 * 10u128.pow(18);
+
+/// Bringing the pool up holding [`FOUNDING`] of the staked resource from
+/// the founder's account, with [`VALIDATOR`] taken on: one node, sealing
+/// its record, writing the record of each mark it issues, vaulting the
+/// founding stake, recording the validator, and minting the owner badge
+/// it comes up holding — filed in the founder's own account.
 fn bring_up_graph() -> ManifestGraph {
-    graph_as(OPERATOR, |b| instantiate(b, pool().into(), ()))
+    graph_as(OPERATOR, |b| {
+        let funds = account::withdraw(b, OPERATOR, TOKEN, FOUNDING)?;
+        instantiate(
+            b,
+            pool().into(),
+            (funds, VALIDATOR, PUBKEY, POSSESSION_PROOF),
+        )
+    })
 }
 
-/// The same bring-up, written out — the seal and the deposit.
+/// The same bring-up, written out — the withdrawal, the seal and the
+/// deposit.
 ///
 /// What the composed one is held to: it reads which of those nodes exist
 /// off the package's own declaration, and this says what the answer is
@@ -651,9 +664,24 @@ fn bring_up_graph() -> ManifestGraph {
 /// point is what a caller composing it by hand would have to write.
 fn hand_written_bring_up() -> ManifestGraph {
     graph_as(OPERATOR, |b| {
-        let badge = b.call(pool(), "instantiate", ())?.one()?;
+        let funds = account::withdraw(b, OPERATOR, TOKEN, FOUNDING)?;
+        let badge = b
+            .call(
+                pool(),
+                "instantiate",
+                (funds, VALIDATOR, PUBKEY, POSSESSION_PROOF),
+            )?
+            .one()?;
         account::deposit_nf(b, OPERATOR, badge)
     })
+}
+
+/// A store where [`OPERATOR`] holds `token` of the staked resource and
+/// nothing is sealed: what a founder brings a pool up from.
+fn founder_store(token: u128) -> MemoryStore {
+    let mut store = MemoryStore::new();
+    seed_vault(&mut store, OPERATOR, TOKEN, token);
+    store
 }
 
 /// The composed bring-up is the composition a caller would have written,
@@ -677,13 +705,14 @@ fn the_composed_bring_up_renders_as_the_hand_written_one() {
 
 /// A pool brings itself up and reaches its own operator surface: one
 /// node seals its record, writes the record of each mark it issues,
-/// mints the owner badge and files it in the founder's account — and
-/// the surface opens to whoever presents it. The cells a seated pool
-/// holds, written by the vocabulary instead of by genesis.
+/// vaults the founding stake, takes on the first validator, mints the
+/// owner badge and files it in the founder's account — and the surface
+/// opens to whoever presents it. The cells a seated pool holds, written
+/// by the vocabulary instead of by genesis, plus the founding's own.
 #[test]
 fn a_pool_brings_itself_up_and_reaches_its_operator_surface() -> Result<()> {
     let world = world();
-    let store = MemoryStore::new();
+    let store = founder_store(FOUNDING);
 
     let brought_up = batch_entry(&world, &single_intent(OPERATOR, bring_up_graph()))?;
     let (outcome, after) = run_both(&store, std::slice::from_ref(&brought_up));
@@ -722,19 +751,75 @@ fn a_pool_brings_itself_up_and_reaches_its_operator_surface() -> Result<()> {
         .collect();
     assert_eq!(holdings, vec![(u128::from(BADGE_ID), Vec::new())]);
 
-    // And the surface is open: the founder registers a validator with
-    // the badge the bring-up minted.
-    let register = batch_entry(&world, &single_intent(OPERATOR, register_graph(VALIDATOR)))?;
+    // The founding's own: the stake sits in the pool's vault, minting no
+    // units, and the first validator is on record — said in that order,
+    // the deposit ahead of the registration it backs.
+    assert_eq!(amount_of(&after, vault(OPERATOR, TOKEN)), 0);
+    assert_eq!(
+        amount_of(&after, declared_vault(pool(), POOL_VAULT, TOKEN)),
+        FOUNDING,
+    );
+    assert_eq!(amount_of(&after, vault(OPERATOR, unit())), 0);
+    assert_eq!(
+        registered(&after, VALIDATOR),
+        Some(staking::Validator { pubkey: PUBKEY }),
+    );
+    let spoken: Vec<_> = outcome.receipts[&brought_up.tx]
+        .events
+        .iter()
+        .filter(|event| event.emitter == Address::from(pool()))
+        .map(|event| (event.event_type, event.payload.to_vec()))
+        .collect();
+    assert_eq!(
+        spoken,
+        vec![
+            (0, encode_amount(FOUNDING).to_vec()),
+            (2, registration_payload(VALIDATOR)),
+        ],
+    );
+
+    // And the surface is open: the founder registers a second validator
+    // with the badge the bring-up minted.
+    let second = VALIDATOR + 1;
+    let register = batch_entry(&world, &single_intent(OPERATOR, register_graph(second)))?;
     let (outcome, end) = run_both(&after, std::slice::from_ref(&register));
     assert!(matches!(
         outcome.receipts[&register.tx].outcome,
         Outcome::Completed { .. }
     ));
     assert_eq!(
-        registered(&end, VALIDATOR),
+        registered(&end, second),
         Some(staking::Validator { pubkey: PUBKEY }),
     );
     Ok(())
+}
+
+/// The founding stake is the staked resource: a bring-up fed anything
+/// else is refused at admission, naming the resource it takes.
+#[test]
+fn a_bring_up_in_the_wrong_resource_is_refused_at_admission() {
+    let world = world();
+    let tree = single_intent(
+        OPERATOR,
+        graph_as(OPERATOR, |b| {
+            let funds = account::withdraw(b, OPERATOR, unit(), FOUNDING)?;
+            instantiate(
+                b,
+                pool().into(),
+                (funds, VALIDATOR, PUBKEY, POSSESSION_PROOF),
+            )
+        }),
+    );
+    let identity = tree.hash(&TestHasher);
+    let refused = admit_tree(&tree, identity, &world, &TestHasher)
+        .expect_err("the bring-up takes the staked resource and this hands it units");
+    assert!(
+        matches!(
+            refused,
+            AdmissionError::WrongDenomination { param: 0, expected, .. } if expected == TOKEN.address()
+        ),
+        "the refusal names the staked resource: {refused:?}"
+    );
 }
 
 /// The one-way door: a second bring-up is refused as the seal's unmet
@@ -742,7 +827,7 @@ fn a_pool_brings_itself_up_and_reaches_its_operator_surface() -> Result<()> {
 #[test]
 fn a_second_bring_up_is_refused_where_the_seal_lives() -> Result<()> {
     let world = world();
-    let store = MemoryStore::new();
+    let store = founder_store(2 * FOUNDING);
     let brought_up = batch_entry(&world, &single_intent(OPERATOR, bring_up_graph()))?;
     let (_, after) = run_both(&store, std::slice::from_ref(&brought_up));
 

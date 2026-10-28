@@ -50,7 +50,9 @@ deactivate_validator(u64) — infallible
       2  write self.validators[arg0]
   exports  arg0
 
-instantiate() — infallible
+instantiate(bucket, u64, [u8; 48], [u8; 96]) — infallible
+  emits    Staked, ValidatorRegistered — at most 244 bytes
+  takes    arg0 carrying config.staked_resource
   mints    "OwnerBadge" non-fungible
   declares
       0  requires claim config.founder
@@ -60,10 +62,13 @@ instantiate() — infallible
       4  write self.resource[self-issued(non-fungible["OwnerBadge"])]
       5  requires self.resource[self-issued(fungible["StakeUnit"])] is absent
       6  write self.resource[self-issued(fungible["StakeUnit"])]
-      7  requires self.instance[self-issued(non-fungible["OwnerBadge"]), 0] is absent
-      8  write self.instance[self-issued(non-fungible["OwnerBadge"]), 0]
+      7  credit self.pool[config.staked_resource]
+      8  requires self.validators[arg1] is absent
+      9  write self.validators[arg1]
+     10  requires self.instance[self-issued(non-fungible["OwnerBadge"]), 0] is absent
+     11  write self.instance[self-issued(non-fungible["OwnerBadge"]), 0]
   yields   edge 0 carrying self-issued(non-fungible["OwnerBadge"]) × [0]
-  exports  handle for clause 2, handle for clause 4, handle for clause 6, handle for clause 8, self.record
+  exports  handle for clause 2, handle for clause 4, handle for clause 6, handle for clause 7, handle for clause 9, handle for clause 11, self.record, edge arg0, arg2, arg1, arg3
 
 register_validator(u64, [u8; 48], [u8; 96]) — infallible
   emits    ValidatorRegistered — at most 190 bytes
